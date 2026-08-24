@@ -29,7 +29,7 @@
         padding: max(1.5rem, env(safe-area-inset-top)) 1.5rem
           max(1.5rem, env(safe-area-inset-bottom));
         background:
-          radial-gradient(120% 80% at 50% -10%, #24242a 0%, transparent 60%), #111113;
+          radial-gradient(120% 60% at 50% 40%, #24242a 0%, transparent 60%), #111113;
         color: #f4f4f5;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         -webkit-font-smoothing: antialiased;
@@ -78,7 +78,7 @@
         border: 1px solid #3f3f46;
         border-radius: 0.75rem;
         color: #fafafa;
-        font-size: 1rem;
+        font-size: 16px;
         outline: none;
         transition: border-color 0.15s, box-shadow 0.15s;
       }
@@ -140,7 +140,7 @@
       <h1>Antigravity</h1>
       <p class="subtitle">Enter your access password</p>
 
-      <form id="form">
+      <form id="form" novalidate>
         <div class="field">
           <input
             id="password"
@@ -149,8 +149,6 @@
             autocomplete="current-password"
             autocapitalize="off"
             spellcheck="false"
-            required
-            autofocus
           />
           <button type="button" class="reveal" id="reveal">Show</button>
         </div>
@@ -169,6 +167,33 @@
       const submit = document.getElementById("submit");
       const error = document.getElementById("error");
       const reveal = document.getElementById("reveal");
+
+      // Safari skips scroll-to-focused on the very first keyboard open.
+      // When the keyboard actually appears (visualViewport resizes),
+      // calculate the exact scroll to center the input in the visible
+      // area above the keyboard — matching Safari's native 2nd-focus behavior.
+      var firstFocus = true;
+      password.addEventListener("focus", function() {
+        if (!firstFocus) return;
+        firstFocus = false;
+        if (window.visualViewport) {
+          var onResize = function() {
+            window.visualViewport.removeEventListener("resize", onResize);
+            var vv = window.visualViewport;
+            var rect = password.getBoundingClientRect();
+            var inputAbsTop = rect.top + window.scrollY;
+            var target = inputAbsTop - (vv.height / 2) + (rect.height / 2);
+            window.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+          };
+          window.visualViewport.addEventListener("resize", onResize);
+        }
+      });
+
+      // Autofocus on desktop (non-touch) devices only.
+      // On mobile, autofocus causes an unwanted keyboard popup on page load.
+      if (!window.matchMedia("(pointer: coarse)").matches) {
+        password.focus();
+      }
 
       reveal.addEventListener("click", () => {
         const shown = password.type === "text";
