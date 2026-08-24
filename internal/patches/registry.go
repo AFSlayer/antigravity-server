@@ -16,7 +16,7 @@ var (
 	mobileEnterNewlineRe           = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),k=>\{if\(!k\)return!1;k\.preventDefault\(\);`)
 	mobileProjectAddButtonRe       = regexp.MustCompile(`if\(d==="project"\|\|d==="environment"\|\|d==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe   = regexp.MustCompile(`className:Pm\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100"\)`)
-	mobileUserMessageActionsRe     = regexp.MustCompile(`opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container`)
+	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
 	mobileConversationRowActionsRe = regexp.MustCompile(`className:Pm\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
 	mobileConversationGradientRe   = regexp.MustCompile(`style:\{background:([a-zA-Z0-9_$]+)==="sidebar"\?` + "`" + `linear-gradient\(to right, transparent 0%, \$\{[a-zA-Z0-9_$]+\?"var\(--sidebar-secondary\)":[a-zA-Z0-9_$]+\?"color-mix\(in srgb, var\(--sidebar-secondary\) 50%, var\(--sidebar\)\)\":"var\(--sidebar\)"\} 25%\)` + "`" + `:"linear-gradient\(to right, transparent 0%, var\(--muted\) 25%\)"\}`)
 
@@ -216,7 +216,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileUserMessageActionsRe,
-			Replace: `opacity-100 pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container`,
+			Replace: `${1}"relative self-end ml-auto mt-1 ${2} opacity-90 pointer-events-auto transition-all bg-transparent ${3}"`,
 		},
 		{
 			ID:      "mobile-conversation-row-actions",
@@ -498,12 +498,38 @@ body {
   html[style*="--agy-bottom"] .shrink-0.p-2 {
     padding-bottom: 0px !important;
   }
-  /* Make user message action buttons (Undo, Copy) easily visible on touch screens */
+  /* Flow user message action buttons (Undo, Copy, Timestamp) naturally without overlapping message text */
+  div[data-testid="user-input-step"] div.bg-card,
+  .group\/user-input-step div.bg-card {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    overflow: visible !important;
+    position: relative !important;
+  }
+  div[data-testid="user-input-step"] .user-input-buttons-container,
+  .group\/user-input-step .user-input-buttons-container,
+  .user-input-buttons-container {
+    position: relative !important;
+    top: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    margin-left: auto !important;
+    margin-top: 0.25rem !important;
+    align-self: flex-end !important;
+    flex-shrink: 0 !important;
+    opacity: 0.85 !important;
+    pointer-events: auto !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.25rem !important;
+  }
   @media (pointer: coarse) {
-    .user-input-buttons-container {
-      opacity: 0.9 !important;
-      pointer-events: auto !important;
-    }
     /* Clean mobile conversation row: align kebab menu and timestamp side by side without overlapping */
     div[data-testid^="conversation-row-"] div.absolute.top-0 {
       position: relative !important;
