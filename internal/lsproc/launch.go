@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultIDEVersion        = "2.9.1"
+	DefaultIDEVersion        = "2.10.0"
 	DefaultAPIServerURL      = "https://generativelanguage.googleapis.com"
 	DefaultCloudCodeEndpoint = "https://daily-cloudcode-pa.googleapis.com"
 )
@@ -100,6 +100,7 @@ func LaunchHeadless(opts HeadlessOptions) (*exec.Cmd, error) {
 		"--api_server_url", opts.APIServerURL,
 		"--cloud_code_endpoint", opts.CloudCodeEndpoint,
 		"--enable_sidecars",
+		"--disable_telemetry",
 	}
 	if opts.CSRFToken != "" {
 		args = append(args, "--csrf_token", opts.CSRFToken)

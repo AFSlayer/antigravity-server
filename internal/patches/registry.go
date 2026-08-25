@@ -13,22 +13,24 @@ var (
 
 	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",replace:!0,throw:!0\}\)`)
 
-	mobileEnterNewlineRe           = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),k=>\{if\(!k\)return!1;k\.preventDefault\(\);`)
-	mobileProjectAddButtonRe       = regexp.MustCompile(`if\(d==="project"\|\|d==="environment"\|\|d==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
-	mobileProjectHeaderActionsRe   = regexp.MustCompile(`className:Pm\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100"\)`)
-	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
-	mobileConversationRowActionsRe = regexp.MustCompile(`className:Pm\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
-	mobileConversationGradientRe   = regexp.MustCompile(`style:\{background:([a-zA-Z0-9_$]+)==="sidebar"\?` + "`" + `linear-gradient\(to right, transparent 0%, \$\{[a-zA-Z0-9_$]+\?"var\(--sidebar-secondary\)":[a-zA-Z0-9_$]+\?"color-mix\(in srgb, var\(--sidebar-secondary\) 50%, var\(--sidebar\)\)\":"var\(--sidebar\)"\} 25%\)` + "`" + `:"linear-gradient\(to right, transparent 0%, var\(--muted\) 25%\)"\}`)
+	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),k=>\{if\(!k\)return!1;k\.preventDefault\(\);`)
+	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
+	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
+	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
+	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
+	mobileConversationRowActionsRe      = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
+	mobileConversationGradientRe        = regexp.MustCompile(`style:\{background:([a-zA-Z0-9_$]+)==="sidebar"\?` + "`" + `linear-gradient\(to right, transparent 0%, \$\{[a-zA-Z0-9_$]+\?"var\(--sidebar-secondary\)":[a-zA-Z0-9_$]+\?"color-mix\(in srgb, var\(--sidebar-secondary\) 50%, var\(--sidebar\)\)\":"var\(--sidebar\)"\} 25%\)` + "`" + `:"linear-gradient\(to right, transparent 0%, var\(--muted\) 25%\)"\}`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`r\&\&\(L\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
-	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=Zkb\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
+	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
+	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+\}\)=>)`)
 
-	mobileKebabMenuPinArchiveRe    = regexp.MustCompile(`const dlb=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
-	mobileKebabWrapperPinArchiveRe = regexp.MustCompile(`var elb=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onOpenChange:([a-zA-Z0-9_$]+)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{asChild:!0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:([a-zA-Z0-9_$]+)=>void ([a-zA-Z0-9_$]+)\.stopPropagation\(\)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"more_vert",size:16\}\)\)\),([a-zA-Z0-9_$]+)\.createElement\(dlb,\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)\);`)
-	mobileKebabCallPinArchiveRe    = regexp.MustCompile(`G\.createElement\(elb,\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:\(\)=>\{([a-zA-Z0-9_$]+)\(!0\)\},onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+)\?([a-zA-Z0-9_$]+):([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+)\}\)`)
-	mobileHideAuxSidebarRe         = regexp.MustCompile(`G\.createElement\(bZ,\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
-	settingsRulesEditorRe          = regexp.MustCompile(`var WS=\(\{name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v\}\)=>\{var w=k\|\|m\|\|p,`)
+	mobileKebabMenuPinArchiveRe    = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
+	mobileKebabWrapperPinArchiveRe = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onOpenChange:([a-zA-Z0-9_$]+)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{asChild:!0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:([a-zA-Z0-9_$]+)=>void ([a-zA-Z0-9_$]+)\.stopPropagation\(\)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"more_vert",size:16\}\)\)\),([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)\);`)
+	mobileKebabCallPinArchiveRe    = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:\(\)=>\{([a-zA-Z0-9_$]+)\(!0\)\},onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([^\}]+?),isUnread:([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)?),onOpenChange:([a-zA-Z0-9_$]+)(?:,onViewDebugClick:([a-zA-Z0-9_$]+))?\}\)`)
+	mobileHideAuxSidebarRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
+	settingsRulesEditorRe          = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c[^\}]*?onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
 
@@ -36,11 +38,13 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var ([a-zA-Z0-9_$]+)=!!this\.storageService\.get\("didAskForNotificationPermission"\);`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`(var|const)\s+([a-zA-Z0-9_$]+)=\(\)=>\{var a=([a-zA-Z0-9_$]+)\(\),b=([a-zA-Z0-9_$]+)\(\);return\(0,([a-zA-Z0-9_$]+)\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{b\(([a-zA-Z0-9_$]+)\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);a\(c,\{section:[a-zA-Z0-9_$]+\}\)\},\[a,b\]\)\};[\r\n\s]*var ([a-zA-Z0-9_$]+)=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),\{q:b\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);return ([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"shrink-0 p-2"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:void 0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,showBottomToolbar:!0,[\r\n\s]*aboveContent:([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),null\),initialQuery:b\}\)\)\)\)\};`)
+	mobileNewConvoViewRe = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=\(\)=>\{var a=([a-zA-Z0-9_$]+)\(\),b=([a-zA-Z0-9_$]+)\(\);return\(0,([a-zA-Z0-9_$]+)\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{b\(([a-zA-Z0-9_$]+)\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);a\(c,\{section:([a-zA-Z0-9_$]+)\}\)\},\[a,b\]\)\};[\r\n\s]*(?:var|const)\s+([a-zA-Z0-9_$]+)=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),\{q:b\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?return ([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"shrink-0 p-2"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:void 0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,[\r\n\s]*showBottomToolbar:!0,[\r\n\s]*aboveContent:([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),null\),initialQuery:b\}\)\)\)\)\};`)
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
-	mobileBackClearsSectionRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)([a-zA-Z0-9_$]+)\(\)(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"\}\))`)
+	mobileBackClearsSectionRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)([a-zA-Z0-9_$]+)\(\)(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"\}\))`)
+	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
+	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+,marketingEmailsEnabled:`)
 
 	folderPickerInitialPathRe = regexp.MustCompile(`initialPath:[a-zA-Z0-9_$]+\?[a-zA-Z0-9_$]+\.fsPath:[a-zA-Z0-9_$]+\?"C:/":"/",fetchDirectoryContents:`)
 
@@ -92,7 +96,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileEnterNewlineRe,
-			Replace: `registerCommand($1,k=>{if(!k)return!1;if(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches&&!k.metaKey&&!k.ctrlKey)return!1;k.preventDefault();`,
+			Replace: `registerCommand($1,k=>{if(!k)return!1;if((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&!k.metaKey&&!k.ctrlKey)return!1;k.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
@@ -155,7 +159,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileSkipNotificationRe,
-			Replace: `var $1=(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)||!!this.storageService.get("didAskForNotificationPermission");`,
+			Replace: `var $1=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService.get("didAskForNotificationPermission");`,
 		},
 
 		// When a project or standalone section is selected on touch devices (e.g. via + button),
@@ -168,7 +172,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
-			Replace: `var $2=()=>{var a=$3(),b=$4();return(0,$5.useCallback)((c,$6)=>{b($7.map(f=>({trigger:f,ran:!1})));a(c,{section:$6,replace:!0})},[a,b])};var $8=()=>{var a=$2(),{q:b,section:sec}=$9({strict:!1}),isMobileNew=Boolean(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches&&sec);return $10.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},isMobileNew?$10.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},$10.createElement(typeof U==="function"?U:typeof T==="function"?T:"span",{name:"auto_awesome",size:32,className:"text-muted-foreground/30"}),$10.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):$10.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},$10.createElement($13,{surface:"background"})),$10.createElement("div",{className:"shrink-0 p-2"},$10.createElement($16,{cascadeId:void 0},$10.createElement($18,{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,showBottomToolbar:!0,aboveContent:$10.createElement($20,null),initialQuery:b}))))};`,
+			Replace: `var ${1}=()=>{var a=${2}(),b=${3}();return(0,${4}.useCallback)((c,${5})=>{b(${6}.map(f=>({trigger:f,ran:!1})));a(c,{section:${5},replace:!0})},[a,b])};var ${8}=()=>{var a=${1}(),{q:b,section:sec}=${9}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);return ${10}.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},isMobileNew?${10}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${10}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${10}.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},${10}.createElement(${13},{surface:"background"})),${10}.createElement("div",{className:"shrink-0 p-2"},${10}.createElement(${16},{cascadeId:void 0},${10}.createElement(${18},{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,showBottomToolbar:!0,aboveContent:${10}.createElement(${20},null),initialQuery:b}))))};`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -193,12 +197,12 @@ func All() []Patch {
 		},
 		{
 			ID:      "mobile-project-add-button",
-			Desc:    "Enable the New Conversation + button next to project rows on mobile",
+			Desc:    "Always show project New Conversation button on mobile touch devices without hovering",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectAddButtonRe,
-			Replace: `if(true){let $1=$3==="environment"?"New Conversation in Workspace":"New Conversation in Project"`,
+			Replace: `if(true){let $4=$6==="project"?"New Conversation in Project":$7==="environment"?"New Conversation in Workspace":void 0`,
 		},
 		{
 			ID:      "mobile-project-header-actions",
@@ -207,7 +211,16 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectHeaderActionsRe,
-			Replace: `className:Pm("absolute right-1 top-0 flex h-full items-center gap-1","opacity-100")`,
+			Replace: `className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
+		},
+		{
+			ID:      "mobile-project-add-click-close-sidebar",
+			Desc:    "Automatically collapse mobile sidebar drawer when clicking + new conversation on mobile",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileProjectAddClickCloseSidebarRe,
+			Replace: `onClick:${1}=>{${2}.stopPropagation();${3}(${2})||(function(){try{if(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){var _sb=document.querySelector('[data-testid="sidebar-toggle"], [data-testid="mobile-toggle-sidebar"]');if(_sb&&window.getComputedStyle(_sb).display!=="none"){_sb.click();}}}catch(e){}}(),${2}.preventDefault(),${4}(${2}))}`,
 		},
 		{
 			ID:      "mobile-user-message-actions",
@@ -220,16 +233,16 @@ func All() []Patch {
 		},
 		{
 			ID:      "mobile-conversation-row-actions",
-			Desc:    "Enable conversation row action buttons (Delete, Rename, Pin) on mobile",
+			Desc:    "Always show conversation row actions (kebab menu) on touch devices without hovering",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileConversationRowActionsRe,
-			Replace: `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",$1||$2?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+			Replace: `className:"absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10 opacity-100"`,
 		},
 		{
 			ID:      "mobile-conversation-gradient-remove",
-			Desc:    "Remove opaque gradient background behind conversation action buttons",
+			Desc:    "Remove white background gradient behind conversation actions to keep buttons visible on dark/light themes",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
@@ -255,13 +268,22 @@ func All() []Patch {
 			Replace: `r&&(L.push({iconName:"edit",tooltip:"Rename",onClick:$1}),L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
 		},
 		{
+			ID:      "mobile-delete-modal-export",
+			Desc:    "Export conversation delete modal component to global window for adaptive titlebar rendering",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileDeleteModalExportRe,
+			Replace: `var $1=window.__agyDeleteModal=$2`,
+		},
+		{
 			ID:      "mobile-titlebar-delete-modal",
 			Desc:    "Render conversation delete confirmation modal in titlebar component",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteModalRe,
-			Replace: `$1$9.createElement(hlb,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:agyDel,showLoadingSpinner:agyDelSpin}),`,
+			Replace: `${1}window.__agyDeleteModal?${8}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(r)agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
 		},
 		{
 			ID:      "mobile-kebab-menu-pin-archive",
@@ -270,7 +292,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileKebabMenuPinArchiveRe,
-			Replace: `const dlb=({cascadeId:$1,onDeleteClick:$2,onRenameClick:$3,onMarkAsReadClick:$4,isUnread:$5,onViewDebugClick:$6,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$7.createElement($8,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},$9.createElement($10,{onClick:$11,"data-testid":"conversation-rename-menu-item"},$12.createElement($13,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),$14.createElement("span",null,"Rename")),agyPin&&$7.createElement($10,{onClick:agyPin,"data-testid":"conversation-pin-menu-item"},$12.createElement($13,{name:agyIsPinned?"keep_off":"keep",size:16,className:"text-secondary-foreground shrink-0"}),$14.createElement("span",null,agyIsPinned?"Unpin":"Pin")),agyArchive&&$7.createElement($10,{onClick:agyArchive,"data-testid":"conversation-archive-menu-item"},$12.createElement($13,{name:"archive",size:16,className:"text-secondary-foreground shrink-0"}),$14.createElement("span",null,"Archive")),`,
+			Replace: `const $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onViewDebugClick:$7,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$8.createElement($9,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},$10.createElement($11,{onClick:$12,"data-testid":"conversation-rename-menu-item"},$13.createElement($14,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,"Rename")),agyPin&&$8.createElement($11,{onClick:agyPin,"data-testid":"conversation-pin-menu-item"},$13.createElement($14,{name:agyIsPinned?"keep_off":"keep",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,agyIsPinned?"Unpin":"Pin")),agyArchive&&$8.createElement($11,{onClick:agyArchive,"data-testid":"conversation-archive-menu-item"},$13.createElement($14,{name:"archive",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,"Archive")),`,
 		},
 		{
 			ID:      "mobile-kebab-wrapper-pin-archive",
@@ -279,7 +301,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileKebabWrapperPinArchiveRe,
-			Replace: `var elb=({cascadeId:$1,onDeleteClick:$2,onRenameClick:$3,onMarkAsReadClick:$4,isUnread:$5,onOpenChange:$6,onViewDebugClick:$7,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$8.createElement($9,{onOpenChange:$10},$11.createElement($12,{asChild:!0},$13.createElement($14,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:$15=>void $16.stopPropagation()},$17.createElement($18,{name:"more_vert",size:16}))),$19.createElement(dlb,{cascadeId:$20,onDeleteClick:$21,onRenameClick:$22,onMarkAsReadClick:$23,isUnread:$24,onViewDebugClick:$25,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive}));`,
+			Replace: `var $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onOpenChange:$7,onViewDebugClick:$8,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$9.createElement($10,{onOpenChange:$11},$12.createElement($13,{asChild:!0},$14.createElement($15,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:$16=>void $17.stopPropagation()},$18.createElement($19,{name:"more_vert",size:16}))),$20.createElement($21,{cascadeId:$22,onDeleteClick:$23,onRenameClick:$24,onMarkAsReadClick:$25,isUnread:$26,onViewDebugClick:$27,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive}));`,
 		},
 		{
 			ID:      "mobile-kebab-call-pin-archive",
@@ -288,7 +310,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileKebabCallPinArchiveRe,
-			Replace: `G.createElement(elb,{cascadeId:$1,onDeleteClick:()=>{$2(!0)},onRenameClick:$3,onMarkAsReadClick:$4?$5:$6,isUnread:$7,onOpenChange:$8,onPinClick:ea,isPinned:Ea,onArchiveClick:ra})`,
+			Replace: `$1.createElement($2,{cascadeId:$3,onDeleteClick:()=>{$4(!0)},onRenameClick:$5,onMarkAsReadClick:$6,isUnread:$7,onOpenChange:$8,onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)})`,
 		},
 		{
 			ID:      "mobile-hide-aux-sidebar",
@@ -306,7 +328,25 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: func(Options) bool { return true },
 			FindRe:  settingsRulesEditorRe,
-			Replace: `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var [agyEdit,agySetEdit]=(0,G.useState)(!1),[agyTxt,agySetTxt]=(0,G.useState)(""),[agySave,agySetSave]=(0,G.useState)(!1),[agyDone,agySetDone]=(0,G.useState)(!1);var agyDoEdit=k||(b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){console.error(e)}}:void 0);var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){console.error(e)}finally{agySetSave(!1)}};k=agyDoEdit;var agyEditorNode=agyEdit?G.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},G.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write rule markdown instructions...",className:"w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary min-h-[220px] max-h-[500px] resize-y text-foreground leading-relaxed",spellCheck:!1}),G.createElement("div",{className:"flex items-center justify-end gap-2"},G.createElement(Ky,{variant:"ghost",size:"sm",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3"},"Cancel"),G.createElement(Ky,{variant:"secondary",size:"sm",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save Rule 💾")))):null;var agyExp=v?G.createElement(G.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;var w=k||m||p,`,
+			Replace: `${1}var _R=${12},[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)e=agySavedDesc;var agyDoEdit=${3}||(b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0);var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};${3}=agyDoEdit;var agyEditorNode=agyEdit?_R.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},_R.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write rule markdown instructions...",className:"w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary min-h-[220px] max-h-[500px] resize-y text-foreground leading-relaxed",spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save Rule 💾")))):null;var agyExp=${10}?_R.createElement(_R.Fragment,null,${10},agyEditorNode):agyEditorNode;${10}=agyExp;${11}`,
+		},
+		{
+			ID:      "suppress-conversation-unavailable-modal",
+			Desc:    "Suppress annoying Conversation unavailable popup when navigating away from deleted conversations",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  suppressConversationUnavailableRe,
+			Replace: `void 0`,
+		},
+		{
+			ID:      "force-disable-telemetry",
+			Desc:    "Force telemetry setting to be disabled by default in Settings and user settings state",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  disableTelemetryRe,
+			Replace: `return{telemetryEnabled:!1,marketingEmailsEnabled:`,
 		},
 
 		// Always start the folder picker at the configured workspace root instead of
@@ -369,7 +409,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadLargeFileStreamingRe,
-			Replace: `if($1)if($2.size>1048576){if(window.__agyUpload){window.__agyUpload([$2]);return;}console.error("Text file size exceeds 1MB limit");}`,
+			Replace: `if($1)if($2.size>1048576){if(window.__agyUpload){window.__agyUpload([$2]);return;}}`,
 		},
 
 		{
@@ -1169,7 +1209,7 @@ const uploaderScript = `<script>
     bytesSpan.textContent = '0 / ' + formatBytes(file.size);
     
     var speedSpan = document.createElement('span');
-    speedSpan.textContent = 'Starting...';
+    speedSpan.textContent = 'Uploading...';
 
     footer.appendChild(bytesSpan);
     footer.appendChild(speedSpan);
@@ -1229,6 +1269,10 @@ const uploaderScript = `<script>
       showError('Network error');
     };
 
+    xhr.ontimeout = function() {
+      showError('Request timed out');
+    };
+
     function showError(msg) {
       bar.style.background = '#ef4444';
       pctSpan.textContent = 'Failed';
@@ -1237,6 +1281,7 @@ const uploaderScript = `<script>
       setTimeout(function() { card.remove(); }, 5000);
     }
 
+    xhr.timeout = 120000;
     xhr.open('POST', '/__agy/api/upload');
     xhr.send(formData);
   };
