@@ -73,6 +73,7 @@ async function runComprehensiveSmokeTest() {
     }
 
     await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(2000);
     await page.waitForSelector("body", { state: "attached", timeout: 10000 });
     await page.keyboard.press("Escape");
 
