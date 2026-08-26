@@ -165,8 +165,31 @@ func (r *runner) start() error {
 	})
 	rulesMgr.Register(publicMux)
 
+	var (
+		shutdownReason string
+		shutdownMu     sync.Mutex
+	)
+	shutdown := make(chan struct{})
+	stop := sync.OnceFunc(func() { close(shutdown) })
+	stopWithReason := func(reason string) {
+		shutdownMu.Lock()
+		if shutdownReason == "" {
+			shutdownReason = reason
+		}
+		shutdownMu.Unlock()
+		stop()
+	}
+
 	if r.mode == modeServe {
-		updater.StartAutoUpdater(uploaderCtx, r.cfg, nil)
+		reloadLS := func() {
+			if instance != nil && instance.PID > 0 {
+				if proc, err := os.FindProcess(instance.PID); err == nil {
+					_ = proc.Signal(syscall.SIGTERM)
+				}
+			}
+			stopWithReason("Restarting server to apply Antigravity update…")
+		}
+		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS)
 	}
 
 	ui.NewSignIn(signin.New(instance, r.shimURLFile)).Register(publicMux)
@@ -179,9 +202,6 @@ func (r *runner) start() error {
 		}
 	}
 	publicMux.Handle("/", p.Handler())
-
-	shutdown := make(chan struct{})
-	stop := sync.OnceFunc(func() { close(shutdown) })
 
 	localUI := ui.NewLocal(ui.LocalOptions{
 		Version:       version,
@@ -232,7 +252,14 @@ func (r *runner) start() error {
 		info("Received %s, shutting down…", sig)
 	case <-shutdown:
 		fmt.Println()
-		info("Shutdown requested from the control panel…")
+		shutdownMu.Lock()
+		reason := shutdownReason
+		shutdownMu.Unlock()
+		if reason != "" {
+			info("%s", reason)
+		} else {
+			info("Shutdown requested from the control panel…")
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
