@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-Self-hosted server and web interface bridge for Google Antigravity.  
-Run Antigravity 24/7 on a headless Linux instance or local desktop, accessible directly via any web browser.
+A second front door to your own Antigravity — one that fixes the mobile web UI,  
+keeps the UI off Google's relay, and runs unattended on a cheap Linux box.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="Antigravity Server running on mobile browser" />
+| Official remote | Same server, through `agy-server` |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="Antigravity's conversation list on a phone through the official remote bridge" /> | <img src="docs/assets/compare-agy.png" width="380" alt="The same conversation list through agy-server, with a new-conversation button on every project and a kebab menu on every row" /> |
+| No `+` on a project. No `⋮` on a conversation. | New conversation per project, and delete / rename / pin / archive per row. |
+
+<sub>One headless Linux box, two front doors, minutes apart.</sub>
 
 [한국어](README.ko.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Português](README.pt-BR.md) · [Español](README.es.md)
 
@@ -19,20 +24,22 @@ Run Antigravity 24/7 on a headless Linux instance or local desktop, accessible d
 
 ## Why Antigravity Server? (vs Official Remote)
 
-Google provides an official remote bridge (`antigravity.google.com/r/...`), which routes traffic through a cloud relay and requires a desktop GUI application to remain active.
+Google now ships an official remote bridge at `antigravity.google.com`: sign in with the same account and you reach every machine of yours that is running Antigravity with remote access enabled. **Reaching your own agent from a phone is no longer something this project has to provide** — and a headless Linux server shows up in that list too.
 
-`agy-server` runs headlessly on a Linux cloud instance or local server, providing direct network access and mobile-first runtime patches:
+What the official bridge hands your phone is the desktop web bundle, unchanged. That is where `agy-server` earns its place: it sits in front of the same Antigravity core as a second, direct front door, and rewrites that bundle on the way out so a touch screen can actually use it.
 
-| Feature | Official Google Remote | Antigravity Server (`agy-server`) |
+The two are not exclusive. `agy-server` only enables the same `remoteControlEnabled` setting the official bridge uses, so one machine can serve both at once — use whichever address suits you.
+
+| | Official remote (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Hosting Mode** | Requires a desktop computer running the GUI app | **Headless Linux VPS / Cloud VM** (systemd service, auto-updater) |
-| **Connection & Latency** | Cloud relay through Google servers | **Direct Connection** (LAN, VPN, or reverse proxy with HTTPS) |
-| **Mobile Project Management** | No project `(+)` button; requires switching projects via bottom input | **Restored project `(+)` button** in project list headers |
-| **Conversation Control** | No conversation deletion, pin, or archive in mobile views | **Conversation controls**: Delete, Rename, Pin, and Archive on touch |
-| **Message Actions** | Undo and Copy buttons hidden behind hover states | **Undo (`↶`) and Copy (`📋`) buttons** visible on touch devices |
-| **iOS / PWA Keyboard Fit** | Bottom safe-area gap remains; viewport jumps on focus | **0px keyboard fit**: dynamic safe area collapse and viewport tracking |
-| **File Uploads** | 1MB RPC text limit | **Chunked streaming uploader**: upload large logs, HARs, and assets directly |
-| **Authentication & Privacy** | Bound to Google Account login & Google cloud relay | Password-protected (PBKDF2), session management, and rate-limiting |
+| **Mobile web UI** | The desktop bundle as-is | **25 named runtime patches** for touch |
+| **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
+| **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
+| **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
+| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse and viewport tracking while the keyboard is open |
+| **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
+| **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
+| **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
 
 ---
 
@@ -101,6 +108,10 @@ Antigravity Server supports the Progressive Web App (PWA) standard. Adding it to
 - **Touch-Friendly Controls**: Undo (`↶`) and Copy (`📋`) buttons remain permanently visible on mobile message bubbles.
 - **Full Conversation Management**: Delete conversations via the titlebar menu and toggle Pin/Archive directly from the history dropdown.
 - **Precise Keyboard Tracking**: Automatically collapses safe area insets to 0px when the on-screen keyboard appears.
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="The patched mobile web UI in a phone browser" />
+</div>
 
 ---
 
@@ -224,7 +235,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-`agy-server` applies runtime patches defined in [`internal/patches/registry.go`](internal/patches/registry.go) to adapt desktop web bundle behaviors for mobile browsers:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 42 patches, 25 of them touch-specific and the rest covering uploads, sign-in and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
@@ -268,6 +279,9 @@ All CLI flags can be set via environment variables prefixed with `AGY_` (e.g. `A
 ---
 
 ## FAQ
+
+**Google already has an official remote. Do I still need this?**  
+Only if the official mobile web UI gets in your way, or you would rather not relay through Google's servers and would rather gate access with your own password. Both can run on the same machine; nothing here disables the official bridge.
 
 **Does this require the Antigravity desktop GUI on Linux?**  
 No. `agy-server` runs the core `language_server` binary headlessly.
