@@ -3,7 +3,7 @@
 # Antigravity Server
 
 Una segunda puerta de entrada a tu propio Antigravity.  
-Arregla la interfaz web móvil, se salta el relay de Google y funciona solo en un Linux barato.
+Arregla la interfaz web móvil, mantiene la interfaz fuera del relay de Google y funciona solo en un Linux barato.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ Arregla la interfaz web móvil, se salta el relay de Google y funciona solo en u
 | <img src="docs/assets/compare-official.png" width="380" alt="La lista de conversaciones en un móvil a través del puente remoto oficial" /> | <img src="docs/assets/compare-agy.png" width="380" alt="La misma lista vía agy-server, con botón de nueva conversación en cada proyecto y menú kebab en cada fila" /> |
 | Sin `+` en los proyectos. Sin `⋮` en las conversaciones. | Nueva conversación por proyecto y eliminar / renombrar / fijar / archivar por fila. |
 
-<sub>Una máquina Linux headless, dos puertas de entrada, grabadas con minutos de diferencia.</sub>
+<sub>Una máquina Linux headless, dos puertas de entrada, capturadas con minutos de diferencia.</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Português](README.pt-BR.md)
 
@@ -32,15 +32,14 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interfaz web móvil** | El bundle de escritorio tal cual | **42 parches en tiempo de ejecución** para táctil |
+| **Interfaz web móvil** | El bundle de escritorio tal cual | **25 parches en tiempo de ejecución** para táctil |
 | **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
 | **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
 | **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
 | **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Colapso del Safe Area y seguimiento del viewport con el teclado abierto |
-| **Subida de archivos** | Límite de 1MB por RPC | **Subida por fragmentos** para logs, HARs y datasets grandes |
+| **Subida de archivos** | Límite de 1MB por RPC de texto | **Subida por fragmentos** para logs, HARs y datasets grandes |
 | **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
-| **Quién puede entrar** | Quien tenga esa cuenta de Google | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
-| **Ejecutar headless** | Lo montas tú | Un instalador: unidad systemd, HTTPS con Caddy, auto-actualizador de `language_server` |
+| **Acceso sin cuenta de Google** | Imposible — la cuenta es la puerta | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
 
 ---
 

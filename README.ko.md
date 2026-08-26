@@ -3,7 +3,7 @@
 # Antigravity Server
 
 내 안티그래비티로 들어가는 두 번째 현관.  
-모바일 웹 UI를 고치고, 구글 중계를 거치지 않고, 값싼 리눅스 서버에서 알아서 돌아갑니다.
+모바일 웹 UI를 고치고, UI는 구글 중계를 거치지 않고, 값싼 리눅스 서버에서 알아서 돌아갑니다.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -32,15 +32,14 @@
 
 | | 공식 원격 (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **모바일 웹 UI** | 데스크톱 번들 그대로 | 터치용 **런타임 패치 42개** |
+| **모바일 웹 UI** | 데스크톱 번들 그대로 | 터치용 **런타임 패치 25개** |
 | **대화 관리** | 모바일에서 삭제·고정·보관 불가 | 케밥 메뉴와 타이틀바에서 **삭제, 이름 변경, 고정, 보관** |
 | **프로젝트 이동** | 프로젝트 `(+)` 버튼 없음; 하단 입력창으로 전환 | 프로젝트 목록 헤더에 **`(+)` 버튼 복원** |
 | **메시지 액션** | 되돌리기·복사가 호버 뒤에 숨음 | 터치에서 **되돌리기(`↶`)·복사(`📋`) 상시 노출** |
 | **iOS 키보드** | 하단 Safe Area 여백 잔류, 포커스 시 뷰포트 출렁임 | 키보드가 열린 동안 Safe Area 축소와 뷰포트 추적 |
-| **파일 업로드** | 1MB RPC 용량 제한 | 대용량 로그·HAR·데이터셋용 **청크 스트리밍 업로더** |
+| **파일 업로드** | 1MB RPC 텍스트 용량 제한 | 대용량 로그·HAR·데이터셋용 **청크 스트리밍 업로더** |
 | **연결 경로** | 구글 서버 중계 | **직접 연결** — 내 도메인, 로컬 네트워크, VPN |
-| **누가 들어올 수 있나** | 그 구글 계정을 가진 사람 | 내 비밀번호(PBKDF2), 세션, 레이트 리밋 |
-| **헤드리스 운영** | 직접 구성 | 설치 스크립트 한 줄: systemd 유닛, Caddy HTTPS, `language_server` 자동 업데이터 |
+| **구글 계정 없이 접근** | 불가 — 계정이 곧 관문 | 내 비밀번호(PBKDF2), 세션, 레이트 리밋 |
 
 ---
 
@@ -236,7 +235,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)에 정의된 패치 42개로 그 번들을 지나가는 중에 고쳐 씁니다. 그중 일부:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 42개가 있고 그중 25개가 터치 전용이며, 나머지는 업로드·로그인·캐시 무효화를 담당합니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |

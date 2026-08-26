@@ -3,7 +3,7 @@
 # Antigravity Server
 
 A second front door to your own Antigravity — one that fixes the mobile web UI,  
-skips Google's relay, and runs unattended on a cheap Linux box.
+keeps the UI off Google's relay, and runs unattended on a cheap Linux box.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -32,15 +32,14 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 
 | | Official remote (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Mobile web UI** | The desktop bundle as-is | **42 named runtime patches** for touch |
+| **Mobile web UI** | The desktop bundle as-is | **25 named runtime patches** for touch |
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
 | **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse and viewport tracking while the keyboard is open |
-| **File uploads** | 1MB RPC payload limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
+| **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
-| **Who can get in** | Whoever holds that Google account | Your own password (PBKDF2), sessions, and rate limiting |
-| **Running it headless** | Set it up yourself | One installer: systemd unit, Caddy HTTPS, `language_server` auto-updater |
+| **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
 
 ---
 
@@ -236,7 +235,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight using the 42 patches defined in [`internal/patches/registry.go`](internal/patches/registry.go). A sample of what they change:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 42 patches, 25 of them touch-specific and the rest covering uploads, sign-in and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |

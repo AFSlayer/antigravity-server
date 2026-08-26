@@ -3,7 +3,7 @@
 # Antigravity Server
 
 自分のAntigravityへの二つ目の玄関。  
-モバイルWeb UIを直し、Googleの中継を通らず、安価なLinuxマシンで無人稼働します。
+モバイルWeb UIを直し、UIはGoogleの中継を通らず、安価なLinuxマシンで無人稼働します。
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -32,15 +32,14 @@ Googleは`antigravity.google.com`で公式のリモートブリッジを提供�
 
 | | 公式リモート（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **モバイルWeb UI** | デスクトップバンドルそのまま | タッチ向け**ランタイムパッチ42件** |
+| **モバイルWeb UI** | デスクトップバンドルそのまま | タッチ向け**ランタイムパッチ25件** |
 | **会話管理** | モバイルで削除・ピン留め・アーカイブ不可 | ケバブメニューとタイトルバーから**削除、名前変更、ピン留め、アーカイブ** |
 | **プロジェクト移動** | プロジェクト`(+)`ボタンなし；下部入力欄で切り替え | プロジェクト一覧ヘッダーに**`(+)`ボタンを復元** |
 | **メッセージアクション** | Undo・Copyがホバーの裏に隠れる | タッチで**Undo（`↶`）・Copy（`📋`）を常時表示** |
 | **iOSキーボード** | 下部Safe Areaの余白が残り、フォーカス時に画面が揺れる | キーボードが開いている間のSafe Area縮小とビューポート追従 |
-| **ファイルアップロード** | 1MB RPC容量制限 | 大容量ログ・HAR・データセット向け**チャンクストリーミングアップローダー** |
+| **ファイルアップロード** | 1MB RPCテキスト容量制限 | 大容量ログ・HAR・データセット向け**チャンクストリーミングアップローダー** |
 | **接続経路** | Googleのサーバー経由で中継 | **直接接続** — 自分のドメイン、ローカルネットワーク、VPN |
-| **誰が入れるか** | そのGoogleアカウントを持つ人 | 自分のパスワード（PBKDF2）、セッション、レート制限 |
-| **ヘッドレス運用** | 自前で構築 | インストーラー1行：systemdユニット、Caddy HTTPS、`language_server`自動更新 |
+| **Googleアカウントなしのアクセス** | 不可 — アカウントが関門 | 自分のパスワード（PBKDF2）、セッション、レート制限 |
 
 ---
 

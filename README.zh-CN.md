@@ -3,7 +3,7 @@
 # Antigravity Server
 
 通往你自己的 Antigravity 的第二道门。  
-修好移动端网页界面，不经 Google 中继，并在廉价 Linux 机器上无人值守运行。
+修好移动端网页界面，界面流量不经 Google 中继，并在廉价 Linux 机器上无人值守运行。
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -32,15 +32,14 @@ Google 现已在 `antigravity.google.com` 推出官方远程桥接：用同一�
 
 | | 官方远程（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **42 个运行时补丁** |
+| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **25 个运行时补丁** |
 | **对话管理** | 移动端无法删除、置顶或归档 | 在 kebab 菜单与标题栏中**删除、重命名、置顶、归档** |
 | **项目导航** | 缺少项目 `(+)` 按钮；需在底部输入框切换 | 在项目列表顶部**恢复 `(+)` 按钮** |
 | **消息操作** | 撤销与复制藏在鼠标悬停之后 | 触屏上**常显撤销（`↶`）与复制（`📋`）** |
 | **iOS 键盘** | 底部 Safe Area 留白，聚焦时视口抖动 | 键盘打开期间收起安全区并跟踪视口 |
-| **文件上传** | 1MB RPC 负载限制 | 面向大体积日志、HAR、数据集的**分块流式上传器** |
+| **文件上传** | 1MB RPC 文本大小限制 | 面向大体积日志、HAR、数据集的**分块流式上传器** |
 | **连接路径** | 经 Google 服务器中继 | **直连**——你自己的域名、局域网或 VPN |
-| **谁能进来** | 持有该 Google 账号的人 | 你自己的密码（PBKDF2）、会话与限流 |
-| **无头运行** | 自行搭建 | 一条安装命令：systemd 单元、Caddy HTTPS、`language_server` 自动更新 |
+| **无 Google 账号也能访问** | 不行 —— 账号即门禁 | 你自己的密码（PBKDF2）、会话与限流 |
 
 ---
 

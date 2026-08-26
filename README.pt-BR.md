@@ -3,7 +3,7 @@
 # Antigravity Server
 
 Uma segunda porta de entrada para o seu próprio Antigravity.  
-Corrige a interface web mobile, dispensa o relay do Google e roda sozinho num Linux barato.
+Corrige a interface web mobile, mantém a interface fora do relay do Google e roda sozinho num Linux barato.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ Corrige a interface web mobile, dispensa o relay do Google e roda sozinho num Li
 | <img src="docs/assets/compare-official.png" width="380" alt="A lista de conversas num celular pela ponte remota oficial" /> | <img src="docs/assets/compare-agy.png" width="380" alt="A mesma lista via agy-server, com botão de nova conversa em cada projeto e menu kebab em cada linha" /> |
 | Sem `+` nos projetos. Sem `⋮` nas conversas. | Nova conversa por projeto e excluir / renomear / fixar / arquivar por linha. |
 
-<sub>Uma máquina Linux headless, duas portas de entrada, gravadas com minutos de diferença.</sub>
+<sub>Uma máquina Linux headless, duas portas de entrada, capturadas com minutos de diferença.</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
@@ -32,15 +32,14 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interface web mobile** | O bundle de desktop como está | **42 patches de runtime** para toque |
+| **Interface web mobile** | O bundle de desktop como está | **25 patches de runtime** para toque |
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
 | **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Colapso do Safe Area e rastreamento de viewport com o teclado aberto |
-| **Upload de arquivos** | Limite de 1MB por RPC | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
+| **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
-| **Quem consegue entrar** | Quem tiver aquela conta Google | Sua própria senha (PBKDF2), sessões e rate-limiting |
-| **Rodar headless** | Você mesmo configura | Um instalador: unidade systemd, HTTPS via Caddy, auto-atualizador do `language_server` |
+| **Acesso sem conta Google** | Impossível — a conta é a porta | Sua própria senha (PBKDF2), sessões e rate-limiting |
 
 ---
 
