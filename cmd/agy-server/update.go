@@ -32,7 +32,7 @@ func updateCommand(args []string) error {
 		targetPath = lsproc.FindLanguageServer("")
 	}
 	if targetPath == "" {
-		targetPath = "/opt/agy-remote/language_server"
+		targetPath = "/opt/agy-server/language_server"
 	}
 
 	currentVersion := cfg.IDEVersion
@@ -58,7 +58,7 @@ func updateCommand(args []string) error {
 
 	if *checkOnly {
 		if info.UpdateAvailable {
-			fmt.Printf("  %s\n\n", yellow(fmt.Sprintf("! A new version %s is available (run 'agy-remote update' to install)", info.LatestVersion)))
+			fmt.Printf("  %s\n\n", yellow(fmt.Sprintf("! A new version %s is available (run 'agy-server update' to install)", info.LatestVersion)))
 		}
 		return nil
 	}
@@ -101,8 +101,8 @@ func updateCommand(args []string) error {
 	_ = cfg.Save()
 
 	fmt.Printf("  %s\n", dim("Next steps:"))
-	fmt.Printf("    • Restart the service: %s (or restart agy-remote serve)\n", cyan("sudo systemctl restart agy-remote"))
-	fmt.Printf("    • Verify installation: %s\n\n", cyan("agy-remote doctor"))
+	fmt.Printf("    • Restart the service: %s (or restart agy-server serve)\n", cyan("sudo systemctl restart agy-server"))
+	fmt.Printf("    • Verify installation: %s\n\n", cyan("agy-server doctor"))
 
 	return nil
 }

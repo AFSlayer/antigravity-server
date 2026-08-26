@@ -46,7 +46,7 @@ usage() {
   cat <<EOF
 Usage: shoot.sh <command> [args]
 
-  login <base-url>            docs/assets/login.png from a running agy-remote
+  login <base-url>            docs/assets/login.png from a running agy-server
   control <control-url>        docs/assets/control-panel.png
   hero <phone-screenshot.png>  docs/assets/hero.png
   frame <in.png> <out.png>     Wrap any phone screenshot in the device frame

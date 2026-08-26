@@ -92,7 +92,7 @@ func exitWith(err error) {
 // showDialog surfaces a fatal error through the desktop environment. Without it
 // a double-clicked binary would fail with no visible explanation at all.
 func showDialog(e *userError) {
-	title := "Antigravity Remote"
+	title := "Antigravity Server"
 	body := e.msg
 	if len(e.hints) > 0 {
 		body += "\n\n" + strings.Join(e.hints, "\n\n")
@@ -137,7 +137,7 @@ func waitForEnterOnWindows() {
 
 func banner(version string) {
 	fmt.Println()
-	fmt.Println("  " + bold("Antigravity Remote") + " " + dim("v"+version))
+	fmt.Println("  " + bold("Antigravity Server") + " " + dim("v"+version))
 }
 
 func rule() {

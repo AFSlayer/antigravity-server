@@ -1,5 +1,5 @@
 [Unit]
-Description=Antigravity Remote
+Description=Antigravity Server
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 User=ubuntu
 Environment=HOME=/home/ubuntu
 WorkingDirectory=/home/ubuntu
-ExecStart=/usr/local/bin/agy-remote serve
+ExecStart=/usr/local/bin/agy-server serve
 Restart=always
 RestartSec=5
 KillMode=mixed

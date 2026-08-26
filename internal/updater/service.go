@@ -16,7 +16,7 @@ func StartAutoUpdater(ctx context.Context, cfg *config.Config, reloadLS func()) 
 		targetPath = lsproc.FindLanguageServer("")
 	}
 	if targetPath == "" {
-		targetPath = "/opt/agy-remote/language_server"
+		targetPath = "/opt/agy-server/language_server"
 	}
 
 	go func() {

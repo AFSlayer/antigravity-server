@@ -196,6 +196,8 @@ func FindLanguageServer(configured string) string {
 	candidates := []string{
 		filepath.Join(exeDir, "language_server"),
 		filepath.Join(home, ".agy-remote", "language_server"),
+		"/opt/agy-server/language_server",
+		// Where the installer put it before the rename.
 		"/opt/agy-remote/language_server",
 	}
 
