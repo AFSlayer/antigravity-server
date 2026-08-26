@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-Servidor autoalojado y puente de interfaz web para Google Antigravity.  
-Ejecuta Antigravity 24/7 en una instancia Linux headless o en tu escritorio local, accesible directamente desde cualquier navegador web.
+Una segunda puerta de entrada a tu propio Antigravity.  
+Arregla la interfaz web móvil, se salta el relay de Google y funciona solo en un Linux barato.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="Antigravity Server en navegador móvil" />
+| Remoto oficial | El mismo servidor, vía `agy-server` |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="La lista de conversaciones en un móvil a través del puente remoto oficial" /> | <img src="docs/assets/compare-agy.png" width="380" alt="La misma lista vía agy-server, con botón de nueva conversación en cada proyecto y menú kebab en cada fila" /> |
+| Sin `+` en los proyectos. Sin `⋮` en las conversaciones. | Nueva conversación por proyecto y eliminar / renombrar / fijar / archivar por fila. |
+
+<sub>Una máquina Linux headless, dos puertas de entrada, grabadas con minutos de diferencia.</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Português](README.pt-BR.md)
 
@@ -19,20 +24,23 @@ Ejecuta Antigravity 24/7 en una instancia Linux headless o en tu escritorio loca
 
 ## ¿Por qué Antigravity Server? (vs Puente Remoto Oficial)
 
-Google proporciona un puente remoto oficial (`antigravity.google.com/r/...`), pero enruta el tráfico a través de su relay en la nube y requiere que la aplicación de escritorio permanezca abierta.
+Google ya ofrece un puente remoto oficial en `antigravity.google.com`: inicia sesión con la misma cuenta y llegas a todas tus máquinas que estén ejecutando Antigravity con el acceso remoto habilitado. **Llegar a tu propio agente desde el móvil ya no es algo que este proyecto tenga que aportar** — y un servidor Linux headless también aparece en esa lista.
 
-`agy-server` se ejecuta en modo headless en un VPS Linux o servidor local, proporcionando conexión de red directa y parches en tiempo de ejecución para móviles:
+Lo que el puente oficial entrega a tu móvil es el bundle web de escritorio, sin cambios. Ahí está el valor de `agy-server`: se coloca delante del mismo núcleo de Antigravity como una **segunda puerta directa** y reescribe ese bundle de salida para que una pantalla táctil pueda usarlo de verdad.
 
-| Característica | Puente Remoto Oficial de Google | Antigravity Server (`agy-server`) |
+Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteControlEnabled` que usa el puente oficial, así que una misma máquina sirve las dos vías — usa la dirección que te convenga.
+
+| | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Modo de Alojamiento** | Requiere la aplicación de escritorio GUI activa | **VPS Linux Headless / VM en la nube** (systemd, auto-actualizador) |
-| **Conexión y Latencia** | Retransmisión en la nube a través de Google | **Conexión Directa** (LAN, VPN o proxy inverso con HTTPS) |
-| **Gestión de Proyectos** | Sin botón `(+)`; cambio tedioso en el input | **Botón `(+)` restaurado** en la cabecera de proyectos |
-| **Control de Conversaciones** | No permite eliminar, fijar o archivar en móviles | **Control táctil**: Eliminar, Renombrar, Fijar y Archivar |
-| **Acciones de Mensaje** | Ocultas tras el cursor (hover) | **Botones Deshacer (`↶`) y Copiar (`📋`) visibles en móviles** |
-| **Ajuste de Teclado iOS/PWA** | Brecha en el Safe Area inferior; saltos de pantalla | **Ajuste 0px al teclado**: colapso dinámico del Safe Area |
-| **Subida de Archivos** | Límite de 1MB por RPC | **Subida por fragmentos (chunked)**: sube logs grandes y datasets |
-| **Autenticación y Privacidad** | Obligado a cuenta Google y relay en la nube | Protegido por contraseña (PBKDF2), sesiones y límite de intentos |
+| **Interfaz web móvil** | El bundle de escritorio tal cual | **42 parches en tiempo de ejecución** para táctil |
+| **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
+| **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
+| **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
+| **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Colapso del Safe Area y seguimiento del viewport con el teclado abierto |
+| **Subida de archivos** | Límite de 1MB por RPC | **Subida por fragmentos** para logs, HARs y datasets grandes |
+| **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
+| **Quién puede entrar** | Quien tenga esa cuenta de Google | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
+| **Ejecutar headless** | Lo montas tú | Un instalador: unidad systemd, HTTPS con Caddy, auto-actualizador de `language_server` |
 
 ---
 
@@ -101,6 +109,10 @@ Antigravity Server soporta el estándar Progressive Web App (PWA). Al añadirlo 
 - **Controles Táctiles**: Botones Deshacer (`↶`) y Copiar (`📋`) permanentemente visibles.
 - **Gestión Completa de Chats**: Elimina conversaciones desde la barra superior y fija o archiva desde el menú desplegable.
 - **Seguimiento Preciso de Teclado**: Colapsa el Safe Area a 0px al abrir el teclado en pantalla.
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="La interfaz web móvil con parches, en un navegador de móvil" />
+</div>
 
 ---
 

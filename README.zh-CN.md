@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-适用于 Google Antigravity 的自托管服务端与 Web 界面桥接工具。  
-在无头 Linux 实例或本地电脑上 24/7 全天候运行 Antigravity，并通过任意网页浏览器直接访问。
+通往你自己的 Antigravity 的第二道门。  
+修好移动端网页界面，不经 Google 中继，并在廉价 Linux 机器上无人值守运行。
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="在移动端浏览器运行的 Antigravity Server" />
+| 官方远程 | 同一台服务器，经 `agy-server` |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="通过官方远程桥接在手机上查看的对话列表" /> | <img src="docs/assets/compare-agy.png" width="380" alt="同一个对话列表，经 agy-server：每个项目都有新建对话按钮，每一行都有 kebab 菜单" /> |
+| 项目上没有 `+`，对话上没有 `⋮`。 | 每个项目可新建对话，每一行可删除 / 重命名 / 置顶 / 归档。 |
+
+<sub>一台无头 Linux 机器，两道门，前后相隔几分钟拍摄。</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [Português](README.pt-BR.md) · [Español](README.es.md)
 
@@ -19,20 +24,23 @@
 
 ## 为什么选择 Antigravity Server？（对比官方远程桥接）
 
-Google 提供了官方远程桥接（`antigravity.google.com/r/...`），但必须通过其云端中继，且需要桌面 GUI 应用程序始终保持运行。
+Google 现已在 `antigravity.google.com` 推出官方远程桥接：用同一账号登录，即可访问你所有正在运行 Antigravity 且开启远程访问的机器。**“用手机访问自己的智能体”本身已不再需要本项目提供**，而且无头 Linux 服务器同样会出现在那个列表里。
 
-`agy-server` 可在 Linux 云服务器或本地服务器上以无头模式运行，提供直接网络连接和移动端专属补丁：
+官方桥接下发到手机上的，是原封不动的桌面网页包。这正是 `agy-server` 的价值所在：它作为**第二道直连门户**站在同一个 Antigravity 内核前面，在网页包发出的路上把它改写成触屏能用的样子。
 
-| 功能 | Google 官方远程桥接 | Antigravity Server (`agy-server`) |
+两者并不互斥。`agy-server` 打开的也只是官方桥接所用的那个 `remoteControlEnabled` 设置，因此同一台机器可以同时服务两边——用哪个地址都行。
+
+| | 官方远程（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **托管环境** | 必须始终运行桌面 GUI 应用程序 | **无头 Linux VPS / 云服务器**（systemd 服务、自动更新） |
-| **连接与延迟** | 经由 Google 云端中继转发 | **直连访问**（局域网、VPN 或 HTTPS 反向代理） |
-| **移动端项目管理** | 缺少项目 `(+)` 按钮；切换繁琐 | 在项目列表顶部**恢复 `(+)` 新建对话按钮** |
-| **对话管理控制** | 移动端无法删除、置顶或归档对话 | **触控对话控制**：支持删除、重命名、置顶和归档 |
-| **消息操作** | 仅支持鼠标悬停；移动端无法撤销/复制 | 在消息气泡上**常显撤销（`↶`）与复制（`📋`）按钮** |
-| **iOS / PWA 键盘贴合** | 底部 Safe Area 留白且输入法弹出时视口抖动 | **0px 紧贴键盘**：动态消除安全区留白与视口跟踪 |
-| **文件上传** | 1MB RPC 文本大小限制 | **分块流式上传器**：直接传输大体积日志、HAR 和数据集 |
-| **认证与隐私** | 必须使用 Google 账号并经过云中继 | 密码保护（PBKDF2）、会话管理与防暴力破解 |
+| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **42 个运行时补丁** |
+| **对话管理** | 移动端无法删除、置顶或归档 | 在 kebab 菜单与标题栏中**删除、重命名、置顶、归档** |
+| **项目导航** | 缺少项目 `(+)` 按钮；需在底部输入框切换 | 在项目列表顶部**恢复 `(+)` 按钮** |
+| **消息操作** | 撤销与复制藏在鼠标悬停之后 | 触屏上**常显撤销（`↶`）与复制（`📋`）** |
+| **iOS 键盘** | 底部 Safe Area 留白，聚焦时视口抖动 | 键盘打开期间收起安全区并跟踪视口 |
+| **文件上传** | 1MB RPC 负载限制 | 面向大体积日志、HAR、数据集的**分块流式上传器** |
+| **连接路径** | 经 Google 服务器中继 | **直连**——你自己的域名、局域网或 VPN |
+| **谁能进来** | 持有该 Google 账号的人 | 你自己的密码（PBKDF2）、会话与限流 |
+| **无头运行** | 自行搭建 | 一条安装命令：systemd 单元、Caddy HTTPS、`language_server` 自动更新 |
 
 ---
 
@@ -101,6 +109,10 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - **触控便捷操作**：在消息气泡上常驻显示撤销（`↶`）和复制（`📋`）按钮。
 - **完整的对话管理**：通过顶栏菜单删除对话，在列表菜单中一键置顶或归档。
 - **精确虚拟键盘跟踪**：输入法激活时自动将 Safe Area 间距压缩至 0px。
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="手机浏览器中经过补丁的移动端网页界面" />
+</div>
 
 ---
 

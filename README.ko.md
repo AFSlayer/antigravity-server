@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-구글 안티그래비티(Google Antigravity)를 위한 셀프 호스팅 서버 및 웹 인터페이스 브릿지.  
-헤드리스 리눅스 인스턴스 또는 로컬 데스크톱에서 24/7 상시 구동하고, 웹 브라우저로 직접 접속합니다.
+내 안티그래비티로 들어가는 두 번째 현관.  
+모바일 웹 UI를 고치고, 구글 중계를 거치지 않고, 값싼 리눅스 서버에서 알아서 돌아갑니다.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="모바일 브라우저에서 실행 중인 Antigravity Server" />
+| 공식 원격 | 같은 서버, `agy-server` 경유 |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="공식 원격 브릿지로 접속한 폰의 대화 목록" /> | <img src="docs/assets/compare-agy.png" width="380" alt="같은 대화 목록을 agy-server로 접속 — 프로젝트마다 새 대화 버튼, 행마다 케밥 메뉴" /> |
+| 프로젝트에 `+` 없음. 대화에 `⋮` 없음. | 프로젝트별 새 대화, 행마다 삭제 / 이름 변경 / 고정 / 보관. |
+
+<sub>헤드리스 리눅스 서버 한 대, 현관 두 개. 몇 분 간격으로 촬영.</sub>
 
 [English](README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Português](README.pt-BR.md) · [Español](README.es.md)
 
@@ -19,20 +24,23 @@
 
 ## 왜 Antigravity Server인가? (공식 원격 브릿지 비교)
 
-구글은 공식 원격 브릿지(`antigravity.google.com/r/...`)를 제공하지만, 클라우드 중계를 거치며 데스크톱 GUI 앱이 항상 켜져 있어야 합니다.
+구글이 `antigravity.google.com`에 공식 원격 브릿지를 내놨습니다. 같은 계정으로 로그인하면 안티그래비티가 켜져 있고 원격 접속이 허용된 내 모든 머신에 닿습니다. **이제 "폰에서 내 에이전트를 쓴다"는 것 자체는 이 프로젝트가 제공할 일이 아니고**, 헤드리스 리눅스 서버도 그 목록에 잡힙니다.
 
-`agy-server`는 리눅스 클라우드 인스턴스 또는 로컬 서버에서 헤드리스로 구동되어 직접적인 네트워크 접속과 모바일 맞춤형 런타임 패치를 제공합니다:
+공식 브릿지가 폰으로 내려주는 것은 데스크톱 웹 번들 그대로입니다. `agy-server`의 존재 이유가 여기입니다 — 같은 안티그래비티 코어 앞에 **두 번째 직접 현관**으로 서서, 나가는 번들을 터치로 쓸 수 있게 고쳐 씁니다.
 
-| 기능 | 구글 공식 원격 브릿지 | Antigravity Server (`agy-server`) |
+둘은 배타적이지 않습니다. `agy-server`가 켜는 것도 공식 브릿지가 쓰는 `remoteControlEnabled` 설정 하나이므로, 한 머신이 양쪽을 동시에 서빙합니다 — 편한 주소를 쓰면 됩니다.
+
+| | 공식 원격 (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **호스팅 환경** | 데스크톱 GUI 앱이 항상 실행 중이어야 함 | **헤드리스 리눅스 VPS / 클라우드 VM** (systemd 서비스, 자동 업데이트) |
-| **연결 방식 및 지연 시간** | 구글 클라우드 중계 서버 경유 | **직접 연결** (로컬 네트워크, VPN, 또는 HTTPS 리버스 프록시) |
-| **모바일 프로젝트 관리** | 프로젝트 `(+)` 버튼 누락; 하단 입력창에서 번거롭게 전환 | 프로젝트 헤더에 **`(+)` 새 대화 생성 버튼 복원** |
-| **대화 관리 기능** | 모바일 뷰에서 대화 삭제, 고정(Pin), 보관(Archive) 불가 | **터치 대화 제어**: 삭제, 이름 변경, 고정, 보관 완벽 지원 |
-| **메시지 액션** | 마우스 호버 전용으로 모바일에서 되돌리기/복사 불가 | 모바일 말풍선에 **되돌리기(`↶`) 및 복사(`📋`) 버튼 상시 노출** |
-| **iOS / PWA 키보드 핏** | 하단 Safe Area 여백 잔류 및 포커스 시 뷰포트 출렁임 | **0px 키보드 밀착**: 동적 Safe Area 축소 및 뷰포트 트래킹 |
-| **파일 업로드** | 1MB RPC 텍스트 용량 제한 | **청크 스트리밍 업로더**: 대용량 로그, HAR, 데이터셋 직접 전송 |
-| **인증 및 프라이버시** | 구글 계정 로그인 및 구글 클라우드 중계 필수 | 비밀번호 기반 보호 (PBKDF2), 세션 관리, 무차별 대입 방어 |
+| **모바일 웹 UI** | 데스크톱 번들 그대로 | 터치용 **런타임 패치 42개** |
+| **대화 관리** | 모바일에서 삭제·고정·보관 불가 | 케밥 메뉴와 타이틀바에서 **삭제, 이름 변경, 고정, 보관** |
+| **프로젝트 이동** | 프로젝트 `(+)` 버튼 없음; 하단 입력창으로 전환 | 프로젝트 목록 헤더에 **`(+)` 버튼 복원** |
+| **메시지 액션** | 되돌리기·복사가 호버 뒤에 숨음 | 터치에서 **되돌리기(`↶`)·복사(`📋`) 상시 노출** |
+| **iOS 키보드** | 하단 Safe Area 여백 잔류, 포커스 시 뷰포트 출렁임 | 키보드가 열린 동안 Safe Area 축소와 뷰포트 추적 |
+| **파일 업로드** | 1MB RPC 용량 제한 | 대용량 로그·HAR·데이터셋용 **청크 스트리밍 업로더** |
+| **연결 경로** | 구글 서버 중계 | **직접 연결** — 내 도메인, 로컬 네트워크, VPN |
+| **누가 들어올 수 있나** | 그 구글 계정을 가진 사람 | 내 비밀번호(PBKDF2), 세션, 레이트 리밋 |
+| **헤드리스 운영** | 직접 구성 | 설치 스크립트 한 줄: systemd 유닛, Caddy HTTPS, `language_server` 자동 업데이터 |
 
 ---
 
@@ -101,6 +109,10 @@ Antigravity Server는 PWA(Progressive Web App) 규격을 완벽 지원합니다.
 - **터치 액션 버튼**: 내 메시지 말풍선에 되돌리기(`↶`) 및 복사(`📋`) 버튼 상시 노출.
 - **완전한 대화 제어**: 상단바 메뉴를 통한 대화 삭제 및 목록 메뉴를 통한 고정(Pin) / 보관(Archive).
 - **정밀 가상 키보드 트래킹**: 온스크린 키보드가 올라올 때 Safe Area 여백을 0px로 축소하여 키보드 상단에 완벽 안착.
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="폰 브라우저에서 동작하는 패치된 모바일 웹 UI" />
+</div>
 
 ---
 
@@ -224,7 +236,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-`agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)에 정의된 런타임 패치를 통해 데스크톱 웹 번들을 모바일 환경에 맞게 적응시킵니다:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)에 정의된 패치 42개로 그 번들을 지나가는 중에 고쳐 씁니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |
@@ -268,6 +280,9 @@ agy-server config [flags]       config.json 설정값 관리
 ---
 
 ## 자주 묻는 질문 (FAQ)
+
+**구글이 공식 원격을 내놨는데도 이게 필요한가요?**  
+공식 모바일 웹 UI가 불편하거나, 구글 서버를 중계로 쓰지 않고 내 비밀번호로 접근을 통제하고 싶을 때만 필요합니다. 한 머신에서 양쪽을 동시에 쓸 수 있고, 이 프로젝트가 공식 브릿지를 끄지도 않습니다.
 
 **리눅스에 Antigravity 데스크톱 GUI 프로그램이 설치되어 있어야 하나요?**  
 아닙니다. `agy-server`는 GUI 없이 코어 `language_server` 바이너리만 독립적으로 구동합니다.

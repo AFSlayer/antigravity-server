@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-Servidor auto-hospedado e ponte de interface web para o Google Antigravity.  
-Execute o Antigravity 24/7 em uma instância Linux headless ou no seu desktop local, acessível via navegador web.
+Uma segunda porta de entrada para o seu próprio Antigravity.  
+Corrige a interface web mobile, dispensa o relay do Google e roda sozinho num Linux barato.
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="Antigravity Server no navegador mobile" />
+| Remoto oficial | O mesmo servidor, via `agy-server` |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="A lista de conversas num celular pela ponte remota oficial" /> | <img src="docs/assets/compare-agy.png" width="380" alt="A mesma lista via agy-server, com botão de nova conversa em cada projeto e menu kebab em cada linha" /> |
+| Sem `+` nos projetos. Sem `⋮` nas conversas. | Nova conversa por projeto e excluir / renomear / fixar / arquivar por linha. |
+
+<sub>Uma máquina Linux headless, duas portas de entrada, gravadas com minutos de diferença.</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
@@ -19,20 +24,23 @@ Execute o Antigravity 24/7 em uma instância Linux headless ou no seu desktop lo
 
 ## Por que Antigravity Server? (vs Ponte Remota Oficial)
 
-O Google oferece uma ponte remota oficial (`antigravity.google.com/r/...`), mas o tráfego passa por um relay na nuvem e exige que o aplicativo desktop permaneça aberto.
+O Google agora oferece uma ponte remota oficial em `antigravity.google.com`: entre com a mesma conta e você alcança todas as suas máquinas que estejam rodando o Antigravity com acesso remoto habilitado. **Chegar ao seu próprio agente pelo celular já não é algo que este projeto precise fornecer** — e um servidor Linux headless também aparece nessa lista.
 
-O `agy-server` roda em modo headless em um VPS Linux ou servidor local, oferecendo conexão de rede direta e patches de interface para dispositivos móveis:
+O que a ponte oficial entrega ao seu celular é o bundle web de desktop, sem alterações. É aí que o `agy-server` se justifica: ele fica na frente do mesmo núcleo do Antigravity como uma **segunda porta direta** e reescreve esse bundle na saída, para que uma tela de toque consiga realmente usá-lo.
 
-| Recurso | Ponte Remota Oficial Google | Antigravity Server (`agy-server`) |
+Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuração `remoteControlEnabled` que a ponte oficial usa, então uma máquina serve os dois ao mesmo tempo — use o endereço que preferir.
+
+| | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Ambiente de Hospedagem** | Exige app desktop com interface gráfica aberto | **VPS Linux Headless / VM na nuvem** (serviço systemd, auto-atualizador) |
-| **Conexão e Latência** | Relay em nuvem através dos servidores Google | **Conexão Direta** (LAN, VPN ou proxy reverso com HTTPS) |
-| **Gestão de Projetos Mobile** | Sem botão `(+)`; troca incômoda pelo input | **Botão `(+)` restaurado** no cabeçalho dos projetos |
-| **Controle de Conversas** | Não permite excluir, fixar ou arquivar no celular | **Controle por toque**: Excluir, Renomear, Fixar e Arquivar |
-| **Ações de Mensagem** | Ocultas sob o cursor (hover) | **Botões Desfazer (`↶`) e Copiar (`📋`) visíveis no mobile** |
-| **Ajuste de Teclado iOS/PWA** | Espaço vazio no Safe Area; tela pula ao focar | **Ajuste 0px ao teclado**: colapso dinâmico do Safe Area |
-| **Upload de Arquivos** | Limite de 1MB por RPC | **Upload por streaming fragmentado**: envie logs pesados e datasets |
-| **Autenticação e Privacidade** | Vinculado à conta Google e relay na nuvem | Protegido por senha (PBKDF2), gestão de sessões e rate-limiting |
+| **Interface web mobile** | O bundle de desktop como está | **42 patches de runtime** para toque |
+| **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
+| **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
+| **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
+| **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Colapso do Safe Area e rastreamento de viewport com o teclado aberto |
+| **Upload de arquivos** | Limite de 1MB por RPC | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
+| **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
+| **Quem consegue entrar** | Quem tiver aquela conta Google | Sua própria senha (PBKDF2), sessões e rate-limiting |
+| **Rodar headless** | Você mesmo configura | Um instalador: unidade systemd, HTTPS via Caddy, auto-atualizador do `language_server` |
 
 ---
 
@@ -101,6 +109,10 @@ O Antigravity Server suporta o padrão Progressive Web App (PWA). Ao adicioná-l
 - **Controles por Toque**: Botões Desfazer (`↶`) e Copiar (`📋`) permanentemente visíveis nos balões de mensagem.
 - **Gerenciamento de Conversas**: Exclua conversas pela barra superior e fixe ou arquive pelo menu lateral.
 - **Ajuste Preciso do Teclado**: Reduz o Safe Area para 0px assim que o teclado virtual aparece.
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="A interface web mobile com patches, num navegador de celular" />
+</div>
 
 ---
 

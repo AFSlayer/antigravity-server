@@ -2,14 +2,19 @@
 
 # Antigravity Server
 
-Google AntigravityのためのセルフホストサーバーおよびWebインターフェースブリッジ。  
-ヘッドレスLinuxインスタンスまたはローカルデスクトップで24時間365日常時稼働し、Webブラウザから直接アクセスします。
+自分のAntigravityへの二つ目の玄関。  
+モバイルWeb UIを直し、Googleの中継を通らず、安価なLinuxマシンで無人稼働します。
 
 [![release](https://img.shields.io/github/v/release/AFSlayer/antigravity-server?style=flat-square&color=4f7cff)](https://github.com/AFSlayer/antigravity-server/releases/latest)
 [![ci](https://img.shields.io/github/actions/workflow/status/AFSlayer/antigravity-server/ci.yml?branch=main&style=flat-square)](https://github.com/AFSlayer/antigravity-server/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-<img src="docs/assets/demo.gif" width="320" alt="モバイルブラウザで動作するAntigravity Server" />
+| 公式リモート | 同じサーバー、`agy-server`経由 |
+| :---: | :---: |
+| <img src="docs/assets/compare-official.png" width="380" alt="公式リモートブリッジ経由でスマートフォンに表示された会話一覧" /> | <img src="docs/assets/compare-agy.png" width="380" alt="同じ会話一覧をagy-server経由で表示。プロジェクトごとの新規会話ボタンと行ごとのケバブメニュー" /> |
+| プロジェクトに`+`なし。会話に`⋮`なし。 | プロジェクトごとに新規会話、行ごとに削除・名前変更・ピン留め・アーカイブ。 |
+
+<sub>ヘッドレスLinux 1台、玄関は2つ。数分違いで撮影。</sub>
 
 [English](README.md) · [한국어](README.ko.md) · [中文](README.zh-CN.md) · [Português](README.pt-BR.md) · [Español](README.es.md)
 
@@ -19,20 +24,23 @@ Google AntigravityのためのセルフホストサーバーおよびWebイン�
 
 ## なぜAntigravity Serverなのか？（公式リモートブリッジとの比較）
 
-Googleは公式のリモートブリッジ（`antigravity.google.com/r/...`）を提供していますが、クラウド中継を経由し、デスクトップGUIアプリが常に起動している必要があります。
+Googleは`antigravity.google.com`で公式のリモートブリッジを提供開始しました。同じアカウントでログインすれば、Antigravityが起動していてリモートアクセスを許可した自分のマシンすべてに届きます。**「スマートフォンから自分のエージェントを使う」こと自体は、もはや本プロジェクトが担う話ではなく**、ヘッドレスLinuxサーバーもその一覧に現れます。
 
-`agy-server`はLinuxクラウドインスタンスまたはローカルサーバー上でヘッドレスで動作し、直接的なネットワークアクセスとモバイル向けのランタイムパッチを提供します：
+公式ブリッジがスマートフォンに届けるのは、デスクトップ用Webバンドルそのままです。`agy-server`の存在意義はここにあります — 同じAntigravityコアの前に**二つ目の直接玄関**として立ち、出ていくバンドルをタッチで使えるように書き換えます。
 
-| 機能 | Google公式リモートブリッジ | Antigravity Server (`agy-server`) |
+両者は排他的ではありません。`agy-server`が有効化するのも公式ブリッジが使う`remoteControlEnabled`設定ひとつなので、1台のマシンが両方を同時に提供できます — 都合のよいアドレスを使ってください。
+
+| | 公式リモート（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **ホスティング環境** | デスクトップGUIアプリが常に起動している必要あり | **ヘッドレスLinux VPS / クラウドVM**（systemdサービス、自動更新） |
-| **接続方式と遅延** | Googleクラウド中継サーバー経由 | **直接接続**（ローカルネットワーク、VPN、HTTPSリバースプロキシ） |
-| **モバイルプロジェクト管理** | プロジェクト`(+)`ボタンなし；下部入力欄での切り替えが必要 | プロジェクトヘッダーに**`(+)`新規会話ボタンを復元** |
-| **会話管理機能** | モバイル画面での会話削除、ピン留め、アーカイブ不可 | **タッチ会話制御**：削除、名前変更、ピン留め、アーカイブを完備 |
-| **メッセージアクション** | ホバー専用のためモバイルでUndo/Copy不可 | メッセージ吹き出しに**Undo（`↶`）およびCopy（`📋`）ボタンを常時表示** |
-| **iOS / PWAキーボード適合** | 下部Safe Areaの余白残存およびフォーカス時の画面揺れ | **0pxキーボード密着**：動的Safe Area縮小とビューポート追従 |
-| **ファイルアップロード** | 1MB RPCテキスト容量制限 | **チャンクストリーミングアップローダー**：大容量ログ、HAR、データを直接転送 |
-| **認証とプライバシー** | GoogleアカウントログインおよびGoogle中継が必須 | パスワード保護（PBKDF2）、セッション管理、総当たり攻撃防御 |
+| **モバイルWeb UI** | デスクトップバンドルそのまま | タッチ向け**ランタイムパッチ42件** |
+| **会話管理** | モバイルで削除・ピン留め・アーカイブ不可 | ケバブメニューとタイトルバーから**削除、名前変更、ピン留め、アーカイブ** |
+| **プロジェクト移動** | プロジェクト`(+)`ボタンなし；下部入力欄で切り替え | プロジェクト一覧ヘッダーに**`(+)`ボタンを復元** |
+| **メッセージアクション** | Undo・Copyがホバーの裏に隠れる | タッチで**Undo（`↶`）・Copy（`📋`）を常時表示** |
+| **iOSキーボード** | 下部Safe Areaの余白が残り、フォーカス時に画面が揺れる | キーボードが開いている間のSafe Area縮小とビューポート追従 |
+| **ファイルアップロード** | 1MB RPC容量制限 | 大容量ログ・HAR・データセット向け**チャンクストリーミングアップローダー** |
+| **接続経路** | Googleのサーバー経由で中継 | **直接接続** — 自分のドメイン、ローカルネットワーク、VPN |
+| **誰が入れるか** | そのGoogleアカウントを持つ人 | 自分のパスワード（PBKDF2）、セッション、レート制限 |
+| **ヘッドレス運用** | 自前で構築 | インストーラー1行：systemdユニット、Caddy HTTPS、`language_server`自動更新 |
 
 ---
 
@@ -101,6 +109,10 @@ Antigravity ServerはPWA（Progressive Web App）規格をサポートしてい�
 - **タッチ操作アクション**: メッセージ吹き出しにUndo（`↶`）およびCopy（`📋`）ボタンを常時表示。
 - **完全な会話管理**: タイトルバーメニューからの会話削除、リストメニューからのピン留め・アーカイブに対応。
 - **正確な仮想キーボード追従**: キーボード表示時にSafe Area余白を0pxに縮小し、キーボード上部にジャストフィット。
+
+<div align="center">
+<img src="docs/assets/demo.gif" width="320" alt="スマートフォンのブラウザで動作するパッチ適用済みモバイルWeb UI" />
+</div>
 
 ---
 

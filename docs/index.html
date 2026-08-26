@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Antigravity Remote — use Antigravity from your phone</title>
+    <title>Antigravity Server — a mobile web UI for Antigravity that actually works</title>
     <meta
       name="description"
-      content="One binary that serves the Antigravity desktop app's own web UI to your phone, behind a password. Or run it headless on a Linux server."
+      content="One binary in front of your own Antigravity: 42 runtime patches that make its web UI usable on a phone, a direct connection instead of Google's relay, and your own password. Runs unattended on a Linux server."
     />
     <meta name="theme-color" content="#0e0e11" />
     <link rel="icon" href="assets/favicon.ico" />
-    <meta property="og:title" content="Antigravity Remote" />
+    <meta property="og:title" content="Antigravity Server" />
     <meta
       property="og:description"
-      content="Use the Antigravity desktop app from your phone."
+      content="Fixes Antigravity's mobile web UI, skips Google's relay, runs unattended on a Linux server."
     />
     <meta property="og:image" content="assets/card.png" />
     <meta property="og:type" content="website" />
@@ -297,6 +297,22 @@
         font-size: 0.85rem;
         color: var(--muted);
       }
+      .compare {
+        margin: 1.75rem 0 0;
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: 1fr 1fr;
+      }
+      .compare img {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 0.6rem;
+      }
+      .compare figcaption {
+        grid-column: 1 / -1;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
       ul.plain {
         margin: 1.5rem 0 0;
         padding: 0;
@@ -345,7 +361,7 @@
     <main>
       <nav>
         <img src="assets/icon-192.png" alt="" />
-        <strong>Antigravity Remote</strong>
+        <strong>Antigravity Server</strong>
         <div class="links">
           <a href="#start">Quick start</a>
           <a href="#server">Server</a>
@@ -356,11 +372,12 @@
       <div class="hero">
         <div>
           <span class="eyebrow">Single binary · no dependencies</span>
-          <h1>Antigravity,<br /><em>on your phone.</em></h1>
+          <h1>Antigravity's web UI,<br /><em>fixed for thumbs.</em></h1>
           <p class="lede">
-            The Antigravity desktop app already contains a full web UI. It just
-            only listens on <code>127.0.0.1</code>. This puts a password in front
-            of it and forwards it to your devices.
+            Google's official remote already puts your agent on your phone — as
+            the desktop web bundle, untouched. This stands in front of the same
+            Antigravity core as a second, direct front door and rewrites that
+            bundle on the way out, behind your own password.
           </p>
           <div class="cta">
             <a class="btn primary" href="#start">Install in one line</a>
@@ -422,40 +439,55 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
       </section>
 
       <section>
-        <h2>Why this is different</h2>
+        <h2>Next to the official remote</h2>
         <p>
-          Every other project builds a UI — their own chat panel, or a screen
-          mirror. This one builds none, so nothing is missing and nothing falls
-          behind.
+          Google's bridge at <code>antigravity.google.com</code> reaches every
+          machine of yours that runs Antigravity with remote access on — a
+          headless Linux server included. The two are not exclusive: this enables
+          the same setting the official bridge uses, so one machine serves both.
+          What differs is what arrives at your phone, and how it gets there.
         </p>
+        <figure class="compare">
+          <img src="assets/compare-official.png" alt="Conversation list through the official remote bridge: no new-conversation button on a project, no menu on a row" />
+          <img src="assets/compare-agy.png" alt="The same list through agy-server: a new-conversation button on every project and a kebab menu on every row" />
+          <figcaption>
+            The same headless server, minutes apart. Left: the official bridge.
+            Right: through <code>agy-server</code>.
+          </figcaption>
+        </figure>
         <table>
           <thead>
             <tr>
               <th></th>
-              <th>Other projects</th>
-              <th>Antigravity Remote</th>
+              <th>Official remote</th>
+              <th>Antigravity Server</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>The UI</td>
-              <td>Reimplemented or mirrored</td>
-              <td><strong>Antigravity's own web UI</strong></td>
+              <td>Mobile web UI</td>
+              <td>The desktop bundle as-is</td>
+              <td><strong>42 runtime patches for touch</strong></td>
             </tr>
             <tr>
-              <td>Coverage</td>
-              <td>Whatever was ported</td>
-              <td><strong>Terminal, artifacts, browser agent, diffs</strong></td>
+              <td>Conversations</td>
+              <td>No delete, pin, or archive on mobile</td>
+              <td><strong>Delete, rename, pin, archive</strong></td>
             </tr>
             <tr>
-              <td>New features</td>
-              <td>Wait for a port</td>
-              <td><strong>Work the day Google ships them</strong></td>
+              <td>Uploads</td>
+              <td>1 MB RPC limit</td>
+              <td><strong>Chunked streaming, any size</strong></td>
             </tr>
             <tr>
-              <td>Runtime</td>
-              <td>Node.js and a package install</td>
-              <td><strong>One static binary</strong></td>
+              <td>Connection</td>
+              <td>Relayed through Google</td>
+              <td><strong>Direct, your own domain</strong></td>
+            </tr>
+            <tr>
+              <td>Access</td>
+              <td>Whoever holds the Google account</td>
+              <td><strong>Your password, sessions, rate limits</strong></td>
             </tr>
           </tbody>
         </table>
@@ -464,8 +496,8 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
       <section>
         <h2>Built for thumbs</h2>
         <p>
-          A desktop IDE in a phone browser has sharp edges. Fourteen named patches
-          fix them, and each one is listed in the control panel.
+          A desktop IDE in a phone browser has sharp edges. Forty-two named
+          patches fix them, and each one is listed in the control panel.
         </p>
         <ul class="plain">
           <li>Enter inserts a newline; Cmd/Ctrl+Enter sends</li>
