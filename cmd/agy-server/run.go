@@ -128,7 +128,7 @@ func (r *runner) start() error {
 	if err != nil {
 		return errWithHints(
 			fmt.Sprintf("Could not open a listening port: %v", err),
-			"Another program may be using the port. Try: agy-remote --port 8888")
+			"Another program may be using the port. Try: agy-server --port 8888")
 	}
 	publicPort := publicListener.Addr().(*net.TCPAddr).Port
 
@@ -311,8 +311,8 @@ func (r *runner) resolveLanguageServer() (*lsproc.Instance, error) {
 		return nil, errWithHints(
 			"Could not find the Antigravity desktop app.",
 			"Install it from https://antigravity.google/download (the desktop app, not the IDE).",
-			"If it is already installed, start it manually and run agy-remote again.",
-			"On a server with no desktop, use 'agy-remote serve' instead.")
+			"If it is already installed, start it manually and run agy-server again.",
+			"On a server with no desktop, use 'agy-server serve' instead.")
 	}
 
 	return r.waitForServer(ctx, 60*time.Second, lsproc.Filter{}, "")
@@ -324,7 +324,7 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		return nil, errWithHints(
 			"Could not find the Antigravity language_server binary.",
 			"Run the installer: curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install.sh | bash",
-			"Or point at an existing binary: agy-remote serve --language-server /path/to/language_server")
+			"Or point at an existing binary: agy-server serve --language-server /path/to/language_server")
 	}
 
 	filter := lsproc.Filter{BinaryPath: binary}
@@ -374,7 +374,7 @@ func (r *runner) waitForServer(ctx context.Context, timeout time.Duration, filte
 
 	if err != nil {
 		hints := []string{
-			"Make sure the Antigravity desktop app finished loading, then run agy-remote again.",
+			"Make sure the Antigravity desktop app finished loading, then run agy-server again.",
 		}
 		if logPath != "" {
 			hints = []string{fmt.Sprintf("Check the language server log: %s", logPath)}
@@ -459,7 +459,7 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 	case r.firstRun:
 		info("%-14s %s", "Password", dim("set from AGY_PASSWORD"))
 	default:
-		info("%-14s %s", "Password", dim("unchanged — run 'agy-remote passwd' to set a new one"))
+		info("%-14s %s", "Password", dim("unchanged — run 'agy-server passwd' to set a new one"))
 	}
 
 	fmt.Println()

@@ -111,7 +111,7 @@ func (c *checklist) checkGeminiConfig() {
 	if parsed.UserSettings.RemoteControlEnabled {
 		c.ok("Remote control is enabled in Antigravity settings")
 	} else {
-		c.skip("Remote control is not enabled yet (agy-remote will enable it)")
+		c.skip("Remote control is not enabled yet (agy-server will enable it)")
 	}
 }
 
@@ -129,14 +129,14 @@ func (c *checklist) checkRunning() *lsproc.Instance {
 	instance, err := lsproc.Find()
 	if err != nil {
 		c.bad("No standalone Antigravity language server is running")
-		c.note("Start the Antigravity desktop app, or run: agy-remote serve")
+		c.note("Start the Antigravity desktop app, or run: agy-server serve")
 		return nil
 	}
 
 	c.ok("Language server running (pid %d, port %d)", instance.PID, instance.Port)
 	if instance.CSRFToken == "" {
 		c.bad("Language server has no CSRF token, requests will be rejected")
-		c.note("Restart it through agy-remote so a token is passed")
+		c.note("Restart it through agy-server so a token is passed")
 	} else {
 		c.ok("CSRF token is present")
 	}
@@ -204,6 +204,8 @@ func alreadyServing(port int) bool {
 	if err != nil {
 		return false
 	}
+	// The marker keeps its pre-rename spelling on purpose: doctor often probes a
+	// port held by an older build, and both sides have to agree on the string.
 	return strings.Contains(string(body), `name="agy-remote"`)
 }
 
@@ -222,10 +224,10 @@ func (c *checklist) checkNetwork(cfg *config.Config) {
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.BindAddr, fmt.Sprint(cfg.Port)))
 	if err != nil {
 		if alreadyServing(cfg.Port) {
-			c.ok("Port %d is serving an agy-remote instance", cfg.Port)
+			c.ok("Port %d is serving an agy-server instance", cfg.Port)
 		} else {
 			c.bad("Port %d is already in use by something else", cfg.Port)
-			c.note("Pick another port: agy-remote --port 8888")
+			c.note("Pick another port: agy-server --port 8888")
 		}
 		return
 	}

@@ -32,7 +32,7 @@ Flags:
   --trusted-proxies CIDRS   Comma-separated proxy CIDRs, e.g. 127.0.0.1/32
   --session-days N          How long a signed-in device stays signed in (default 30)
   --no-mobile-patches       Serve the UI unmodified
-  --disable-patch ID        Turn off one patch, repeatable (see agy-remote doctor)
+  --disable-patch ID        Turn off one patch, repeatable (see agy-server doctor)
 
 Environment:
   AGY_PASSWORD, AGY_PORT, AGY_BIND, AGY_PUBLIC_URL, AGY_WORKSPACE_ROOT,
@@ -96,7 +96,7 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 		return nil, err
 	}
 
-	fs := flag.NewFlagSet("agy-remote", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agy-server", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 

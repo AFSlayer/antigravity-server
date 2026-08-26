@@ -24,8 +24,10 @@ builds:
       - amd64
       - arm64
 
+  # Same program under the name it shipped as before the rename, so existing
+  # installs and scripts keep working.
   - id: agy-remote
-    main: ./cmd/agy-remote
+    main: ./cmd/agy-server
     binary: agy-remote
     env:
       - CGO_ENABLED=0

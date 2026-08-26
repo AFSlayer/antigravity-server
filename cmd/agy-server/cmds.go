@@ -78,7 +78,7 @@ func passwd(args []string) error {
 	} else {
 		fmt.Fprintf(os.Stderr, "  %s Password updated\n", green("✓"))
 	}
-	fmt.Fprintf(os.Stderr, "  %s\n", dim("Signed-in devices stay signed in. Run 'agy-remote sessions revoke' to sign them out."))
+	fmt.Fprintf(os.Stderr, "  %s\n", dim("Signed-in devices stay signed in. Run 'agy-server sessions revoke' to sign them out."))
 	return nil
 }
 
@@ -132,7 +132,7 @@ func sessionsCommand(args []string) error {
 	}
 
 	fmt.Println()
-	info("%s", dim("Sign them all out with: agy-remote sessions revoke"))
+	info("%s", dim("Sign them all out with: agy-server sessions revoke"))
 	fmt.Println()
 	return nil
 }

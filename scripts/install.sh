@@ -4,15 +4,31 @@ set -euo pipefail
 REPO="AFSlayer/antigravity-server"
 DOWNLOAD_PAGE="https://antigravity.google/download"
 
+DEFAULT_LS_DIR="/opt/agy-server"
+
+# The project used to be called agy-remote. Installs from that era keep a 170 MB
+# language_server and a systemd unit under the old name, and both have to be
+# accounted for or an upgrade downloads it all again and then fights itself for
+# the port.
+LEGACY_NAME="agy-remote"
+LEGACY_LS_DIR="/opt/agy-remote"
+
 PREFIX="${AGY_INSTALL_PREFIX:-/usr/local/bin}"
-LS_DIR="${AGY_LS_DIR:-/opt/agy-remote}"
+LS_DIR="${AGY_LS_DIR:-$DEFAULT_LS_DIR}"
 BINARY_URL="${AGY_BINARY_URL:-}"
+
+# Asking for a directory that happens to equal the default is not the same as
+# saying nothing, so only the latter may fall back to the pre-rename location.
+LS_DIR_EXPLICIT="no"
+if [ -n "${AGY_LS_DIR:-}" ]; then
+  LS_DIR_EXPLICIT="yes"
+fi
 
 DOMAIN=""
 PASSWORD=""
 WORKSPACE_ROOT=""
 PORT="8765"
-SERVICE_NAME="agy-remote"
+SERVICE_NAME="agy-server"
 WORK_DIR=""
 ASSUME_YES="no"
 WANT_SERVICE="yes"
@@ -37,23 +53,23 @@ heading() { printf '\n  %s%s%s\n' "$BOLD" "$*" "$OFF"; }
 
 usage() {
   cat <<EOF
-Antigravity Remote installer
+Antigravity Server installer
 
 Usage: install.sh [options]
 
   --domain HOST         Serve over HTTPS on this domain (sets up Caddy)
   --password SECRET     Access password (generated if omitted)
   --workspace-root DIR  Where new projects are created (default \$HOME/workspace)
-  --port N              Local port for agy-remote (default 8765)
-  --prefix DIR          Where to install the agy-remote binary (default /usr/local/bin)
-  --ls-dir DIR          Where to install language_server (default /opt/agy-remote)
-  --service-name NAME   systemd unit name (default agy-remote)
+  --port N              Local port for agy-server (default 8765)
+  --prefix DIR          Where to install the agy-server binary (default /usr/local/bin)
+  --ls-dir DIR          Where to install language_server (default $DEFAULT_LS_DIR)
+  --service-name NAME   systemd unit name (default agy-server)
   --no-service          Skip the systemd unit
   --no-caddy            Skip Caddy even when --domain is given
   --yes                 Never prompt
 
 Environment:
-  AGY_BINARY_URL        Override the agy-remote download URL
+  AGY_BINARY_URL        Override the agy-server download URL
 EOF
 }
 
@@ -64,7 +80,7 @@ while [ "$#" -gt 0 ]; do
     --workspace-root) WORKSPACE_ROOT="${2:?--workspace-root needs a value}"; shift 2 ;;
     --port) PORT="${2:?--port needs a value}"; shift 2 ;;
     --prefix) PREFIX="${2:?--prefix needs a value}"; shift 2 ;;
-    --ls-dir) LS_DIR="${2:?--ls-dir needs a value}"; shift 2 ;;
+    --ls-dir) LS_DIR="${2:?--ls-dir needs a value}"; LS_DIR_EXPLICIT="yes"; shift 2 ;;
     --service-name) SERVICE_NAME="${2:?--service-name needs a value}"; shift 2 ;;
     --no-service) WANT_SERVICE="no"; shift ;;
     --no-caddy) WANT_CADDY="no"; shift ;;
@@ -79,7 +95,7 @@ require() {
 }
 
 detect_platform() {
-  [ "$(uname -s)" = "Linux" ] || die "The server installer supports Linux only. On macOS or Windows, just run agy-remote."
+  [ "$(uname -s)" = "Linux" ] || die "The server installer supports Linux only. On macOS or Windows, just run agy-server."
 
   case "$(uname -m)" in
     x86_64|amd64) ARCH="amd64"; HUB_SLUG="linux-x64" ;;
@@ -116,7 +132,7 @@ resolve_binary_url() {
     printf '%s' "$BINARY_URL"
     return
   fi
-  printf 'https://github.com/%s/releases/latest/download/agy-remote_linux_%s.tar.gz' "$REPO" "$ARCH"
+  printf 'https://github.com/%s/releases/latest/download/agy-server_linux_%s.tar.gz' "$REPO" "$ARCH"
 }
 
 resolve_hub_url() {
@@ -129,27 +145,40 @@ hub_version() {
   printf '%s' "$1" | sed -nE 's#.*/antigravity-hub/([0-9][0-9.]*)-[0-9]+/.*#\1#p'
 }
 
-install_agy_remote() {
+install_agy_server() {
   local url tmp
   url="$(resolve_binary_url)"
   tmp="$WORK_DIR/binary"
   mkdir -p "$tmp"
 
-  say "Downloading agy-remote…"
-  curl -fsSL "$url" -o "$tmp/agy-remote.tar.gz" ||
+  say "Downloading agy-server…"
+  curl -fsSL "$url" -o "$tmp/agy-server.tar.gz" ||
     die "Could not download $url"
 
-  tar -xzf "$tmp/agy-remote.tar.gz" -C "$tmp"
-  [ -f "$tmp/agy-remote" ] || die "The downloaded archive did not contain agy-remote."
+  tar -xzf "$tmp/agy-server.tar.gz" -C "$tmp"
+  [ -f "$tmp/agy-server" ] || die "The downloaded archive did not contain agy-server."
 
   sudo_run install -d "$PREFIX"
-  sudo_run install -m 0755 "$tmp/agy-remote" "$PREFIX/agy-remote"
-  ok "Installed $PREFIX/agy-remote"
+  sudo_run install -m 0755 "$tmp/agy-server" "$PREFIX/agy-server"
+  ok "Installed $PREFIX/agy-server"
+
+  # Upgrading over an older install: keep the old command name working rather
+  # than leaving a stale binary beside the new one.
+  if [ -f "$PREFIX/$LEGACY_NAME" ] && [ -f "$tmp/$LEGACY_NAME" ]; then
+    sudo_run install -m 0755 "$tmp/$LEGACY_NAME" "$PREFIX/$LEGACY_NAME"
+    ok "Updated $PREFIX/$LEGACY_NAME (older name, same build)"
+  fi
 }
 
 install_language_server() {
   if [ -x "$LS_DIR/language_server" ]; then
     ok "language_server already present at $LS_DIR/language_server"
+    return
+  fi
+
+  if [ "$LS_DIR_EXPLICIT" = "no" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
+    LS_DIR="$LEGACY_LS_DIR"
+    ok "Reusing language_server from $LS_DIR"
     return
   fi
 
@@ -189,17 +218,31 @@ write_config() {
 
   mkdir -p "${WORKSPACE_ROOT:-$HOME/workspace}"
 
-  AGY_IDE_VERSION="${IDE_VERSION:-}" "$PREFIX/agy-remote" "${args[@]}" >/dev/null
+  AGY_IDE_VERSION="${IDE_VERSION:-}" "$PREFIX/agy-server" "${args[@]}" >/dev/null
   ok "Wrote $HOME/.agy-remote/config.json"
 }
 
 set_password() {
   if [ -z "$PASSWORD" ]; then
-    PASSWORD="$("$PREFIX/agy-remote" passwd '' 2>/dev/null)"
+    PASSWORD="$("$PREFIX/agy-server" passwd '' 2>/dev/null)"
   else
-    "$PREFIX/agy-remote" passwd "$PASSWORD" >/dev/null 2>&1
+    "$PREFIX/agy-server" passwd "$PASSWORD" >/dev/null 2>&1
   fi
   ok "Access password set"
+}
+
+# Leaving the old unit enabled means two daemons racing for the same port, and
+# the loser restarts forever.
+disable_legacy_service() {
+  [ "$SERVICE_NAME" != "$LEGACY_NAME" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -f "/etc/systemd/system/${LEGACY_NAME}.service" ] || return 0
+  systemctl is-enabled --quiet "$LEGACY_NAME" 2>/dev/null ||
+    systemctl is-active --quiet "$LEGACY_NAME" 2>/dev/null ||
+    return 0
+
+  sudo_run systemctl disable --now "$LEGACY_NAME" >/dev/null 2>&1 || true
+  ok "Stopped the older $LEGACY_NAME service"
 }
 
 install_service() {
@@ -207,7 +250,7 @@ install_service() {
 
   sudo_run tee "$unit" >/dev/null <<EOF
 [Unit]
-Description=Antigravity Remote
+Description=Antigravity Server
 After=network-online.target
 Wants=network-online.target
 
@@ -216,7 +259,7 @@ Type=simple
 User=$(id -un)
 Environment=HOME=$HOME
 WorkingDirectory=$HOME
-ExecStart=$PREFIX/agy-remote serve
+ExecStart=$PREFIX/agy-server serve
 Restart=always
 RestartSec=5
 KillMode=mixed
@@ -246,6 +289,17 @@ install_caddy() {
   fi
 
   sudo_run install -d /etc/caddy/conf.d
+
+  # Two site files claiming the same domain make Caddy refuse to load. Only the
+  # one that claims this domain is in the way; a legacy file serving something
+  # else is somebody's live site.
+  local legacy_site="/etc/caddy/conf.d/${LEGACY_NAME}.caddy"
+  if [ "$SERVICE_NAME" != "$LEGACY_NAME" ] && [ -f "$legacy_site" ] &&
+    grep -qF "$DOMAIN {" "$legacy_site" 2>/dev/null; then
+    sudo_run rm -f "$legacy_site"
+    ok "Removed the older Caddy site file for $DOMAIN"
+  fi
+
   sudo_run tee "/etc/caddy/conf.d/${SERVICE_NAME}.caddy" >/dev/null <<EOF
 $DOMAIN {
 	encode zstd gzip
@@ -264,7 +318,7 @@ EOF
 }
 
 main() {
-  printf '\n  %sAntigravity Remote installer%s\n' "$BOLD" "$OFF"
+  printf '\n  %sAntigravity Server installer%s\n' "$BOLD" "$OFF"
 
   detect_platform
   require curl
@@ -278,19 +332,20 @@ main() {
   [ -n "$WORKSPACE_ROOT" ] || WORKSPACE_ROOT="$(ask 'Workspace folder' "$HOME/workspace")"
 
   heading "Downloading"
-  install_agy_remote
+  install_agy_server
   install_language_server
 
   heading "Configuring"
   write_config
   set_password
+  disable_legacy_service
 
   if [ "$WANT_SERVICE" = "yes" ]; then
     heading "Service"
     if command -v systemctl >/dev/null 2>&1; then
       install_service
     else
-      warn "systemd not found, skipping the service. Start it yourself with: agy-remote serve"
+      warn "systemd not found, skipping the service. Start it yourself with: agy-server serve"
     fi
   fi
 
@@ -324,7 +379,7 @@ main() {
   fi
 
   printf '\n  %sLogs%s   sudo journalctl -u %s -f\n' "$DIM" "$OFF" "$SERVICE_NAME"
-  printf '  %sCheck%s  agy-remote doctor\n\n' "$DIM" "$OFF"
+  printf '  %sCheck%s  agy-server doctor\n\n' "$DIM" "$OFF"
 }
 
 main "$@"

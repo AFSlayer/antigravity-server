@@ -21,7 +21,7 @@ die() {
 
 usage() {
   cat <<EOF
-Antigravity Remote — desktop installer
+Antigravity Server — desktop installer
 
 Usage: install-desktop.sh [options]
 
@@ -73,31 +73,31 @@ pick_target_dir() {
   fi
 }
 
-printf '\n  %sAntigravity Remote%s\n\n' "$BOLD" "$OFF"
+printf '\n  %sAntigravity Server%s\n\n' "$BOLD" "$OFF"
 
 TARGET_DIR="$(pick_target_dir)"
-URL="${BINARY_URL:-https://github.com/$REPO/releases/latest/download/agy-remote_${os}_${arch}.tar.gz}"
+URL="${BINARY_URL:-https://github.com/$REPO/releases/latest/download/agy-server_${os}_${arch}.tar.gz}"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 say "Downloading for ${os}/${arch}…"
-curl -fsSL "$URL" -o "$WORK_DIR/agy-remote.tar.gz" ||
+curl -fsSL "$URL" -o "$WORK_DIR/agy-server.tar.gz" ||
   die "Could not download $URL"
 
-tar -xzf "$WORK_DIR/agy-remote.tar.gz" -C "$WORK_DIR"
-[ -f "$WORK_DIR/agy-remote" ] || die "The archive did not contain agy-remote."
+tar -xzf "$WORK_DIR/agy-server.tar.gz" -C "$WORK_DIR"
+[ -f "$WORK_DIR/agy-server" ] || die "The archive did not contain agy-server."
 
 mkdir -p "$TARGET_DIR" 2>/dev/null || true
 if [ -w "$TARGET_DIR" ]; then
-  install -m 0755 "$WORK_DIR/agy-remote" "$TARGET_DIR/agy-remote"
+  install -m 0755 "$WORK_DIR/agy-server" "$TARGET_DIR/agy-server"
 else
   say "Installing to $TARGET_DIR needs administrator access."
-  sudo install -m 0755 "$WORK_DIR/agy-remote" "$TARGET_DIR/agy-remote"
+  sudo install -m 0755 "$WORK_DIR/agy-server" "$TARGET_DIR/agy-server"
 fi
 
-xattr -d com.apple.quarantine "$TARGET_DIR/agy-remote" 2>/dev/null || true
-ok "Installed $TARGET_DIR/agy-remote"
+xattr -d com.apple.quarantine "$TARGET_DIR/agy-server" 2>/dev/null || true
+ok "Installed $TARGET_DIR/agy-server"
 
 case ":$PATH:" in
   *":$TARGET_DIR:"*) ;;
@@ -111,7 +111,7 @@ if [ "$START" = "yes" ]; then
   printf '\n'
   say "Starting… a control panel with a QR code will open in your browser."
   printf '\n'
-  exec "$TARGET_DIR/agy-remote"
+  exec "$TARGET_DIR/agy-server"
 fi
 
-printf '\n  Run it with: %sagy-remote%s\n\n' "$CYAN" "$OFF"
+printf '\n  Run it with: %sagy-server%s\n\n' "$CYAN" "$OFF"

@@ -112,7 +112,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -trimpath ./cmd/agy-remote
+        run: go build -trimpath ./cmd/agy-server
 
   shellcheck:
     runs-on: ubuntu-latest

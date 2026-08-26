@@ -10,7 +10,7 @@ import (
 // separated by filler. It exercises the patch engine without shipping any of
 // Antigravity's compiled code in this repository; the anchors themselves are
 // checked against the real bundle by TestAnchorsMatchLiveBundle and by
-// "agy-remote doctor".
+// "agy-server doctor".
 func syntheticBundle() []byte {
 	var buf bytes.Buffer
 
