@@ -18,8 +18,6 @@ var (
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
-	mobileConversationRowActionsRe      = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
-	mobileConversationGradientRe        = regexp.MustCompile(`style:\{background:([a-zA-Z0-9_$]+)==="sidebar"\?` + "`" + `linear-gradient\(to right, transparent 0%, \$\{[a-zA-Z0-9_$]+\?"var\(--sidebar-secondary\)":[a-zA-Z0-9_$]+\?"color-mix\(in srgb, var\(--sidebar-secondary\) 50%, var\(--sidebar\)\)\":"var\(--sidebar\)"\} 25%\)` + "`" + `:"linear-gradient\(to right, transparent 0%, var\(--muted\) 25%\)"\}`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`r\&\&\(L\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
@@ -230,24 +228,6 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileUserMessageActionsRe,
 			Replace: `${1}"relative self-end ml-auto mt-1 ${2} opacity-90 pointer-events-auto transition-all bg-transparent ${3}"`,
-		},
-		{
-			ID:      "mobile-conversation-row-actions",
-			Desc:    "Always show conversation row actions (kebab menu) on touch devices without hovering",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileConversationRowActionsRe,
-			Replace: `className:"absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10 opacity-100"`,
-		},
-		{
-			ID:      "mobile-conversation-gradient-remove",
-			Desc:    "Remove white background gradient behind conversation actions to keep buttons visible on dark/light themes",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileConversationGradientRe,
-			Replace: `style:{background:"transparent"}`,
 		},
 		{
 			ID:      "mobile-titlebar-delete-hook",
@@ -569,7 +549,7 @@ body {
     align-items: center !important;
     gap: 0.25rem !important;
   }
-  @media (pointer: coarse) {
+  @media (pointer: coarse), (max-width: 768px) {
     /* Clean mobile conversation row: align kebab menu and timestamp side by side without overlapping */
     div[data-testid^="conversation-row-"] div.absolute.top-0 {
       position: relative !important;
@@ -577,6 +557,8 @@ body {
       bottom: auto !important;
       right: auto !important;
       padding-left: 0 !important;
+      opacity: 1 !important;
+      background: transparent !important;
     }
     div[data-testid^="conversation-row-"] [data-testid="conversation-pin-button"],
     div[data-testid^="conversation-row-"] [data-testid="conversation-archive-button"],
