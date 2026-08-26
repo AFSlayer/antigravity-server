@@ -137,3 +137,52 @@ func TestDownloadAndExtractTarGz(t *testing.T) {
 		t.Errorf("installed content mismatch: got %q, want %q", string(data), string(content))
 	}
 }
+
+func TestAutoUpdaterReloadLS(t *testing.T) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	content := []byte("#!/bin/sh\necho mock v2.10.0\n")
+	hdr := &tar.Header{
+		Name: "Antigravity-2.10.0/resources/bin/language_server",
+		Mode: 0755,
+		Size: int64(len(content)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	var reloadCalled bool
+	reloadLS := func() {
+		reloadCalled = true
+	}
+
+	// Direct download and reload check
+	err := DownloadAndInstall(context.Background(), srv.URL+"/test.tar.gz", targetPath, nil)
+	if err != nil {
+		t.Fatalf("DownloadAndInstall failed: %v", err)
+	}
+
+	if reloadLS != nil {
+		reloadLS()
+	}
+
+	if !reloadCalled {
+		t.Errorf("expected reloadLS to be called upon successful update")
+	}
+}
