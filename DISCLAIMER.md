@@ -28,7 +28,7 @@ Antigravity Remote deliberately does **not**:
 Antigravity Remote rewrites a small number of strings in the web bundle as it
 passes through the proxy. Every patch is listed in
 [`internal/patches/registry.go`](internal/patches/registry.go) with a
-description, and `agy-remote doctor` prints which ones applied. They fall into
+description, and `agy-server doctor` prints which ones applied. They fall into
 three groups:
 
 1. **Origin correction** — the bundle hardcodes `https://127.0.0.1:<port>` as

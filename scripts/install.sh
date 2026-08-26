@@ -17,6 +17,13 @@ PREFIX="${AGY_INSTALL_PREFIX:-/usr/local/bin}"
 LS_DIR="${AGY_LS_DIR:-$DEFAULT_LS_DIR}"
 BINARY_URL="${AGY_BINARY_URL:-}"
 
+# Asking for a directory that happens to equal the default is not the same as
+# saying nothing, so only the latter may fall back to the pre-rename location.
+LS_DIR_EXPLICIT="no"
+if [ -n "${AGY_LS_DIR:-}" ]; then
+  LS_DIR_EXPLICIT="yes"
+fi
+
 DOMAIN=""
 PASSWORD=""
 WORKSPACE_ROOT=""
@@ -73,7 +80,7 @@ while [ "$#" -gt 0 ]; do
     --workspace-root) WORKSPACE_ROOT="${2:?--workspace-root needs a value}"; shift 2 ;;
     --port) PORT="${2:?--port needs a value}"; shift 2 ;;
     --prefix) PREFIX="${2:?--prefix needs a value}"; shift 2 ;;
-    --ls-dir) LS_DIR="${2:?--ls-dir needs a value}"; shift 2 ;;
+    --ls-dir) LS_DIR="${2:?--ls-dir needs a value}"; LS_DIR_EXPLICIT="yes"; shift 2 ;;
     --service-name) SERVICE_NAME="${2:?--service-name needs a value}"; shift 2 ;;
     --no-service) WANT_SERVICE="no"; shift ;;
     --no-caddy) WANT_CADDY="no"; shift ;;
@@ -169,7 +176,7 @@ install_language_server() {
     return
   fi
 
-  if [ "$LS_DIR" = "$DEFAULT_LS_DIR" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
+  if [ "$LS_DIR_EXPLICIT" = "no" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
     LS_DIR="$LEGACY_LS_DIR"
     ok "Reusing language_server from $LS_DIR"
     return
@@ -228,7 +235,11 @@ set_password() {
 # the loser restarts forever.
 disable_legacy_service() {
   [ "$SERVICE_NAME" != "$LEGACY_NAME" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
   [ -f "/etc/systemd/system/${LEGACY_NAME}.service" ] || return 0
+  systemctl is-enabled --quiet "$LEGACY_NAME" 2>/dev/null ||
+    systemctl is-active --quiet "$LEGACY_NAME" 2>/dev/null ||
+    return 0
 
   sudo_run systemctl disable --now "$LEGACY_NAME" >/dev/null 2>&1 || true
   ok "Stopped the older $LEGACY_NAME service"
@@ -236,8 +247,6 @@ disable_legacy_service() {
 
 install_service() {
   local unit="/etc/systemd/system/${SERVICE_NAME}.service"
-
-  disable_legacy_service
 
   sudo_run tee "$unit" >/dev/null <<EOF
 [Unit]
@@ -281,9 +290,14 @@ install_caddy() {
 
   sudo_run install -d /etc/caddy/conf.d
 
-  # Two site files claiming the same domain make Caddy refuse to load.
-  if [ "$SERVICE_NAME" != "$LEGACY_NAME" ] && [ -f "/etc/caddy/conf.d/${LEGACY_NAME}.caddy" ]; then
-    sudo_run rm -f "/etc/caddy/conf.d/${LEGACY_NAME}.caddy"
+  # Two site files claiming the same domain make Caddy refuse to load. Only the
+  # one that claims this domain is in the way; a legacy file serving something
+  # else is somebody's live site.
+  local legacy_site="/etc/caddy/conf.d/${LEGACY_NAME}.caddy"
+  if [ "$SERVICE_NAME" != "$LEGACY_NAME" ] && [ -f "$legacy_site" ] &&
+    grep -qF "$DOMAIN {" "$legacy_site" 2>/dev/null; then
+    sudo_run rm -f "$legacy_site"
+    ok "Removed the older Caddy site file for $DOMAIN"
   fi
 
   sudo_run tee "/etc/caddy/conf.d/${SERVICE_NAME}.caddy" >/dev/null <<EOF
@@ -324,6 +338,7 @@ main() {
   heading "Configuring"
   write_config
   set_password
+  disable_legacy_service
 
   if [ "$WANT_SERVICE" = "yes" ]; then
     heading "Service"
