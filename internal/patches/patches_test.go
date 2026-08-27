@@ -51,13 +51,14 @@ var regexpFixtures = map[string]string{
 	"mobile-project-header-actions":             `className:Pm("absolute right-1 top-0 flex h-full items-center gap-1",k||t?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100")`,
 	"mobile-project-add-click-close-sidebar":    `onClick:D=>{D.stopPropagation();Skb(D)||(D.preventDefault(),d(D))}`,
 	"mobile-user-message-actions":               `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
+	"mobile-conversation-row-actions":           `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 	"mobile-titlebar-delete-hook":               `var {handleArchive:v,handleRestore:w,handlePin:y,handleUnpin:z,isArchiveSupported:A,handleShare:B,showShareModal:C,shareUrl:D,handleCloseShareModal:E,onShare:F}=PX(r??"")`,
 	"mobile-titlebar-delete-menu":               `r&&(L.push({iconName:"edit",tooltip:"Rename",onClick:J})`,
 	"mobile-delete-modal-export":                `var hlb=({isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:d})=>`,
 	"mobile-titlebar-delete-modal":              `c=Zkb({cascadeId:r,paneId:c,includeRemoveFromSplit:!1});return g.length>0||c.length>0||d.length>0||a.length>0?G.createElement(G.Fragment,null,`,
 	"mobile-kebab-menu-pin-archive":             `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
-	"mobile-kebab-wrapper-pin-archive":          `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
-	"mobile-kebab-call-pin-archive":             `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
+	"mobile-kebab-wrapper-pin-archive":          `var elb=G.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
+	"mobile-kebab-call-pin-archive":             `G.createElement(elb,` + "\n" + `{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
 	"mobile-hide-aux-sidebar":                   `G.createElement(bZ,{iconName:"dock_to_bottom",onClick:m,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"})`,
 	"settings-rules-editor":                     `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var w=k||m||p,[y,z]=(0,G.useState)(!1),`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
@@ -135,6 +136,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
 		`sidebar-toggle`,
 		`className:"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container"`,
+		`className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",(w||ua||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 		`handleDelete:agyDel,showDeleteModal:agyShowDel`,
 		`L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
 		`window.__agyDeleteModal=({isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:d})=>`,
@@ -291,6 +293,48 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 		case InjectHead:
 			if p.Replace == "" && p.ReplaceFn == nil {
 				t.Errorf("%s: injection needs content", p.ID)
+			}
+		}
+	}
+}
+
+func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
+	v210Fixtures := map[string]string{
+		"mobile-conversation-row-actions": `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
+		"mobile-kebab-wrapper-pin-archive": `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
+		"mobile-kebab-call-pin-archive":    `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
+	}
+
+	v211Fixtures := map[string]string{
+		"mobile-conversation-row-actions": `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
+		"mobile-kebab-wrapper-pin-archive": `var ynb=y.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return y.createElement(PK,{onOpenChange:g},y.createElement(QK,{asChild:!0},y.createElement(CA,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},y.createElement(T,{name:"more_vert",size:16}))),y.createElement(xnb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
+		"mobile-kebab-call-pin-archive":    `y.createElement(ynb,` + "\n" + `{cascadeId:a,onDeleteClick:Ia,onRenameClick:va,onMarkAsReadClick:tb?ra:ma,isUnread:tb,onOpenChange:Ja})`,
+	}
+
+	versions := map[string]map[string]string{
+		"2.10.0": v210Fixtures,
+		"2.11.0": v211Fixtures,
+	}
+
+	patches := All()
+	patchMap := make(map[string]Patch)
+	for _, p := range patches {
+		patchMap[p.ID] = p
+	}
+
+	for ver, fixs := range versions {
+		for id, snippet := range fixs {
+			p, ok := patchMap[id]
+			if !ok {
+				t.Fatalf("[%s] patch %s not found in All()", ver, id)
+			}
+			if p.FindRe == nil {
+				t.Fatalf("[%s] patch %s is not regexp", ver, id)
+			}
+			if !p.FindRe.MatchString(snippet) {
+				t.Errorf("[%s] patch %s failed to match snippet: %s", ver, id, snippet)
 			}
 		}
 	}
