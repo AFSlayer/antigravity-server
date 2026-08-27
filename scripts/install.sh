@@ -173,12 +173,28 @@ install_agy_server() {
 install_language_server() {
   if [ -x "$LS_DIR/language_server" ]; then
     ok "language_server already present at $LS_DIR/language_server"
+    if [ -z "${IDE_VERSION:-}" ]; then
+      local hub_url
+      hub_url="$(resolve_hub_url 2>/dev/null || true)"
+      if [ -n "$hub_url" ]; then
+        IDE_VERSION="$(hub_version "$hub_url")"
+      fi
+    fi
+    sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR" 2>/dev/null || true
     return
   fi
 
   if [ "$LS_DIR_EXPLICIT" = "no" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
     LS_DIR="$LEGACY_LS_DIR"
     ok "Reusing language_server from $LS_DIR"
+    if [ -z "${IDE_VERSION:-}" ]; then
+      local hub_url
+      hub_url="$(resolve_hub_url 2>/dev/null || true)"
+      if [ -n "$hub_url" ]; then
+        IDE_VERSION="$(hub_version "$hub_url")"
+      fi
+    fi
+    sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR" 2>/dev/null || true
     return
   fi
 
@@ -203,6 +219,7 @@ install_language_server() {
 
   sudo_run install -d "$LS_DIR"
   sudo_run install -m 0755 "$tmp/language_server" "$LS_DIR/language_server"
+  sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR"
   ok "Installed $LS_DIR/language_server"
 
   IDE_VERSION="$version"
@@ -211,7 +228,9 @@ install_language_server() {
 write_config() {
   local args=(config --port "$PORT" --language-server "$LS_DIR/language_server")
 
-  [ -n "$WORKSPACE_ROOT" ] && args+=(--workspace-root "$WORKSPACE_ROOT")
+  if [ -n "$WORKSPACE_ROOT" ]; then
+    args+=(--workspace-root "$WORKSPACE_ROOT")
+  fi
   if [ -n "$DOMAIN" ]; then
     args+=(--public-url "https://$DOMAIN" --trusted-proxies "127.0.0.1/32,::1/128")
   fi
@@ -328,8 +347,12 @@ main() {
   trap 'rm -rf "$WORK_DIR"' EXIT
 
   heading "Setup"
-  [ -n "$DOMAIN" ] || DOMAIN="$(ask 'Domain for HTTPS (blank to skip)' '')"
-  [ -n "$WORKSPACE_ROOT" ] || WORKSPACE_ROOT="$(ask 'Workspace folder' "$HOME/workspace")"
+  if [ -z "$DOMAIN" ]; then
+    DOMAIN="$(ask 'Domain for HTTPS (blank to skip)' '')"
+  fi
+  if [ -z "$WORKSPACE_ROOT" ]; then
+    WORKSPACE_ROOT="$(ask 'Workspace folder' "$HOME/workspace")"
+  fi
 
   heading "Downloading"
   install_agy_server

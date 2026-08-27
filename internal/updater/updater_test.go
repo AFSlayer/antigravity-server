@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AFSlayer/antigravity-server/internal/config"
 )
 
 func TestValidateDownloadURL(t *testing.T) {
@@ -184,5 +186,60 @@ func TestAutoUpdaterReloadLS(t *testing.T) {
 
 	if !reloadCalled {
 		t.Errorf("expected reloadLS to be called upon successful update")
+	}
+}
+
+func TestCheckWritable(t *testing.T) {
+	tmpDir := t.TempDir()
+	validTarget := filepath.Join(tmpDir, "bin", "language_server")
+	if err := CheckWritable(validTarget); err != nil {
+		t.Errorf("CheckWritable(%q) unexpected error: %v", validTarget, err)
+	}
+
+	// Non-writable directory check
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(readOnlyDir, 0755) }()
+
+	readOnlyTarget := filepath.Join(readOnlyDir, "language_server")
+	// If run as non-root, this should error
+	if os.Geteuid() != 0 {
+		if err := CheckWritable(readOnlyTarget); err == nil {
+			t.Errorf("CheckWritable(%q) expected error for read-only directory, got nil", readOnlyTarget)
+		}
+	}
+}
+
+func TestCheckAndApplySelfHealsMissingVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	// Create a mock binary file larger than 10MB
+	data := make([]byte, 11*1024*1024)
+	if err := os.WriteFile(targetPath, data, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		IDEVersion:     "", // missing
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	var reloadCalled bool
+	reloadLS := func() {
+		reloadCalled = true
+	}
+
+	// When checkAndApply runs on existing binary with unknown version, it should self-heal and record version without calling reloadLS
+	checkAndApply(context.Background(), cfg, targetPath, reloadLS)
+
+	if reloadCalled {
+		t.Errorf("expected reloadLS NOT to be called on self-healing path")
+	}
+	if cfg.IDEVersion == "" || cfg.IDEVersion == "unknown" {
+		t.Errorf("expected ide_version to be self-healed, got %q", cfg.IDEVersion)
 	}
 }

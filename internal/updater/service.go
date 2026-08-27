@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
@@ -58,8 +59,30 @@ func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, r
 		return
 	}
 
+	// Self-healing: if ide_version was missing or unknown in config, but the binary
+	// already exists on disk, record the version without re-downloading ~170MB artifact.
+	if currentVersion == "unknown" {
+		if st, statErr := os.Stat(targetPath); statErr == nil && st.Size() > 10*1024*1024 {
+			cfg.IDEVersion = info.LatestVersion
+			if cfg.LanguageServer == "" {
+				cfg.LanguageServer = targetPath
+			}
+			if saveErr := cfg.Save(); saveErr != nil {
+				log.Printf("[auto-updater] warning: could not save config.json: %v", saveErr)
+			}
+			log.Printf("[auto-updater] recorded missing ide_version as %s from existing binary at %s", info.LatestVersion, targetPath)
+			return
+		}
+	}
+
 	if !info.UpdateAvailable {
 		log.Printf("[auto-updater] Antigravity is up to date (%s)", currentVersion)
+		return
+	}
+
+	// Pre-flight permission check: abort before downloading 170MB if the target directory is not writable
+	if err := CheckWritable(targetPath); err != nil {
+		log.Printf("[auto-updater] cannot update to %s: %v. Please run 'sudo agy-server update' to update.", info.LatestVersion, err)
 		return
 	}
 
