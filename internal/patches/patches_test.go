@@ -2,6 +2,7 @@ package patches
 
 import (
 	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -300,14 +301,14 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 
 func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 	v210Fixtures := map[string]string{
-		"mobile-conversation-row-actions": `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-conversation-row-actions":  `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
 		"mobile-kebab-wrapper-pin-archive": `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
 		"mobile-kebab-call-pin-archive":    `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
 	}
 
 	v211Fixtures := map[string]string{
-		"mobile-conversation-row-actions": `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-conversation-row-actions":  `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
 		"mobile-kebab-wrapper-pin-archive": `var ynb=y.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return y.createElement(PK,{onOpenChange:g},y.createElement(QK,{asChild:!0},y.createElement(CA,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},y.createElement(T,{name:"more_vert",size:16}))),y.createElement(xnb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
 		"mobile-kebab-call-pin-archive":    `y.createElement(ynb,` + "\n" + `{cascadeId:a,onDeleteClick:Ia,onRenameClick:va,onMarkAsReadClick:tb?ra:ma,isUnread:tb,onOpenChange:Ja})`,
@@ -337,5 +338,17 @@ func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 				t.Errorf("[%s] patch %s failed to match snippet: %s", ver, id, snippet)
 			}
 		}
+	}
+}
+
+func TestAllGoFilesAreGofmtFormatted(t *testing.T) {
+	cmd := exec.Command("gofmt", "-l", "../..")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("failed to run gofmt: %v", err)
+	}
+	unformatted := strings.TrimSpace(string(out))
+	if unformatted != "" {
+		t.Errorf("The following Go files are not formatted with gofmt:\n%s", unformatted)
 	}
 }
