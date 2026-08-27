@@ -79,6 +79,9 @@ func GeminiDir() string {
 // Dir is the data directory holding credentials and sessions.
 func (c *Config) Dir() string { return c.dir }
 
+// SetDir overrides the data directory path (useful for testing).
+func (c *Config) SetDir(dir string) { c.dir = dir }
+
 // Path resolves name inside the data directory.
 func (c *Config) Path(name string) string { return filepath.Join(c.dir, name) }
 

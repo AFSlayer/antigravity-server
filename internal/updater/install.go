@@ -18,6 +18,29 @@ import (
 // ProgressFn reports download progress.
 type ProgressFn func(downloaded, total int64)
 
+// CheckWritable verifies that targetPath and its parent directory can be written to before downloading artifacts.
+func CheckWritable(targetPath string) error {
+	if targetPath == "" {
+		return errors.New("target path cannot be empty")
+	}
+
+	targetDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("create target directory %s: %w", targetDir, err)
+	}
+
+	// Test write permissions by creating and removing a temporary check file
+	tmpFile, err := os.CreateTemp(targetDir, ".permcheck.*.tmp")
+	if err != nil {
+		return fmt.Errorf("cannot write to directory %s (permission denied): %w", targetDir, err)
+	}
+	tmpName := tmpFile.Name()
+	_ = tmpFile.Close()
+	_ = os.Remove(tmpName)
+
+	return nil
+}
+
 // DownloadAndInstall downloads the official Antigravity artifact and installs language_server to targetPath.
 func DownloadAndInstall(ctx context.Context, url, targetPath string, progress ProgressFn) error {
 	if ctx == nil {
@@ -25,6 +48,11 @@ func DownloadAndInstall(ctx context.Context, url, targetPath string, progress Pr
 	}
 	if targetPath == "" {
 		return errors.New("targetPath cannot be empty")
+	}
+
+	// Pre-flight check: ensure target directory is writable before initiating ~170MB download
+	if err := CheckWritable(targetPath); err != nil {
+		return err
 	}
 
 	// Defense-in-depth: validate download URL domain
@@ -37,9 +65,6 @@ func DownloadAndInstall(ctx context.Context, url, targetPath string, progress Pr
 	}
 
 	targetDir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("create target directory %s: %w", targetDir, err)
-	}
 
 	client := &http.Client{Timeout: 30 * time.Minute}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
