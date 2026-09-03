@@ -16,6 +16,7 @@ var (
 	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),k=>\{if\(!k\)return!1;k\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
+	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
 	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
@@ -211,6 +212,15 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileProjectHeaderActionsRe,
 			Replace: `className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
+		},
+		{
+			ID:      "mobile-project-kebab-menu",
+			Desc:    "Always show project kebab (...) options button on mobile touch devices",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileProjectKebabMenuRe,
+			Replace: `,${1}=(0,${2}.useContext)(${3}),${4}=!1,`,
 		},
 		{
 			ID:      "mobile-project-add-click-close-sidebar",
@@ -593,6 +603,10 @@ body {
 
 const keyboardDetect = `<script id="agy-keyboard-detect">
 (function () {
+  // Only activate on touch devices with on-screen keyboards; desktop mouse clients
+  // must not track virtual keyboard or scroll to bottom on input focus.
+  if (!(window.matchMedia && window.matchMedia("(pointer:coarse)").matches)) return;
+
   var vv = window.visualViewport;
   if (!vv) return;
 
