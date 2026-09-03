@@ -138,7 +138,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
 		`,z=(0,y.useContext)(DEb),A=!1,`,
 		`sidebar-toggle`,
-		`className:"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container"`,
+		`className:"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container select-none"`,
 		`className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",(w||ua||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 		`handleDelete:agyDel,showDeleteModal:agyShowDel`,
 		`L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
@@ -305,6 +305,7 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 	v210Fixtures := map[string]string{
 		"mobile-conversation-row-actions":  `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-user-message-actions":      `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
 		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
 		"mobile-kebab-wrapper-pin-archive": `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
 		"mobile-kebab-call-pin-archive":    `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
@@ -312,14 +313,20 @@ func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 
 	v211Fixtures := map[string]string{
 		"mobile-conversation-row-actions":  `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-user-message-actions":      `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
 		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
 		"mobile-kebab-wrapper-pin-archive": `var ynb=y.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return y.createElement(PK,{onOpenChange:g},y.createElement(QK,{asChild:!0},y.createElement(CA,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},y.createElement(T,{name:"more_vert",size:16}))),y.createElement(xnb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
 		"mobile-kebab-call-pin-archive":    `y.createElement(ynb,` + "\n" + `{cascadeId:a,onDeleteClick:Ia,onRenameClick:va,onMarkAsReadClick:tb?ra:ma,isUnread:tb,onOpenChange:Ja})`,
 	}
 
+	v212Fixtures := map[string]string{
+		"mobile-user-message-actions": `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container select-none"`,
+	}
+
 	versions := map[string]map[string]string{
 		"2.10.0": v210Fixtures,
 		"2.11.0": v211Fixtures,
+		"2.12.0": v212Fixtures,
 	}
 
 	patches := All()
