@@ -18,7 +18,7 @@ var (
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
-	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"absolute bottom-0\.5 right-0\.5 (flex flex-row items-center p-1 rounded-full) opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow (user-input-buttons-container)"`)
+	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
 	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
@@ -196,13 +196,14 @@ func All() []Patch {
 			Replace: `${1}${2}({clearSection:!0})${3}`,
 		},
 		{
-			ID:      "mobile-project-add-button",
-			Desc:    "Always show project New Conversation button on mobile touch devices without hovering",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileProjectAddButtonRe,
-			Replace: `if(true){let $4=$6==="project"?"New Conversation in Project":$7==="environment"?"New Conversation in Workspace":void 0`,
+			ID:       "mobile-project-add-button",
+			Desc:     "Always show project New Conversation button on mobile touch devices without hovering",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  mobile,
+			FindRe:   mobileProjectAddButtonRe,
+			Replace:  `if(true){let $4=$6==="project"?"New Conversation in Project":$7==="environment"?"New Conversation in Workspace":void 0`,
 		},
 		{
 			ID:      "mobile-project-header-actions",
@@ -238,7 +239,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileUserMessageActionsRe,
-			Replace: `${1}"relative self-end ml-auto mt-1 ${2} opacity-90 pointer-events-auto transition-all bg-transparent ${3}"`,
+			Replace: `${1}"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container select-none"`,
 		},
 		{
 			ID:      "mobile-conversation-row-actions",
@@ -539,17 +540,17 @@ body {
     padding-bottom: 0px !important;
   }
   /* Flow user message action buttons (Undo, Copy, Timestamp) naturally without overlapping message text */
-  div[data-testid="user-input-step"] div.bg-card,
-  .group\/user-input-step div.bg-card {
+  div[data-testid="user-input-step"] div.bg-card:not(.user-input-buttons-container),
+  .group\/user-input-step div.bg-card:not(.user-input-buttons-container) {
     display: flex !important;
     flex-direction: column !important;
     align-items: stretch !important;
     overflow: visible !important;
     position: relative !important;
   }
-  div[data-testid="user-input-step"] .user-input-buttons-container,
-  .group\/user-input-step .user-input-buttons-container,
-  .user-input-buttons-container {
+  div[data-testid="user-input-step"] div.user-input-buttons-container,
+  .group\/user-input-step div.user-input-buttons-container,
+  div.user-input-buttons-container {
     position: relative !important;
     top: auto !important;
     bottom: auto !important;
@@ -564,10 +565,18 @@ body {
     background: transparent !important;
     box-shadow: none !important;
     padding: 0 !important;
-    display: inline-flex !important;
+    display: flex !important;
     flex-direction: row !important;
+    flex-wrap: nowrap !important;
     align-items: center !important;
     gap: 0.25rem !important;
+    width: auto !important;
+    height: auto !important;
+  }
+  div.user-input-buttons-container > * {
+    display: inline-flex !important;
+    align-items: center !important;
+    flex-shrink: 0 !important;
   }
   @media (pointer: coarse), (max-width: 768px) {
     /* Mobile conversation row: render [ Title | ... | Time ] side-by-side without background gradient */
