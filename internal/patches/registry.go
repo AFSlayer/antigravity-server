@@ -540,13 +540,20 @@ body {
     padding-bottom: 0px !important;
   }
   /* Flow user message action buttons (Undo, Copy, Timestamp) naturally without overlapping message text */
-  div[data-testid="user-input-step"] div.bg-card:not(.user-input-buttons-container),
-  .group\/user-input-step div.bg-card:not(.user-input-buttons-container) {
+  div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container),
+  .group\/user-input-step div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container) {
     display: flex !important;
     flex-direction: column !important;
     align-items: stretch !important;
     overflow: visible !important;
     position: relative !important;
+  }
+  /* Keep queued messages (waiting in execution queue) on a single row with the delete icon */
+  div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"]),
+  .group\/user-input-step div.bg-card:has([data-testid="queued-decorators"]) {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-end !important;
   }
   div[data-testid="user-input-step"] div.user-input-buttons-container,
   .group\/user-input-step div.user-input-buttons-container,

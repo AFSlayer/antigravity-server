@@ -225,6 +225,8 @@ func TestHTMLInjection(t *testing.T) {
 		`/__agy/api/signin/status`,
 		`href="/apple-touch-icon.png"`,
 		`src="/main.js?agy=testkey"`,
+		`div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container)`,
+		`div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"])`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
