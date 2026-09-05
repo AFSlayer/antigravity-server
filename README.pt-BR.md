@@ -36,7 +36,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
-| **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Colapso do Safe Area e rastreamento de viewport com o teclado aberto |
+| **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Fixa a barra superior, colapsa a Safe Area e adapta a altura da conversa |
 | **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
 | **Acesso sem conta Google** | Impossível — a conta é a porta | Sua própria senha (PBKDF2), sessões e rate-limiting |
@@ -107,7 +107,7 @@ O Antigravity Server suporta o padrão Progressive Web App (PWA). Ao adicioná-l
 ### ⚡ Patches de Interface para Mobile
 - **Controles por Toque**: Botões Desfazer (`↶`) e Copiar (`📋`) permanentemente visíveis nos balões de mensagem.
 - **Gerenciamento de Conversas**: Exclua conversas pela barra superior e fixe ou arquive pelo menu lateral.
-- **Ajuste Preciso do Teclado**: Reduz o Safe Area para 0px assim que o teclado virtual aparece.
+- **Ajuste Preciso do Teclado**: Fixa a barra de navegação superior, reduz a Safe Area para 0px e adapta a altura da conversa.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="A interface web mobile com patches, num navegador de celular" />
