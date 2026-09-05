@@ -36,7 +36,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
-| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse and viewport tracking while the keyboard is open |
+| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse, top header pinning, and conversation height adaptation above keyboard |
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
 | **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
@@ -107,7 +107,7 @@ Antigravity Server supports the Progressive Web App (PWA) standard. Adding it to
 ### ⚡ Mobile-First UX Patches
 - **Touch-Friendly Controls**: Undo (`↶`) and Copy (`📋`) buttons remain permanently visible on mobile message bubbles.
 - **Full Conversation Management**: Delete conversations via the titlebar menu and toggle Pin/Archive directly from the history dropdown.
-- **Precise Keyboard Tracking**: Automatically collapses safe area insets to 0px when the on-screen keyboard appears.
+- **Precise Keyboard Tracking**: Automatically collapses safe area insets to 0px and pins top navigation bar while adapting conversation height.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="The patched mobile web UI in a phone browser" />
@@ -242,7 +242,7 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Navigation** | Project `(+)` button omitted on mobile screens | Restores the `(+)` New Conversation button next to each project row |
 | **Conversation Actions** | No delete, pin, or archive on touch | Adds Delete, Pin, and Archive to the `⋮` kebab menu and titlebar |
 | **Message Actions** | Undo and Copy buttons hidden behind hover states | Displays Undo (`↶`) and Copy (`📋`) buttons on touch devices |
-| **Virtual Keyboard** | iOS Safari viewport bounces and leaves blank gaps | Collapses bottom safe-area insets to 0px while keyboard is active |
+| **Virtual Keyboard** | iOS Safari viewport bounces and leaves blank gaps | Pins top navbar, collapses safe-area insets to 0px, and adapts conversation height |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
 | **Input Behavior** | Mobile Enter key sends message instead of newline | Enter creates a newline; Send button or Cmd/Ctrl+Enter submits |

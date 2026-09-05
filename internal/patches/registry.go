@@ -586,6 +586,11 @@ body {
     flex-shrink: 0 !important;
   }
   @media (pointer: coarse), (max-width: 768px) {
+    /* Constrain mobile conversation container so top navbar stays pinned when keyboard opens */
+    div[data-testid="conversation-view"] {
+      max-height: 100% !important;
+      min-height: 0 !important;
+    }
     /* Mobile conversation row: render [ Title | ... | Time ] side-by-side without background gradient */
     div[data-testid^="conversation-row-"] div.absolute.top-0 {
       position: relative !important;
@@ -626,29 +631,59 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var vv = window.visualViewport;
   if (!vv) return;
 
-  // The messages live in a scroller nested inside the conversation view, which is
-  // itself never taller than its content. Searching the subtree keeps the home
-  // screen's history list out of it -- scrolling that one threw its virtualised
-  // sticky headers off -- without depending on which element is the scroller.
+  var cachedScroller = null;
+  var wasNearBottom = true;
+
+  // The messages live in a scroller nested inside the conversation view.
+  // Direct selector and reference caching avoid forced layout thrashing (reflow)
+  // and prevent false-positive matching of inner scrollable code blocks (<pre><code>).
   function chatScroller() {
+    if (cachedScroller && cachedScroller.isConnected && cachedScroller.closest('[data-testid="conversation-view"]')) {
+      return cachedScroller;
+    }
     var root = document.querySelector('[data-testid="conversation-view"]');
     if (!root) return null;
-    if (root.scrollHeight > root.clientHeight + 20) return root;
 
-    var nodes = root.querySelectorAll("*");
-    for (var i = 0; i < nodes.length && i < 400; i++) {
-      var el = nodes[i];
-      if (el.scrollHeight > el.clientHeight + 20 &&
-          /auto|scroll/.test(getComputedStyle(el).overflowY)) {
-        return el;
+    // Direct target: the main message stream container in Antigravity
+    var el = root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
+    if (el && el.scrollHeight > el.clientHeight + 20) {
+      cachedScroller = el;
+      return el;
+    }
+
+    // Direct children fallback (avoids deep nested code blocks or pre tags)
+    var children = root.children;
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+      if (child.scrollHeight > child.clientHeight + 20 && child.classList.contains("overflow-y-auto")) {
+        cachedScroller = child;
+        return child;
       }
+    }
+
+    if (root.scrollHeight > root.clientHeight + 20) {
+      cachedScroller = root;
+      return root;
     }
     return null;
   }
 
-  function scrollChatToBottom() {
+  function checkNearBottom() {
     var el = chatScroller();
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    var dist = el.scrollHeight - el.clientHeight - el.scrollTop;
+    wasNearBottom = dist <= 80;
+  }
+
+  function scrollChatToBottom() {
+    if (!wasNearBottom) return;
+    var el = chatScroller();
+    if (!el) return;
+    var root = document.querySelector('[data-testid="conversation-view"]');
+    if (root && root !== el && root.scrollTop !== 0) {
+      root.scrollTop = 0;
+    }
+    el.scrollTop = el.scrollHeight;
   }
 
   // html is position:fixed, so clientHeight is the layout viewport and does not
@@ -772,12 +807,17 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }
 
   vv.addEventListener("resize", function () { track(700); });
-  vv.addEventListener("scroll", function () { track(400); });
+  vv.addEventListener("scroll", function () { unpan(); });
+  window.addEventListener("scroll", function () {
+    unpan();
+    checkNearBottom();
+  }, { passive: true });
 
   window.addEventListener("focusin", function (e) {
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
-      if (predicted > 20 && applied === 0) {
+      checkNearBottom();
+      if (predicted > 20 && applied === 0 && window.innerHeight >= window.innerWidth) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         moveAt = performance.now();
@@ -789,6 +829,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   window.addEventListener("focusout", function () {
     track(500);
+    wasNearBottom = true;
   });
 })();
 </script>`

@@ -36,7 +36,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 | **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
 | **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
 | **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
-| **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Colapso del Safe Area y seguimiento del viewport con el teclado abierto |
+| **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Fija la barra superior, colapsa el Safe Area y adapta la altura de la conversación |
 | **Subida de archivos** | Límite de 1MB por RPC de texto | **Subida por fragmentos** para logs, HARs y datasets grandes |
 | **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
 | **Acceso sin cuenta de Google** | Imposible — la cuenta es la puerta | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
@@ -107,7 +107,7 @@ Antigravity Server soporta el estándar Progressive Web App (PWA). Al añadirlo 
 ### ⚡ Parches de Experiencia Móvil
 - **Controles Táctiles**: Botones Deshacer (`↶`) y Copiar (`📋`) permanentemente visibles.
 - **Gestión Completa de Chats**: Elimina conversaciones desde la barra superior y fija o archiva desde el menú desplegable.
-- **Seguimiento Preciso de Teclado**: Colapsa el Safe Area a 0px al abrir el teclado en pantalla.
+- **Seguimiento Preciso de Teclado**: Fija la barra de navegación superior, colapsa el Safe Area a 0px y adapta la altura de la conversación.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="La interfaz web móvil con parches, en un navegador de móvil" />

@@ -227,6 +227,12 @@ func TestHTMLInjection(t *testing.T) {
 		`src="/main.js?agy=testkey"`,
 		`div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container)`,
 		`div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"])`,
+		`div[data-testid="conversation-view"]`,
+		`max-height: 100% !important;`,
+		`function chatScroller()`,
+		`function checkNearBottom()`,
+		`function scrollChatToBottom()`,
+		`var wasNearBottom = true;`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
