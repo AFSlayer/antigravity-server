@@ -235,14 +235,14 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 42 patches, 25 of them touch-specific and the rest covering uploads, sign-in and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 43 patches, 25 of them touch-specific and the rest covering uploads, sign-in and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
 | **Navigation** | Project `(+)` button omitted on mobile screens | Restores the `(+)` New Conversation button next to each project row |
 | **Conversation Actions** | No delete, pin, or archive on touch | Adds Delete, Pin, and Archive to the `⋮` kebab menu and titlebar |
 | **Message Actions** | Undo and Copy buttons hidden behind hover states | Displays Undo (`↶`) and Copy (`📋`) buttons on touch devices |
-| **Virtual Keyboard** | iOS Safari viewport bounces and leaves blank gaps | Pins top navbar, collapses safe-area insets to 0px, and adapts conversation height |
+| **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll | Dynamic visualViewport offset tracking, 0px safe-area collapse, and pinned conversation layout |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
 | **Input Behavior** | Mobile Enter key sends message instead of newline | Enter creates a newline; Send button or Cmd/Ctrl+Enter submits |

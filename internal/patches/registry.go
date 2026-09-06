@@ -57,7 +57,8 @@ var (
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}`)
 
-	fileUploadLargeFileStreamingRe = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadLargeFileStreamingRe     = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
+	virtualizationDisableContractionRe = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -360,6 +361,15 @@ func All() []Patch {
 			FindRe:  disableTelemetryRe,
 			Replace: `return{telemetryEnabled:!1,marketingEmailsEnabled:`,
 		},
+		{
+			ID:      "virtualization-disable-contraction",
+			Desc:    "Prevent scroll height collapse caused by virtualization unmounting upper nodes",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  virtualizationDisableContractionRe,
+			Replace: `contractionSafetyPx:1E8,outerRadiusPx:2E8`,
+		},
 
 		// Always start the folder picker at the configured workspace root instead of
 		// falling back to homeDirUri (b).
@@ -538,7 +548,7 @@ textarea.agy-rules-editor {
   }
   div.h-\[100dvh\].w-screen.flex.flex-col {
     position: absolute !important;
-    top: 0 !important;
+    top: var(--agy-top, 0px) !important;
     left: 0 !important;
     right: 0 !important;
     bottom: var(--agy-bottom, 0px) !important;
@@ -547,6 +557,7 @@ textarea.agy-rules-editor {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     box-sizing: border-box !important;
+    overflow: hidden !important;
   }
   div.shrink-0.p-2 {
     padding: 0.25rem 0.5rem 0 0.5rem !important;
@@ -609,6 +620,15 @@ textarea.agy-rules-editor {
     div[data-testid="conversation-view"] {
       max-height: 100% !important;
       min-height: 0 !important;
+      overflow-y: hidden !important;
+      overflow-x: hidden !important;
+      overscroll-behavior-y: contain !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+    div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
+    div[data-testid="conversation-view"] div.overflow-y-auto {
+      overscroll-behavior-y: contain !important;
+      -webkit-overflow-scrolling: touch !important;
     }
     /* Mobile conversation row: render [ Title | ... | Time ] side-by-side without background gradient */
     div[data-testid^="conversation-row-"] div.absolute.top-0 {
@@ -711,6 +731,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     return document.documentElement.clientHeight || window.innerHeight;
   }
 
+  function isInputFocused() {
+    var ae = document.activeElement;
+    return !!(ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable));
+  }
+
   // Safari reveals the focused composer by panning the layout viewport, and it
   // reports that pan as a document scroll even here, where the document is fixed
   // and has nothing to scroll. Fixed elements move with it, so the whole shell
@@ -719,9 +744,15 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   // the offset from ever being on screen for longer than one frame.
   function unpan() {
     var de = document.documentElement;
-    if (window.scrollY === 0 && de.scrollTop === 0) return;
-    window.scrollTo(0, 0);
+    var vv = window.visualViewport;
+    var sy = window.scrollY || window.pageYOffset || 0;
+    var dy = de.scrollTop || (document.body ? document.body.scrollTop : 0);
+    var vy = vv ? Math.round(vv.offsetTop) : 0;
+    if (sy !== 0) window.scrollTo(0, 0);
     if (de.scrollTop !== 0) de.scrollTop = 0;
+    if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
+    var root = document.querySelector('[data-testid="conversation-view"]');
+    if (root && root.scrollTop !== 0) root.scrollTop = 0;
   }
 
   // The keyboard slides up over roughly this long, while visualViewport reports
@@ -742,23 +773,30 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var holdUntil = 0;
 
   var applied = 0;
+  var appliedTop = 0;
   var goal = 0;
+  var goalTop = 0;
   var from = 0;
+  var fromTop = 0;
   var moveAt = 0;
   var settled = true;
   var raf = 0;
   var deadline = 0;
 
-  function write(kb) {
-    if (Math.abs(kb - applied) < 1) return;
+  function write(kb, top) {
+    if (typeof top !== "number") top = 0;
+    if (Math.abs(kb - applied) < 1 && Math.abs(top - appliedTop) < 1) return;
 
     var opening = applied === 0 && kb > 0;
     applied = kb;
-    if (kb > 0) {
+    appliedTop = top;
+    if (kb > 0 || top > 0) {
       document.documentElement.style.setProperty("--agy-bottom", kb + "px");
+      document.documentElement.style.setProperty("--agy-top", top + "px");
       document.body.classList.add("agy-kb-open");
     } else {
       document.documentElement.style.removeProperty("--agy-bottom");
+      document.documentElement.style.removeProperty("--agy-top");
       document.body.classList.remove("agy-kb-open");
     }
     if (opening) scrollChatToBottom();
@@ -767,44 +805,50 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   function frame() {
     unpan();
 
-    var target = Math.max(0, Math.round(base() - vv.height));
-    if (target < 100) target = 0;
+    var topOffset = Math.round(vv.offsetTop || 0);
+    var rawTarget = Math.max(0, Math.round(base() - vv.height - topOffset));
+    var target = rawTarget;
+    if (target < 100 && topOffset === 0) target = 0;
 
     if (target > 0) {
       holdUntil = 0;
-      if (target !== predicted) {
+      if (target !== predicted && topOffset === 0) {
         predicted = target;
         try {
           localStorage.setItem("agy-kb", String(target));
         } catch (e) {}
       }
-    } else if (performance.now() < holdUntil) {
-      // Hold the predicted shrink until Safari reports the keyboard. If it never
-      // does -- a hardware keyboard, say -- the hold expires and the shell
-      // springs back on its own.
+    } else if (performance.now() < holdUntil || (isInputFocused() && predicted > 0)) {
+      // Hold the predicted shrink until Safari reports the keyboard or while
+      // input remains focused. This prevents the keyboard gap from appearing
+      // and snapping back when the user scrolls inside the conversation.
       target = predicted;
     }
 
-    if (target !== goal) {
+    if (target !== goal || topOffset !== goalTop) {
       goal = target;
+      goalTop = topOffset;
       from = applied;
+      fromTop = appliedTop;
       moveAt = performance.now();
       settled = false;
     }
 
-    if (goal <= from) {
+    if (goal <= from && goalTop === fromTop) {
       // Closing: the keyboard is already on its way out, and following it
       // immediately is what the shell did smoothly before.
-      write(goal);
+      write(goal, goalTop);
     } else {
       var p = Math.min(1, (performance.now() - moveAt) / OPEN_MS);
-      write(Math.round(from + (goal - from) * (1 - Math.pow(1 - p, 3))));
+      var curKb = Math.round(from + (goal - from) * (1 - Math.pow(1 - p, 3)));
+      var curTop = Math.round(fromTop + (goalTop - fromTop) * (1 - Math.pow(1 - p, 3)));
+      write(curKb, curTop);
     }
 
     // The chat has to be pulled to the bottom once the shell has stopped moving:
     // doing it only while the shell shrinks leaves it short of the last message,
     // because the scrollable distance is still growing.
-    if (!settled && applied === goal) {
+    if (!settled && applied === goal && appliedTop === goalTop) {
       settled = true;
       if (goal > 0) scrollChatToBottom();
     }
@@ -814,7 +858,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       return;
     }
     raf = 0;
-    write(goal);
+    write(goal, goalTop);
     if (applied > 0) scrollChatToBottom();
   }
 
@@ -826,11 +870,28 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }
 
   vv.addEventListener("resize", function () { track(700); });
-  vv.addEventListener("scroll", function () { unpan(); });
+  vv.addEventListener("scroll", function () {
+    unpan();
+    track(300);
+  });
   window.addEventListener("scroll", function () {
     unpan();
     checkNearBottom();
-  }, { passive: true });
+  }, { passive: true, capture: true });
+
+  window.addEventListener("touchmove", function () {
+    if (applied > 0 || appliedTop > 0) {
+      unpan();
+      track(200);
+    }
+  }, { passive: true, capture: true });
+
+  window.addEventListener("touchend", function () {
+    if (applied > 0 || appliedTop > 0) {
+      unpan();
+      track(300);
+    }
+  }, { passive: true, capture: true });
 
   window.addEventListener("focusin", function (e) {
     var t = e.target;
@@ -839,8 +900,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (predicted > 20 && applied === 0 && window.innerHeight >= window.innerWidth) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
+        goalTop = fromTop = 0;
         moveAt = performance.now();
-        write(predicted);
+        write(predicted, 0);
       }
       track(900);
     }

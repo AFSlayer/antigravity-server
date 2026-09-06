@@ -66,6 +66,7 @@ var regexpFixtures = map[string]string{
 	"settings-customizations-show-edit":         `"Copy path")),!A&&n&&z.createElement(z.Fragment,null,Yz.createElement(Yz,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
 	"force-disable-telemetry":                   `return{telemetryEnabled:f,marketingEmailsEnabled:`,
+	"virtualization-disable-contraction":        `contractionSafetyPx:3E3,outerRadiusPx:5E3`,
 	"folder-picker-initial-path":                `initialPath:b?b.fsPath:g?"C:/":"/",fetchDirectoryContents:`,
 	"composer-upload-menu-item":                 `{icon:ea=>x.createElement(T,{name:"image",size:ea.width?Number(ea.width):14,className:ea.className}),` + "\n" + `label:"Media",onClick:oa}`,
 	"file-upload-accept-all":                    `accept:".png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif,video/webm,.mp4,video/mp4,.pdf,application/pdf,.txt,text/plain,.csv,text/csv,.json,application/json,.md,text/markdown,.py,text/x-python,.js,.mjs,text/javascript,.ts,.tsx,text/x-typescript,.html,.htm,text/html,.css,text/css",multiple:!0`,
@@ -151,6 +152,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`Save`,
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
+		`contractionSafetyPx:1E8,outerRadiusPx:2E8`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
