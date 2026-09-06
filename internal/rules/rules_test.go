@@ -59,7 +59,41 @@ func TestRulesReadAndSave(t *testing.T) {
 		t.Fatalf("content mismatch: got %q, want %q", readRes.Content, ruleContent)
 	}
 
-	// 3. Test Path Traversal Protection
+	// 3. Test Directory Resolution (Skills directory resolving to SKILL.md)
+	skillDir := filepath.Join(tempDir, ".gemini", "config", "skills", "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillContent := "# Test Skill\n\nInstructions here.\n"
+
+	saveSkillBody, _ := json.Marshal(saveRequest{
+		Path:    skillDir, // passing directory path
+		Content: skillContent,
+	})
+	reqSkillSave := httptest.NewRequest(http.MethodPost, SaveAPIPath, bytes.NewReader(saveSkillBody))
+	recSkillSave := httptest.NewRecorder()
+	mux.ServeHTTP(recSkillSave, reqSkillSave)
+
+	if recSkillSave.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on skill save via dir, got %d: %s", recSkillSave.Code, recSkillSave.Body.String())
+	}
+
+	// Verify file actually created at skillDir/SKILL.md
+	expectedFile := filepath.Join(skillDir, "SKILL.md")
+	readBytes, err := os.ReadFile(expectedFile)
+	if err != nil || string(readBytes) != skillContent {
+		t.Fatalf("expected skill file content at %s, err: %v", expectedFile, err)
+	}
+
+	// Read back via dir path
+	reqSkillRead := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+skillDir, nil)
+	recSkillRead := httptest.NewRecorder()
+	mux.ServeHTTP(recSkillRead, reqSkillRead)
+	if recSkillRead.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on skill read via dir, got %d: %s", recSkillRead.Code, recSkillRead.Body.String())
+	}
+
+	// 4. Test Path Traversal Protection
 	badPath := filepath.Join(tempDir, "..", "..", "etc", "passwd")
 	reqBad := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+badPath, nil)
 	recBad := httptest.NewRecorder()

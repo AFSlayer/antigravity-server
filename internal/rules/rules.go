@@ -71,7 +71,7 @@ func (m *Manager) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, err := m.validatePath(targetPath)
+	resolved, err := m.resolveTargetFile(targetPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid path: %v", err), http.StatusForbidden)
 		return
@@ -108,7 +108,7 @@ func (m *Manager) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, err := m.validatePath(req.Path)
+	resolved, err := m.resolveTargetFile(req.Path)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid path: %v", err), http.StatusForbidden)
 		return
@@ -202,6 +202,26 @@ func (m *Manager) validatePath(inputPath string) (string, error) {
 	}
 
 	return cleaned, nil
+}
+
+func (m *Manager) resolveTargetFile(inputPath string) (string, error) {
+	resolved, err := m.validatePath(inputPath)
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(resolved)
+	if err == nil && fi.IsDir() {
+		skillFile := filepath.Join(resolved, "SKILL.md")
+		if _, err := os.Stat(skillFile); err == nil {
+			return skillFile, nil
+		}
+		ruleFile := filepath.Join(resolved, "GEMINI.md")
+		if _, err := os.Stat(ruleFile); err == nil {
+			return ruleFile, nil
+		}
+		return skillFile, nil
+	}
+	return resolved, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
