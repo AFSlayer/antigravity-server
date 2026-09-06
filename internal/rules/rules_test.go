@@ -59,7 +59,65 @@ func TestRulesReadAndSave(t *testing.T) {
 		t.Fatalf("content mismatch: got %q, want %q", readRes.Content, ruleContent)
 	}
 
-	// 3. Test Path Traversal Protection
+	// 3. Test Directory Resolution (Skills directory resolving to SKILL.md)
+	skillDir := filepath.Join(tempDir, ".gemini", "config", "skills", "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillContent := "# Test Skill\n\nInstructions here.\n"
+
+	saveSkillBody, _ := json.Marshal(saveRequest{
+		Path:    skillDir, // passing directory path
+		Content: skillContent,
+	})
+	reqSkillSave := httptest.NewRequest(http.MethodPost, SaveAPIPath, bytes.NewReader(saveSkillBody))
+	recSkillSave := httptest.NewRecorder()
+	mux.ServeHTTP(recSkillSave, reqSkillSave)
+
+	if recSkillSave.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on skill save via dir, got %d: %s", recSkillSave.Code, recSkillSave.Body.String())
+	}
+
+	// Verify file actually created at skillDir/SKILL.md
+	expectedFile := filepath.Join(skillDir, "SKILL.md")
+	readBytes, err := os.ReadFile(expectedFile)
+	if err != nil || string(readBytes) != skillContent {
+		t.Fatalf("expected skill file content at %s, err: %v", expectedFile, err)
+	}
+
+	// Read back via dir path
+	reqSkillRead := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+skillDir, nil)
+	recSkillRead := httptest.NewRecorder()
+	mux.ServeHTTP(recSkillRead, reqSkillRead)
+	if recSkillRead.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on skill read via dir, got %d: %s", recSkillRead.Code, recSkillRead.Body.String())
+	}
+
+	// 4. Test Directory Resolution fallback (directory with only GEMINI.md)
+	geminiDir := filepath.Join(tempDir, ".gemini", "config", "skills", "legacy-skill")
+	if err := os.MkdirAll(geminiDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacyContent := "# Legacy Skill\n\nFallback to GEMINI.md\n"
+	if err := os.WriteFile(filepath.Join(geminiDir, "GEMINI.md"), []byte(legacyContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reqLegacyRead := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+geminiDir, nil)
+	recLegacyRead := httptest.NewRecorder()
+	mux.ServeHTTP(recLegacyRead, reqLegacyRead)
+	if recLegacyRead.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on fallback read, got %d", recLegacyRead.Code)
+	}
+	var legacyRes readResponse
+	if err := json.NewDecoder(recLegacyRead.Body).Decode(&legacyRes); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRes.Content != legacyContent {
+		t.Fatalf("fallback content mismatch: got %q, want %q", legacyRes.Content, legacyContent)
+	}
+
+	// 5. Test Path Traversal Protection
 	badPath := filepath.Join(tempDir, "..", "..", "etc", "passwd")
 	reqBad := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+badPath, nil)
 	recBad := httptest.NewRecorder()

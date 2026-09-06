@@ -141,6 +141,14 @@ Em servidores Linux headless, o `agy-server` inclui serviço de atualização au
 
 ---
 
+### 📝 Editor Integrado de Regras e Habilidades
+Gerencie as instruções do seu agente (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/`) e regras do projeto diretamente pela interface web:
+- Acesse **Settings → Customizations**.
+- Clique no botão **Edit** ao lado de regras ou habilidades para abrir o editor embutido.
+- Clique em **Save** para salvar atomicamente no sistema de arquivos do host com efeito imediato.
+
+---
+
 ## Configuração de Proxy Reverso (Caddy / Nginx)
 
 Para habilitar streaming em tempo real (SSE), WebSockets e uploads grandes, desative o buffer do proxy:

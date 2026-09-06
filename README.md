@@ -141,10 +141,10 @@ On headless Linux servers, `agy-server` includes a background auto-updater servi
 
 ---
 
-### 📝 In-App Global & Workspace Rules Editor
-Manage your agent instructions (`~/.gemini/GEMINI.md`) directly within the web UI:
-- Open **Settings → Customizations → Rules**.
-- Click the native **Edit** button next to `user_global` or any workspace rule to expand an inline code editor.
+### 📝 In-App Rules & Skills Editor
+Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/`) and project rules directly within the web UI:
+- Open **Settings → Customizations**.
+- Click the native **Edit** button next to rules or skills to expand an inline code editor.
 - Updates are saved atomically to the host filesystem with instant effect.
 
 ---

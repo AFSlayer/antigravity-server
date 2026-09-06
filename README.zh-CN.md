@@ -141,6 +141,14 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 
 ---
 
+### 📝 Web UI 内置规则与技能编辑器
+无需通过终端连接服务器，直接在 Web 浏览器中编辑 Agent 指令（`~/.gemini/GEMINI.md`、`~/.gemini/config/skills/`）和项目规则：
+- 前往 **Settings → Customizations** 菜单。
+- 点击规则或技能旁的 **Edit** 按钮展开内联编辑器。
+- 修改后点击 **Save**，更改将以原子方式保存至主机文件系统并即时生效。
+
+---
+
 ## 生产环境反向代理配置（Caddy / Nginx）
 
 为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**：
