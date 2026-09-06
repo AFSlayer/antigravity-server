@@ -150,6 +150,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)`,
 		`Save`,
 		`/__agy/api/rules/save`,
+		`"Copy path")),n&&z.createElement`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
