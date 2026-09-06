@@ -557,7 +557,6 @@ textarea.agy-rules-editor {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     box-sizing: border-box !important;
-    overflow: hidden !important;
   }
   div.shrink-0.p-2 {
     padding: 0.25rem 0.5rem 0 0.5rem !important;
@@ -718,10 +717,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (!wasNearBottom) return;
     var el = chatScroller();
     if (!el) return;
-    var root = document.querySelector('[data-testid="conversation-view"]');
-    if (root && root !== el && root.scrollTop !== 0) {
-      root.scrollTop = 0;
-    }
     el.scrollTop = el.scrollHeight;
   }
 
@@ -731,9 +726,28 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     return document.documentElement.clientHeight || window.innerHeight;
   }
 
-  function isInputFocused() {
-    var ae = document.activeElement;
-    return !!(ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable));
+  function isPortrait() {
+    return window.innerHeight >= window.innerWidth;
+  }
+
+  function getStorageKey() {
+    return isPortrait() ? "agy-kb-p" : "agy-kb-l";
+  }
+
+  function loadPredicted() {
+    try {
+      var v = parseInt(localStorage.getItem(getStorageKey()), 10) || 0;
+      if (v < 100) v = 0;
+      return v;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function savePredicted(val) {
+    try {
+      localStorage.setItem(getStorageKey(), String(val));
+    } catch (e) {}
   }
 
   // Safari reveals the focused composer by panning the layout viewport, and it
@@ -744,15 +758,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   // the offset from ever being on screen for longer than one frame.
   function unpan() {
     var de = document.documentElement;
-    var vv = window.visualViewport;
     var sy = window.scrollY || window.pageYOffset || 0;
-    var dy = de.scrollTop || (document.body ? document.body.scrollTop : 0);
-    var vy = vv ? Math.round(vv.offsetTop) : 0;
     if (sy !== 0) window.scrollTo(0, 0);
     if (de.scrollTop !== 0) de.scrollTop = 0;
     if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
-    var root = document.querySelector('[data-testid="conversation-view"]');
-    if (root && root.scrollTop !== 0) root.scrollTop = 0;
   }
 
   // The keyboard slides up over roughly this long, while visualViewport reports
@@ -765,11 +774,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   // undo -- undoing one races Safari's own animation, which is what made the
   // shell lurch. The measurement is kept across page loads because the first
   // focus of a session is the one with nothing to go on.
-  var predicted = 0;
-  try {
-    predicted = parseInt(localStorage.getItem("agy-kb"), 10) || 0;
-    if (predicted < 100) predicted = 0;
-  } catch (e) {}
+  var predicted = loadPredicted();
   var holdUntil = 0;
 
   var applied = 0;
@@ -814,14 +819,12 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       holdUntil = 0;
       if (target !== predicted && topOffset === 0) {
         predicted = target;
-        try {
-          localStorage.setItem("agy-kb", String(target));
-        } catch (e) {}
+        savePredicted(target);
       }
-    } else if (performance.now() < holdUntil || (isInputFocused() && predicted > 0)) {
-      // Hold the predicted shrink until Safari reports the keyboard or while
-      // input remains focused. This prevents the keyboard gap from appearing
-      // and snapping back when the user scrolls inside the conversation.
+    } else if (performance.now() < holdUntil) {
+      // Hold the predicted shrink for at most 500ms after focusin while Safari
+      // prepares to animate the visual viewport. Hardware keyboards will naturally
+      // expire after holdUntil and restore the full viewport height.
       target = predicted;
     }
 
@@ -837,6 +840,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (goal <= from && goalTop === fromTop) {
       // Closing: the keyboard is already on its way out, and following it
       // immediately is what the shell did smoothly before.
+      write(goal, goalTop);
+    } else if (applied > 0) {
+      // While keyboard is already active, follow the user's touch gesture immediately
+      // without restarting the cubic animation on every frame.
       write(goal, goalTop);
     } else {
       var p = Math.min(1, (performance.now() - moveAt) / OPEN_MS);
@@ -869,7 +876,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
-  vv.addEventListener("resize", function () { track(700); });
+  vv.addEventListener("resize", function () {
+    predicted = loadPredicted();
+    track(700);
+  });
   vv.addEventListener("scroll", function () {
     unpan();
     track(300);
@@ -877,27 +887,33 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   window.addEventListener("scroll", function () {
     unpan();
     checkNearBottom();
-  }, { passive: true, capture: true });
+  }, { passive: true });
 
   window.addEventListener("touchmove", function () {
     if (applied > 0 || appliedTop > 0) {
       unpan();
       track(200);
     }
-  }, { passive: true, capture: true });
+  }, { passive: true });
 
   window.addEventListener("touchend", function () {
     if (applied > 0 || appliedTop > 0) {
       unpan();
       track(300);
     }
-  }, { passive: true, capture: true });
+  }, { passive: true });
+
+  window.addEventListener("orientationchange", function () {
+    predicted = loadPredicted();
+    track(500);
+  });
 
   window.addEventListener("focusin", function (e) {
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
       checkNearBottom();
-      if (predicted > 20 && applied === 0 && window.innerHeight >= window.innerWidth) {
+      predicted = loadPredicted();
+      if (predicted > 20 && applied === 0 && isPortrait()) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         goalTop = fromTop = 0;
@@ -910,7 +926,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   window.addEventListener("focusout", function () {
     track(500);
-    wasNearBottom = true;
   });
 })();
 </script>`
