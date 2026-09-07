@@ -146,9 +146,6 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
 		`window.__agyDeleteModal=({isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:d})=>`,
 		`window.__agyDeleteModal?`,
-		`data-testid":"conversation-pin-menu-item"`,
-		`data-testid":"conversation-archive-menu-item"`,
-		`onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)`,
 		`Save`,
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
@@ -198,6 +195,25 @@ func TestMobileUXDisabledSkipsMobilePatches(t *testing.T) {
 	}
 }
 
+func TestMobileKebabPatchesDisabled(t *testing.T) {
+	_, report := Apply(MainJS, syntheticBundle(), fullOptions())
+
+	byID := map[string]Result{}
+	for _, r := range report {
+		byID[r.ID] = r
+	}
+
+	for _, id := range []string{
+		"mobile-kebab-menu-pin-archive",
+		"mobile-kebab-wrapper-pin-archive",
+		"mobile-kebab-call-pin-archive",
+	} {
+		if got := byID[id].Status; got != StatusDisabled {
+			t.Errorf("%s: want disabled, got %s", id, got)
+		}
+	}
+}
+
 func TestMissingAnchorIsReported(t *testing.T) {
 	_, report := Apply(MainJS, []byte("nothing to see here"), fullOptions())
 
@@ -241,6 +257,15 @@ func TestHTMLInjection(t *testing.T) {
 		`function checkNearBottom()`,
 		`function scrollChatToBottom()`,
 		`var wasNearBottom = true;`,
+		`[data-testid="agent-input-box"]`,
+		`transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1)`,
+		`transition: padding-bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1)`,
+		`{ capture: true, passive: true }`,
+		`@media (pointer: coarse) and (max-width: 768px)`,
+		`@media (pointer: coarse) and (min-width: 769px)`,
+		`target < 100`,
+		`shouldScrollOnOpen`,
+		`isPortrait() && window.innerWidth <= 768`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {

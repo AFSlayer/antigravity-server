@@ -22,13 +22,13 @@ var (
 	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
-	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`r\&\&\(L\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
+	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
 	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+\}\)=>)`)
 
-	mobileKebabMenuPinArchiveRe      = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
-	mobileKebabWrapperPinArchiveRe   = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=(?:(?:[a-zA-Z0-9_$]+)\.memo\()?[\r\n\s]*(?:function)?\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)\}\)(?:=>|\{return\s+)([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onOpenChange:([a-zA-Z0-9_$]+)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{asChild:!0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:([a-zA-Z0-9_$]+)=>void ([a-zA-Z0-9_$]+)\.stopPropagation\(\)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"more_vert",size:16\}\)\)\),([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+)\}\)(?:\))?(?:\})?(?:\))?;`)
-	mobileKebabCallPinArchiveRe      = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),[\r\n\s]*\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:(\(\)=>\{?[a-zA-Z0-9_$]+\(!0\)\}?|[a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([^\}]+?),isUnread:([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)?),onOpenChange:([a-zA-Z0-9_$]+)(?:,[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+))?\}\)`)
+	mobileKebabMenuPinArchiveRe      = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)([^\}]*)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
+	mobileKebabWrapperPinArchiveRe   = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=(?:(?:[a-zA-Z0-9_$]+)\.memo\()?[\r\n\s]*(?:function)?\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)[^\}]*\}\)(?:=>|\{return\s+)([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onOpenChange:([a-zA-Z0-9_$]+)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{asChild:!0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:([a-zA-Z0-9_$]+)=>void ([a-zA-Z0-9_$]+)\.stopPropagation\(\)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"more_vert",size:16\}\)\)\),([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+)[^\}]*\}\)(?:\))?(?:\})?(?:\))?;`)
+	mobileKebabCallPinArchiveRe      = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),[\r\n\s]*\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:(\(\)=>\{?[a-zA-Z0-9_$]+\(!0\)\}?|[a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([^\}]+?),isUnread:([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)?),onOpenChange:([a-zA-Z0-9_$]+)(?:,[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+))?(?:,[\r\n\s]*onShareClick:[^\}]+?)?\}\)`)
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c[^\}]*?onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy path"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":`)
@@ -51,7 +51,7 @@ var (
 
 	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"image",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"Media",onClick:([a-zA-Z0-9_$]+)\}`)
 
-	fileUploadAcceptAllRe = regexp.MustCompile(`accept:"\.png,[^"]+",multiple:!0`)
+	fileUploadAcceptAllRe = regexp.MustCompile(`accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
@@ -268,7 +268,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteMenuRe,
-			Replace: `r&&(L.push({iconName:"edit",tooltip:"Rename",onClick:$1}),L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
+			Replace: `$1&&($2.push({iconName:"edit",tooltip:"Rename",onClick:$3}),$2.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
 		},
 		{
 			ID:      "mobile-delete-modal-export",
@@ -286,34 +286,37 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteModalRe,
-			Replace: `${1}window.__agyDeleteModal?${8}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(r)agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
+			Replace: `${1}window.__agyDeleteModal?${8}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(typeof agyDel==="function"&&${2})agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
 		},
 		{
-			ID:      "mobile-kebab-menu-pin-archive",
-			Desc:    "Add Pin and Archive actions into conversation kebab dropdown menu",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileKebabMenuPinArchiveRe,
-			Replace: `const $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onViewDebugClick:$7,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$8.createElement($9,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},$10.createElement($11,{onClick:$12,"data-testid":"conversation-rename-menu-item"},$13.createElement($14,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,"Rename")),agyPin&&$8.createElement($11,{onClick:agyPin,"data-testid":"conversation-pin-menu-item"},$13.createElement($14,{name:agyIsPinned?"keep_off":"keep",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,agyIsPinned?"Unpin":"Pin")),agyArchive&&$8.createElement($11,{onClick:agyArchive,"data-testid":"conversation-archive-menu-item"},$13.createElement($14,{name:"archive",size:16,className:"text-secondary-foreground shrink-0"}),$15.createElement("span",null,"Archive")),`,
+			ID:       "mobile-kebab-menu-pin-archive",
+			Desc:     "Add Pin and Archive actions into conversation kebab dropdown menu",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   mobileKebabMenuPinArchiveRe,
+			Replace:  `const $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onViewDebugClick:$7$8,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$9.createElement($10,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},$11.createElement($12,{onClick:$13,"data-testid":"conversation-rename-menu-item"},$14.createElement($15,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),$16.createElement("span",null,"Rename")),agyPin&&$9.createElement($12,{onClick:agyPin,"data-testid":"conversation-pin-menu-item"},$14.createElement($15,{name:agyIsPinned?"keep_off":"keep",size:16,className:"text-secondary-foreground shrink-0"}),$16.createElement("span",null,agyIsPinned?"Unpin":"Pin")),agyArchive&&$9.createElement($12,{onClick:agyArchive,"data-testid":"conversation-archive-menu-item"},$14.createElement($15,{name:"archive",size:16,className:"text-secondary-foreground shrink-0"}),$16.createElement("span",null,"Archive")),`,
 		},
 		{
-			ID:      "mobile-kebab-wrapper-pin-archive",
-			Desc:    "Pass pin and archive props through conversation kebab wrapper component",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileKebabWrapperPinArchiveRe,
-			Replace: `var $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onOpenChange:$7,onViewDebugClick:$8,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$9.createElement($10,{onOpenChange:$11},$12.createElement($13,{asChild:!0},$14.createElement($15,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:$16=>void $17.stopPropagation()},$18.createElement($19,{name:"more_vert",size:16}))),$20.createElement($21,{cascadeId:$22,onDeleteClick:$23,onRenameClick:$24,onMarkAsReadClick:$25,isUnread:$26,onViewDebugClick:$27,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive}));`,
+			ID:       "mobile-kebab-wrapper-pin-archive",
+			Desc:     "Pass pin and archive props through conversation kebab wrapper component",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   mobileKebabWrapperPinArchiveRe,
+			Replace:  `var $1=({cascadeId:$2,onDeleteClick:$3,onRenameClick:$4,onMarkAsReadClick:$5,isUnread:$6,onOpenChange:$7,onViewDebugClick:$8,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive})=>$9.createElement($10,{onOpenChange:$11},$12.createElement($13,{asChild:!0},$14.createElement($15,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:$16=>void $17.stopPropagation()},$18.createElement($19,{name:"more_vert",size:16}))),$20.createElement($21,{cascadeId:$22,onDeleteClick:$23,onRenameClick:$24,onMarkAsReadClick:$25,isUnread:$26,onViewDebugClick:$27,onPinClick:agyPin,isPinned:agyIsPinned,onArchiveClick:agyArchive}));`,
 		},
 		{
-			ID:      "mobile-kebab-call-pin-archive",
-			Desc:    "Supply pin and archive handlers to conversation kebab button call in history list",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileKebabCallPinArchiveRe,
-			Replace: `$1.createElement($2,{cascadeId:$3,onDeleteClick:($4),onRenameClick:$5,onMarkAsReadClick:$6,isUnread:$7,onOpenChange:$8,onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)})`,
+			ID:       "mobile-kebab-call-pin-archive",
+			Desc:     "Supply pin and archive handlers to conversation kebab button call in history list",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   mobileKebabCallPinArchiveRe,
+			Replace:  `$1.createElement($2,{cascadeId:$3,onDeleteClick:($4),onRenameClick:$5,onMarkAsReadClick:$6,isUnread:$7,onOpenChange:$8,onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)})`,
 		},
 		{
 			ID:      "mobile-hide-aux-sidebar",
@@ -511,23 +514,13 @@ const appIcons = `<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">`
 
 const touchAction = `<style id="agy-touch-action">
-button,input,textarea,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-input,textarea:not(.agy-rules-editor),select{font-size:16px !important}
+@media (pointer: coarse) {
+  button,input,textarea,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  input,textarea:not(.agy-rules-editor),select{font-size:16px !important}
+}
 </style>`
 
 const safeArea = `<style id="agy-safe-area">
-html,
-body {
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  overflow: hidden !important;
-  overscroll-behavior: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
 textarea.agy-rules-editor {
   font-size: 11px !important;
   line-height: 1.45 !important;
@@ -536,86 +529,123 @@ textarea.agy-rules-editor {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
 }
 
-@supports (padding-bottom: env(safe-area-inset-bottom)) {
-  .relative.w-screen.h-\[100dvh\] {
-    position: fixed !important;
-    inset: 0 !important;
-    width: 100vw !important;
-    height: 100% !important;
-    max-height: 100% !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-  }
-  div.h-\[100dvh\].w-screen.flex.flex-col {
-    position: absolute !important;
-    top: var(--agy-top, 0px) !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: var(--agy-bottom, 0px) !important;
-    height: auto !important;
-    max-height: none !important;
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
+/* Flow user message action buttons (Undo, Copy, Timestamp) naturally without overlapping message text */
+div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container),
+.group\/user-input-step div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container) {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  overflow: visible !important;
+  position: relative !important;
+}
+/* Keep queued messages (waiting in execution queue) on a single row with the delete icon */
+div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"]),
+.group\/user-input-step div.bg-card:has([data-testid="queued-decorators"]) {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-end !important;
+}
+div[data-testid="user-input-step"] div.user-input-buttons-container,
+.group\/user-input-step div.user-input-buttons-container,
+div.user-input-buttons-container {
+  position: relative !important;
+  top: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  margin-left: auto !important;
+  margin-top: 0.25rem !important;
+  align-self: flex-end !important;
+  flex-shrink: 0 !important;
+  opacity: 0.85 !important;
+  pointer-events: auto !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 0.25rem !important;
+  width: auto !important;
+  height: auto !important;
+}
+div.user-input-buttons-container > * {
+  display: inline-flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+
+/* Tablet (iPad) and desktop (screens > 768px): Ensure sidebar padding to prevent truncation */
+@media (min-width: 769px) {
+  div[role="navigation"][aria-label="Sidebar"],
+  div[role="navigation"].bg-sidebar {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 12px)) !important;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 14px)) !important;
     box-sizing: border-box !important;
   }
-  div.shrink-0.p-2 {
-    padding: 0.25rem 0.5rem 0 0.5rem !important;
+}
+
+/* Touch devices (phones and tablets/iPad): Single safe-area management and keyboard positioning */
+@media (pointer: coarse) {
+  html,
+  body {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    overscroll-behavior: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  /* When keyboard is active, collapse the safe-area inset on the input box so it hugs the keyboard tightly */
-  body.agy-kb-open [data-testid="agent-input-box"],
-  html[style*="--agy-bottom"] [data-testid="agent-input-box"],
-  body.agy-kb-open .shrink-0.p-2,
-  html[style*="--agy-bottom"] .shrink-0.p-2 {
+
+  /* Eliminate double safe-area padding from Language Server inline style */
+  [data-testid="agent-input-box"] {
     padding-bottom: 0px !important;
   }
-  /* Flow user message action buttons (Undo, Copy, Timestamp) naturally without overlapping message text */
-  div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container),
-  .group\/user-input-step div.bg-card:has(.user-input-buttons-container):not(.user-input-buttons-container) {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: stretch !important;
-    overflow: visible !important;
-    position: relative !important;
+
+  /* Smooth padding-bottom transition to prevent 34px snap/jerk when keyboard dismisses */
+  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.shrink-0.p-2 {
+    transition: padding-bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  /* Keep queued messages (waiting in execution queue) on a single row with the delete icon */
-  div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"]),
-  .group\/user-input-step div.bg-card:has([data-testid="queued-decorators"]) {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: flex-end !important;
+
+  /* Collapse composer wrapper padding when keyboard is open */
+  body.agy-kb-open div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  body.agy-kb-open div.shrink-0.p-2,
+  html[style*="--agy-bottom"] div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  html[style*="--agy-bottom"] div.shrink-0.p-2 {
+    padding-bottom: 0px !important;
   }
-  div[data-testid="user-input-step"] div.user-input-buttons-container,
-  .group\/user-input-step div.user-input-buttons-container,
-  div.user-input-buttons-container {
-    position: relative !important;
-    top: auto !important;
-    bottom: auto !important;
-    left: auto !important;
-    right: auto !important;
-    margin-left: auto !important;
-    margin-top: 0.25rem !important;
-    align-self: flex-end !important;
-    flex-shrink: 0 !important;
-    opacity: 0.85 !important;
-    pointer-events: auto !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    gap: 0.25rem !important;
-    width: auto !important;
-    height: auto !important;
-  }
-  div.user-input-buttons-container > * {
-    display: inline-flex !important;
-    align-items: center !important;
-    flex-shrink: 0 !important;
-  }
-  @media (pointer: coarse), (max-width: 768px) {
-    /* Constrain mobile conversation container so top navbar stays pinned when keyboard opens */
+
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    .relative.w-screen.h-\[100dvh\] {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100% !important;
+      max-height: 100% !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+    }
+    div.h-\[100dvh\].w-screen.flex.flex-col {
+      position: absolute !important;
+      top: var(--agy-top, 0px) !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: var(--agy-bottom, 0px) !important;
+      height: auto !important;
+      max-height: none !important;
+      padding-top: 0 !important;
+      box-sizing: border-box !important;
+      will-change: bottom;
+    }
+    /* Hardware-accelerated smooth transition on keyboard dismiss without JS cubic reflow */
+    body:not(.agy-kb-open) div.h-\[100dvh\].w-screen.flex.flex-col {
+      transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    /* Constrain mobile/tablet conversation container so top navbar stays pinned when keyboard opens */
     div[data-testid="conversation-view"] {
       max-height: 100% !important;
       min-height: 0 !important;
@@ -629,48 +659,70 @@ textarea.agy-rules-editor {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
-    /* Mobile conversation row: render [ Title | ... | Time ] side-by-side without background gradient */
-    div[data-testid^="conversation-row-"] div.absolute.top-0 {
-      position: relative !important;
-      top: auto !important;
-      bottom: auto !important;
-      right: auto !important;
-      padding-left: 0 !important;
-      opacity: 1 !important;
-      background: transparent !important;
-      margin-right: 0.25rem !important;
+    .aux-drawer-popup {
+      padding-bottom: var(--agy-bottom, env(safe-area-inset-bottom, 0px)) !important;
     }
-    div[data-testid^="conversation-row-"] [data-testid="conversation-kebab"] {
-      display: inline-flex !important;
-      opacity: 1 !important;
-    }
-    div[data-testid^="conversation-row-"] [data-testid="conversation-pin-button"],
-    div[data-testid^="conversation-row-"] [data-testid="conversation-archive-button"],
-    div[data-testid^="conversation-row-"] [data-testid="conversation-restore-button"],
-    div[data-testid^="conversation-row-"] [data-testid="conversation-delete-button"] {
-      display: none !important;
+    .fixed.bottom-3 {
+      bottom: calc(0.75rem + var(--agy-bottom, 0px)) !important;
     }
   }
-  .aux-drawer-popup {
-    padding-bottom: var(--agy-bottom, env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* Tablet (iPad) touch devices (> 768px): Ensure composer wrappers have proper safe-area padding above home indicator */
+@media (pointer: coarse) and (min-width: 769px) {
+  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.shrink-0.p-2 {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 16px)) !important;
   }
-  .fixed.bottom-3 {
-    bottom: calc(0.75rem + var(--agy-bottom, 0px)) !important;
+}
+
+/* Mobile phones only (<= 768px touch devices): Apply compact mobile styles.
+   Desktop browsers (pointer: fine) and split-screen desktop windows are completely isolated! */
+@media (pointer: coarse) and (max-width: 768px) {
+  /* Compact padding for mobile composer wrapper (prevents floating gap on mobile phones) */
+  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.shrink-0.p-2 {
+    padding: 0.25rem 0.5rem 0 0.5rem !important;
+    padding-bottom: max(0.25rem, env(safe-area-inset-bottom, 6px)) !important;
+  }
+
+  /* Mobile conversation row: render [ Title | ... | Time ] side-by-side without background gradient */
+  div[data-testid^="conversation-row-"] div.absolute.top-0 {
+    position: relative !important;
+    top: auto !important;
+    bottom: auto !important;
+    right: auto !important;
+    padding-left: 0 !important;
+    opacity: 1 !important;
+    background: transparent !important;
+    margin-right: 0.25rem !important;
+  }
+  div[data-testid^="conversation-row-"] [data-testid="conversation-kebab"] {
+    display: inline-flex !important;
+    opacity: 1 !important;
+  }
+  div[data-testid^="conversation-row-"] [data-testid="conversation-pin-button"],
+  div[data-testid^="conversation-row-"] [data-testid="conversation-archive-button"],
+  div[data-testid^="conversation-row-"] [data-testid="conversation-restore-button"],
+  div[data-testid^="conversation-row-"] [data-testid="conversation-delete-button"] {
+    display: none !important;
   }
 }
 </style>`
 
 const keyboardDetect = `<script id="agy-keyboard-detect">
 (function () {
-  // Only activate on touch devices with on-screen keyboards; desktop mouse clients
-  // must not track virtual keyboard or scroll to bottom on input focus.
-  if (!(window.matchMedia && window.matchMedia("(pointer:coarse)").matches)) return;
+  // Only activate on touch devices (pointer: coarse) with virtual keyboards.
+  // Desktop browsers with fine pointer (mouse) are completely ignored.
+  var isTouch = window.matchMedia && window.matchMedia("(pointer:coarse)").matches;
+  if (!isTouch) return;
 
   var vv = window.visualViewport;
   if (!vv) return;
 
   var cachedScroller = null;
   var wasNearBottom = true;
+  var shouldScrollOnOpen = false;
 
   // The messages live in a scroller nested inside the conversation view.
   // Direct selector and reference caching avoid forced layout thrashing (reflow)
@@ -684,7 +736,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
     // Direct target: the main message stream container in Antigravity
     var el = root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
-    if (el && el.scrollHeight > el.clientHeight + 20) {
+    if (el) {
       cachedScroller = el;
       return el;
     }
@@ -693,13 +745,13 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var children = root.children;
     for (var i = 0; i < children.length; i++) {
       var child = children[i];
-      if (child.scrollHeight > child.clientHeight + 20 && child.classList.contains("overflow-y-auto")) {
+      if (child.classList.contains("overflow-y-auto")) {
         cachedScroller = child;
         return child;
       }
     }
 
-    if (root.scrollHeight > root.clientHeight + 20) {
+    if (root.classList.contains("overflow-y-auto")) {
       cachedScroller = root;
       return root;
     }
@@ -708,7 +760,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   function checkNearBottom() {
     var el = chatScroller();
-    if (!el) return;
+    if (!el) {
+      wasNearBottom = true;
+      return;
+    }
     var dist = el.scrollHeight - el.clientHeight - el.scrollTop;
     wasNearBottom = dist <= 80;
   }
@@ -793,6 +848,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (Math.abs(kb - applied) < 1 && Math.abs(top - appliedTop) < 1) return;
 
     var opening = applied === 0 && kb > 0;
+    var closing = applied > 0 && kb === 0;
     applied = kb;
     appliedTop = top;
     if (kb > 0 || top > 0) {
@@ -804,7 +860,14 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       document.documentElement.style.removeProperty("--agy-top");
       document.body.classList.remove("agy-kb-open");
     }
-    if (opening) scrollChatToBottom();
+    if (opening) {
+      shouldScrollOnOpen = wasNearBottom;
+      if (wasNearBottom) {
+        scrollChatToBottom();
+      }
+    } else if (closing) {
+      shouldScrollOnOpen = false;
+    }
   }
 
   function frame() {
@@ -813,6 +876,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var topOffset = Math.round(vv.offsetTop || 0);
     var rawTarget = Math.max(0, Math.round(base() - vv.height - topOffset));
     var target = rawTarget;
+    // Ignore small changes (< 100px) such as iPad Bluetooth shortcut bar (54px)
     if (target < 100 && topOffset === 0) target = 0;
 
     if (target > 0) {
@@ -837,10 +901,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       settled = false;
     }
 
-    if (goal <= from && goalTop === fromTop) {
-      // Closing: the keyboard is already on its way out, and following it
-      // immediately is what the shell did smoothly before.
-      write(goal, goalTop);
+    if (goal === 0) {
+      // Closing: delegate to immediate write and CSS hardware-accelerated transition.
+      // Eliminates per-frame JS reflow fighting iOS native spring animation.
+      write(0, goalTop);
+      settled = true;
     } else if (applied > 0) {
       // While keyboard is already active, follow the user's touch gesture immediately
       // without restarting the cubic animation on every frame.
@@ -852,12 +917,12 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       write(curKb, curTop);
     }
 
-    // The chat has to be pulled to the bottom once the shell has stopped moving:
-    // doing it only while the shell shrinks leaves it short of the last message,
-    // because the scrollable distance is still growing.
     if (!settled && applied === goal && appliedTop === goalTop) {
       settled = true;
-      if (goal > 0) scrollChatToBottom();
+      if (shouldScrollOnOpen && goal > 0) {
+        scrollChatToBottom();
+        shouldScrollOnOpen = false;
+      }
     }
 
     if (performance.now() < deadline) {
@@ -866,7 +931,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
     raf = 0;
     write(goal, goalTop);
-    if (applied > 0) scrollChatToBottom();
+    if (shouldScrollOnOpen && goal > 0) {
+      scrollChatToBottom();
+      shouldScrollOnOpen = false;
+    }
   }
 
   function track(ms) {
@@ -882,24 +950,34 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   });
   vv.addEventListener("scroll", function () {
     unpan();
-    track(300);
-  });
-  window.addEventListener("scroll", function () {
+  }, { passive: true });
+
+  // Use capture phase to intercept scroll events inside the message scroller div
+  document.addEventListener("scroll", function (e) {
     unpan();
-    checkNearBottom();
+    var t = e.target;
+    if (!t || t === document || (t.closest && t.closest('[data-testid="conversation-view"]'))) {
+      checkNearBottom();
+    }
+  }, { capture: true, passive: true });
+
+  // Cancel pending auto-scroll if user touches the conversation view during open
+  document.addEventListener("touchstart", function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('[data-testid="conversation-view"]')) {
+      shouldScrollOnOpen = false;
+    }
   }, { passive: true });
 
   window.addEventListener("touchmove", function () {
     if (applied > 0 || appliedTop > 0) {
       unpan();
-      track(200);
     }
   }, { passive: true });
 
   window.addEventListener("touchend", function () {
     if (applied > 0 || appliedTop > 0) {
       unpan();
-      track(300);
     }
   }, { passive: true });
 
@@ -913,7 +991,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
       checkNearBottom();
       predicted = loadPredicted();
-      if (predicted > 20 && applied === 0 && isPortrait()) {
+      // Only apply speculative shrink on mobile phones in portrait mode.
+      // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
+      if (predicted >= 100 && applied === 0 && isPortrait() && window.innerWidth <= 768) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         goalTop = fromTop = 0;

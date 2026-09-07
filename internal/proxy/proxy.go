@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
@@ -51,8 +52,11 @@ func New(opts Options) (*Proxy, error) {
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.FlushInterval = -1
 	rp.Transport = &http.Transport{
-		TLSClientConfig:    &tls.Config{InsecureSkipVerify: true},
-		DisableCompression: true,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		DisableCompression:  true,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
 	}
 
 	host := target.Host
