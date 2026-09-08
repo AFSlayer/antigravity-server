@@ -28,9 +28,10 @@ type ReportFunc func(target patches.Target, report patches.Report)
 
 // Options configures a Proxy.
 type Options struct {
-	TargetPort int
-	Patch      patches.Options
-	OnReport   ReportFunc
+	TargetPort      int
+	TargetCSRFToken string
+	Patch           patches.Options
+	OnReport        ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
@@ -65,6 +66,10 @@ func New(opts Options) (*Proxy, error) {
 		base(req)
 		req.Host = host
 		req.Header.Set("Origin", target.String())
+
+		if p.opts.TargetCSRFToken != "" {
+			req.Header.Set("x-codeium-csrf-token", p.opts.TargetCSRFToken)
+		}
 
 		if wantsPatch(req) {
 			req.Header.Del("Accept-Encoding")
@@ -154,6 +159,14 @@ func errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "context canceled") || strings.Contains(msg, "client disconnected") {
+		return
+	}
+
+	if r.Header.Get("x-grpc-web") != "" || strings.Contains(r.Header.Get("Content-Type"), "application/grpc-web") {
+		w.Header().Set("Content-Type", "application/grpc-web+json")
+		w.Header().Set("grpc-status", "14") // Unavailable
+		w.Header().Set("grpc-message", "Antigravity language server is restarting")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
