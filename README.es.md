@@ -218,6 +218,17 @@ agy-server config [flags]       Gestiona la configuración en config.json
 
 ---
 
+## Seguridad
+
+- **Protección por contraseña**: Las contraseñas se procesan con PBKDF2-SHA256 (200.000 iteraciones).
+- **Tokens de sesión**: Tokens criptográficos aleatorios de 256 bits; solo se almacenan los hashes SHA-256 en disco.
+- **Normalización y persistencia de CSRF**: Se almacena con permisos restringidos del propietario (`0600`) y se inyecta de forma transparente a través del proxy para evitar rechazos de sesiones activas tras reinicios.
+- **Protección contra fuerza bruta**: 5 intentos fallidos de inicio de sesión provocan el bloqueo temporal de la IP (de 5 a 30 minutos).
+- **Aislamiento de subidas**: La subida de archivos se limita estrictamente al directorio de proyecto configurado; los intentos de path traversal (`../`) son rechazados.
+- **Proxies de confianza**: Configure `--trusted-proxies` al operar tras Nginx, Caddy o Cloudflare para evitar la falsificación de cabeceras.
+
+---
+
 ## Licencia
 
 [Apache-2.0](LICENSE). No afiliado ni respaldado por Google. Consulta [DISCLAIMER.md](DISCLAIMER.md).

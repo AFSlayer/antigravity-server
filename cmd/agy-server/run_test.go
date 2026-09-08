@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
+	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 )
 
 func TestCSRFTokenPersistence(t *testing.T) {
@@ -51,5 +52,45 @@ func TestCSRFTokenPersistence(t *testing.T) {
 	loadedToken := customRunner.loadOrCreateCSRFToken()
 	if loadedToken != expectedCustomToken {
 		t.Errorf("expected %q, got %q", expectedCustomToken, loadedToken)
+	}
+}
+
+func TestSyncInstanceCSRFToken(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("AGY_HOME", tempDir)
+	cfg := config.Default()
+	r := &runner{cfg: cfg}
+	tokenPath := cfg.Path("csrf-token.txt")
+
+	// Case 1: nil instance should not panic
+	r.syncInstanceCSRFToken(nil)
+
+	// Case 2: Running instance has a token, disk file is missing -> writes token
+	inst1 := &lsproc.Instance{CSRFToken: "token-inst-1"}
+	r.syncInstanceCSRFToken(inst1)
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("failed to read token: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "token-inst-1" {
+		t.Errorf("want %q, got %q", "token-inst-1", string(data))
+	}
+
+	// Case 3: Running instance has a different token -> overwrites disk file
+	inst2 := &lsproc.Instance{CSRFToken: "token-inst-2-updated"}
+	r.syncInstanceCSRFToken(inst2)
+	data, err = os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("failed to read token: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "token-inst-2-updated" {
+		t.Errorf("want %q, got %q", "token-inst-2-updated", string(data))
+	}
+
+	// Case 4: Running instance has empty token, disk has token -> fills instance token
+	inst3 := &lsproc.Instance{CSRFToken: ""}
+	r.syncInstanceCSRFToken(inst3)
+	if inst3.CSRFToken != "token-inst-2-updated" {
+		t.Errorf("want %q, got %q", "token-inst-2-updated", inst3.CSRFToken)
 	}
 }
