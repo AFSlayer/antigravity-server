@@ -39,6 +39,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse, top header pinning, and conversation height adaptation above keyboard |
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
+| **Server restarts** | Language server restart invalidates session; manual page refresh required | **Seamless auto-reconnect** — persistent CSRF token & gRPC status 14 translation restore connection without refreshing |
 | **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
 
 ---
@@ -138,6 +139,13 @@ On headless Linux servers, `agy-server` includes a background auto-updater servi
 - Checks Google's official release buckets daily for new `language_server` versions.
 - Downloads and replaces the core binary atomically with zero downtime.
 - Manual check & upgrade: run `agy-server update`.
+
+---
+
+### 🔁 Seamless Auto-Reconnection & Session Persistence
+When the language server restarts (such as during updates or service reloads) or the connection briefly drops:
+- **Persistent CSRF Token**: Retains the same authentication token across restarts, preventing stale-session rejections.
+- **gRPC-Web Protocol Translation**: Translates transient connection drops to standard `grpc-status: 14` (Unavailable) rather than broken HTTP 502 HTML, enabling Antigravity's native state stream to automatically reconnect within seconds without refreshing the browser tab.
 
 ---
 
@@ -272,6 +280,7 @@ All CLI flags can be set via environment variables prefixed with `AGY_` (e.g. `A
 
 - **Password Protection**: Passwords are hashed with PBKDF2-SHA256 (200,000 iterations).
 - **Session Tokens**: 256-bit random tokens; only SHA-256 hashes are stored on disk.
+- **Persistent CSRF Normalization**: Stored with restricted owner permissions (`0600`) and injected transparently through the proxy to prevent stale-session rejections.
 - **Brute-Force Protection**: 5 failed login attempts trigger an IP lockout (5 to 30 minutes).
 - **Upload Isolation**: File uploads are restricted to the configured project directory; path traversal attempts (`../`) are rejected.
 - **Trusted Proxies**: Set `--trusted-proxies` when running behind Nginx, Caddy, or Cloudflare to prevent header spoofing.

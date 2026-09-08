@@ -113,8 +113,9 @@ func (r *runner) start() error {
 	tracker := patches.NewTracker()
 
 	p, err := proxy.New(proxy.Options{
-		TargetPort: instance.Port,
-		Patch:      patchOpts,
+		TargetPort:      instance.Port,
+		TargetCSRFToken: instance.CSRFToken,
+		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)
 			reportPatches(target, report)
@@ -331,6 +332,7 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 
 	if instance, err := lsproc.FindMatching(filter); err == nil {
 		info("Reusing the language server already running from %s", dim(binary))
+		r.syncInstanceCSRFToken(instance)
 		return instance, nil
 	}
 
@@ -349,9 +351,11 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		shimDir = ""
 	}
 
+	csrfToken := r.loadOrCreateCSRFToken()
+
 	cmd, err := lsproc.LaunchHeadless(lsproc.HeadlessOptions{
 		BinaryPath:     binary,
-		CSRFToken:      lsproc.NewCSRFToken(),
+		CSRFToken:      csrfToken,
 		IDEVersion:     r.cfg.IDEVersion,
 		LogWriter:      logFile,
 		BrowserShimDir: shimDir,
@@ -363,7 +367,47 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		r.shimURLFile = urlFile
 	}
 
-	return r.waitForServer(ctx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
+	instance, err := r.waitForServer(ctx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
+	if err != nil {
+		return nil, err
+	}
+	if instance.CSRFToken == "" {
+		instance.CSRFToken = csrfToken
+	}
+	return instance, nil
+}
+
+func (r *runner) loadOrCreateCSRFToken() string {
+	tokenPath := r.cfg.Path("csrf-token.txt")
+	if data, err := os.ReadFile(tokenPath); err == nil {
+		token := strings.TrimSpace(string(data))
+		if token != "" {
+			return token
+		}
+	}
+	token := lsproc.NewCSRFToken()
+	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
+		warn("could not persist csrf token: %v", err)
+	}
+	return token
+}
+
+func (r *runner) syncInstanceCSRFToken(instance *lsproc.Instance) {
+	if instance == nil {
+		return
+	}
+	tokenPath := r.cfg.Path("csrf-token.txt")
+	if instance.CSRFToken != "" {
+		if data, err := os.ReadFile(tokenPath); err != nil || strings.TrimSpace(string(data)) != instance.CSRFToken {
+			if err := os.WriteFile(tokenPath, []byte(instance.CSRFToken+"\n"), 0o600); err != nil {
+				warn("could not update csrf token from running instance: %v", err)
+			}
+		}
+	} else {
+		if data, err := os.ReadFile(tokenPath); err == nil {
+			instance.CSRFToken = strings.TrimSpace(string(data))
+		}
+	}
 }
 
 func (r *runner) waitForServer(ctx context.Context, timeout time.Duration, filter lsproc.Filter, logPath string) (*lsproc.Instance, error) {

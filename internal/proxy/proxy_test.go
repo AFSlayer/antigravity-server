@@ -246,3 +246,133 @@ func TestProxyReportsBadGatewayWhenUpstreamIsGone(t *testing.T) {
 		t.Errorf("want 502 when upstream is down, got %d", resp.StatusCode)
 	}
 }
+
+func TestProxyInjectsTargetCSRFToken(t *testing.T) {
+	var receivedToken string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		receivedToken = r.Header.Get("x-codeium-csrf-token")
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+
+	port := upstreamPort(t, server)
+	canonicalToken := "canonical-test-token-42"
+
+	p, err := New(Options{
+		TargetPort:      port,
+		TargetCSRFToken: canonicalToken,
+		Patch:           patches.Options{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	front := httptest.NewServer(p.Handler())
+	defer front.Close()
+
+	// Case 1: Client sends no CSRF token header -> Proxy should inject TargetCSRFToken
+	req1, err := http.NewRequest(http.MethodPost, front.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+	if receivedToken != canonicalToken {
+		t.Errorf("expected injected token %q, got %q", canonicalToken, receivedToken)
+	}
+
+	// Case 2: Client sends a stale CSRF token -> Proxy should overwrite with TargetCSRFToken
+	req2, err := http.NewRequest(http.MethodPost, front.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.Header.Set("x-codeium-csrf-token", "stale-browser-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if receivedToken != canonicalToken {
+		t.Errorf("expected overwritten token %q, got %q", canonicalToken, receivedToken)
+	}
+}
+
+func TestProxyErrorHandlerGRPCWeb(t *testing.T) {
+	server := upstream(t)
+	port := upstreamPort(t, server)
+	server.Close() // Simulate upstream language server down
+
+	p, err := New(Options{TargetPort: port, Patch: patches.Options{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	front := httptest.NewServer(p.Handler())
+	defer front.Close()
+
+	// 1. Request with x-grpc-web header
+	req1, err := http.NewRequest(http.MethodPost, front.URL+"/grpc-call", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req1.Header.Set("x-grpc-web", "1")
+
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+
+	if resp1.StatusCode != http.StatusOK {
+		t.Errorf("grpc-web: want 200 OK, got %d", resp1.StatusCode)
+	}
+	if got := resp1.Header.Get("grpc-status"); got != "14" {
+		t.Errorf("grpc-web: want grpc-status 14, got %q", got)
+	}
+	if got := resp1.Header.Get("grpc-message"); !strings.Contains(got, "restarting") {
+		t.Errorf("grpc-web: want restarting message, got %q", got)
+	}
+	if got := resp1.Header.Get("Content-Type"); got != "application/grpc-web+json" {
+		t.Errorf("grpc-web: want application/grpc-web+json, got %q", got)
+	}
+
+	// 2. Request with Content-Type: application/grpc-web
+	req2, err := http.NewRequest(http.MethodPost, front.URL+"/grpc-call", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.Header.Set("Content-Type", "application/grpc-web")
+
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("grpc-web content-type: want 200 OK, got %d", resp2.StatusCode)
+	}
+	if got := resp2.Header.Get("grpc-status"); got != "14" {
+		t.Errorf("grpc-web content-type: want grpc-status 14, got %q", got)
+	}
+
+	// 3. Regular non-gRPC request should still return 502
+	req3, err := http.NewRequest(http.MethodGet, front.URL+"/regular", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusBadGateway {
+		t.Errorf("regular request: want 502 Bad Gateway, got %d", resp3.StatusCode)
+	}
+}

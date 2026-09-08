@@ -39,6 +39,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 | **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Fija la barra superior, colapsa el Safe Area y adapta la altura de la conversación |
 | **Subida de archivos** | Límite de 1MB por RPC de texto | **Subida por fragmentos** para logs, HARs y datasets grandes |
 | **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
+| **Reconexión tras reinicio** | El reinicio del servidor invalida el token CSRF, requiriendo recargar la página manualmente | **Reconexión automática sin recarga** — Token CSRF persistente y traducción gRPC status 14 restauran la sesión automáticamente |
 | **Acceso sin cuenta de Google** | Imposible — la cuenta es la puerta | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
 
 ---
@@ -141,6 +142,13 @@ En servidores Linux headless, `agy-server` incluye un servicio de actualización
 
 ---
 
+### 🔁 Reconexión Automática sin Recarga y Persistencia de Sesión
+Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de servicio) o la conexión cae brevemente:
+- **Token CSRF Persistente**: Mantiene el mismo token de autenticación tras los reinicios, evitando el rechazo de sesiones activas.
+- **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
+
+---
+
 ### 📝 Editor Integrado de Reglas y Habilidades
 Gestione las instrucciones de su agente (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/`) y reglas de proyecto directamente desde la interfaz web:
 - Vaya a **Settings → Customizations**.
@@ -207,6 +215,17 @@ agy-server passwd [password]    Establece o cambia la contraseña web
 agy-server sessions [revoke]    Lista sesiones activas o cierra sesión en todos los dispositivos
 agy-server config [flags]       Gestiona la configuración en config.json
 ```
+
+---
+
+## Seguridad
+
+- **Protección por contraseña**: Las contraseñas se procesan con PBKDF2-SHA256 (200.000 iteraciones).
+- **Tokens de sesión**: Tokens criptográficos aleatorios de 256 bits; solo se almacenan los hashes SHA-256 en disco.
+- **Normalización y persistencia de CSRF**: Se almacena con permisos restringidos del propietario (`0600`) y se inyecta de forma transparente a través del proxy para evitar rechazos de sesiones activas tras reinicios.
+- **Protección contra fuerza bruta**: 5 intentos fallidos de inicio de sesión provocan el bloqueo temporal de la IP (de 5 a 30 minutos).
+- **Aislamiento de subidas**: La subida de archivos se limita estrictamente al directorio de proyecto configurado; los intentos de path traversal (`../`) son rechazados.
+- **Proxies de confianza**: Configure `--trusted-proxies` al operar tras Nginx, Caddy o Cloudflare para evitar la falsificación de cabeceras.
 
 ---
 

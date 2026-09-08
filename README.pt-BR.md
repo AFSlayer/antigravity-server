@@ -39,6 +39,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 | **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Fixa a barra superior, colapsa a Safe Area e adapta a altura da conversa |
 | **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
+| **Reconexão após reinício** | O reinício do servidor invalida o token CSRF, exigindo recarregamento manual da página | **Reconexão automática contínua** — Token CSRF persistente e tradução gRPC status 14 restauram a sessão sem recarregar |
 | **Acesso sem conta Google** | Impossível — a conta é a porta | Sua própria senha (PBKDF2), sessões e rate-limiting |
 
 ---
@@ -141,6 +142,13 @@ Em servidores Linux headless, o `agy-server` inclui serviço de atualização au
 
 ---
 
+### 🔁 Reconexão Automática Contínua e Persistência de Sessão
+Quando o servidor de linguagem reinicia (durante atualizações ou reinícios de serviço) ou ocorre uma breve queda de rede:
+- **Token CSRF Persistente**: Mantém o mesmo token de autenticação após reinícios, evitando rejeições de sessões ativas.
+- **Tradução de Protocolo gRPC-Web**: Converte falhas transitórias em `grpc-status: 14` (Unavailable) em vez de erro HTTP 502 HTML, permitindo que o fluxo de estado nativo do Antigravity se reconecte automaticamente em segundos sem recarregar a aba do navegador.
+
+---
+
 ### 📝 Editor Integrado de Regras e Habilidades
 Gerencie as instruções do seu agente (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/`) e regras do projeto diretamente pela interface web:
 - Acesse **Settings → Customizations**.
@@ -207,6 +215,17 @@ agy-server passwd [password]    Define ou altera a senha de acesso web
 agy-server sessions [revoke]    Lista sessões ativas ou desconecta todos os aparelhos
 agy-server config [flags]       Gerencia configurações em config.json
 ```
+
+---
+
+## Segurança
+
+- **Proteção por senha**: As senhas são tratadas com hash unidirecional PBKDF2-SHA256 (200.000 iterações).
+- **Tokens de sessão**: Tokens criptográficos aleatórios de 256 bits; apenas os hashes SHA-256 são persistidos em disco.
+- **Normalização e persistência de CSRF**: Armazenado com permissões restritas do proprietário (`0600`) e injetado de forma transparente pelo proxy para evitar rejeições de sessões ativas após reinicializações.
+- **Proteção contra força bruta**: 5 tentativas incorretas de login bloqueiam temporariamente o IP (de 5 a 30 minutos).
+- **Isolamento de uploads**: O envio de arquivos é restrito estritamente ao diretório do projeto configurado; tentativas de path traversal (`../`) são bloqueadas.
+- **Proxies de confiança**: Configure `--trusted-proxies` ao rodar atrás de Nginx, Caddy ou Cloudflare para impedir falsificação de cabeçalhos.
 
 ---
 
