@@ -39,6 +39,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 | **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Fixa a barra superior, colapsa a Safe Area e adapta a altura da conversa |
 | **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
+| **Reconexão após reinício** | O reinício do servidor invalida o token CSRF, exigindo recarregamento manual da página | **Reconexão automática contínua** — Token CSRF persistente e tradução gRPC status 14 restauram a sessão sem recarregar |
 | **Acesso sem conta Google** | Impossível — a conta é a porta | Sua própria senha (PBKDF2), sessões e rate-limiting |
 
 ---
@@ -138,6 +139,13 @@ Em servidores Linux headless, o `agy-server` inclui serviço de atualização au
 - Verifica diariamente novas versões oficiais do `language_server`.
 - Substitui o binário de forma atômica e segura.
 - Verificação manual: execute `agy-server update`.
+
+---
+
+### 🔁 Reconexão Automática Contínua e Persistência de Sessão
+Quando o servidor de linguagem reinicia (durante atualizações ou reinícios de serviço) ou ocorre uma breve queda de rede:
+- **Token CSRF Persistente**: Mantém o mesmo token de autenticação após reinícios, evitando rejeições de sessões ativas.
+- **Tradução de Protocolo gRPC-Web**: Converte falhas transitórias em `grpc-status: 14` (Unavailable) em vez de erro HTTP 502 HTML, permitindo que o fluxo de estado nativo do Antigravity se reconecte automaticamente em segundos sem recarregar a aba do navegador.
 
 ---
 
