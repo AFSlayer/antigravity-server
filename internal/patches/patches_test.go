@@ -3,6 +3,7 @@ package patches
 import (
 	"bytes"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -73,6 +74,9 @@ var regexpFixtures = map[string]string{
 	"file-upload-input-reset":                   `var IRa=({onFilesSelected:a})=>{var b=(0,x.useRef)(null),c=(0,x.useCallback)(e=>{e=e.target;e.files&&a(e.files)},[a]);return{openFileDialog:(0,x.useCallback)(()=>{b.current?.click()},[]),fileInputRef:b,handleFileChange:c}};`,
 	"file-upload-custom-text-types":             `function WEa(a,b){b=b.split(";")[0].trim().toLowerCase();if(UEa.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return VEa[a]}`,
 	"file-upload-large-file-streaming-fallback": `if(n)if(k.size>1048576)console.error("Text file size exceeds 1MB limit");`,
+	"question-modal-write-in-radio":             `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
+	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
+	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 }
 
 func fullOptions() Options {
@@ -150,6 +154,9 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
 		`contractionSafetyPx:1E8,outerRadiusPx:2E8`,
+		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
+		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
+		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -264,8 +271,11 @@ func TestHTMLInjection(t *testing.T) {
 		`@media (pointer: coarse) and (max-width: 768px)`,
 		`@media (pointer: coarse) and (min-width: 769px)`,
 		`target < 100`,
-		`shouldScrollOnOpen`,
-		`isPortrait() && window.innerWidth <= 768`,
+		`function isMobileDevice()`,
+		`function isTextInput(el)`,
+		`div.fixed.inset-0:has(> .aux-drawer-popup)`,
+		`var suppressComposerUntil = 0;`,
+		`[data-testid="agent-input-box"]`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -345,23 +355,32 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 
 func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 	v210Fixtures := map[string]string{
-		"mobile-conversation-row-actions":  `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
-		"mobile-user-message-actions":      `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
-		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
-		"mobile-kebab-wrapper-pin-archive": `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
-		"mobile-kebab-call-pin-archive":    `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
+		"mobile-conversation-row-actions":          `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-user-message-actions":              `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
+		"mobile-kebab-menu-pin-archive":            `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
+		"mobile-kebab-wrapper-pin-archive":         `var elb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onOpenChange:g,onViewDebugClick:h})=>G.createElement(FL,{onOpenChange:g},G.createElement(GL,{asChild:!0},G.createElement(Ky,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},G.createElement(U,{name:"more_vert",size:16}))),G.createElement(dlb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:h}));`,
+		"mobile-kebab-call-pin-archive":            `G.createElement(elb,{cascadeId:a,onDeleteClick:()=>{sa(!0)},onRenameClick:hb,onMarkAsReadClick:vb?ja:pa,isUnread:vb,onOpenChange:Ca})`,
+		"question-modal-write-in-radio":            `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
+		"question-modal-write-in-focus":            `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
+		"question-modal-prevent-radio-focus-steal": `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	}
 
 	v211Fixtures := map[string]string{
-		"mobile-conversation-row-actions":  `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
-		"mobile-user-message-actions":      `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
-		"mobile-kebab-menu-pin-archive":    `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
-		"mobile-kebab-wrapper-pin-archive": `var ynb=y.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return y.createElement(PK,{onOpenChange:g},y.createElement(QK,{asChild:!0},y.createElement(CA,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},y.createElement(T,{name:"more_vert",size:16}))),y.createElement(xnb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
-		"mobile-kebab-call-pin-archive":    `y.createElement(ynb,` + "\n" + `{cascadeId:a,onDeleteClick:Ia,onRenameClick:va,onMarkAsReadClick:tb?ra:ma,isUnread:tb,onOpenChange:Ja})`,
+		"mobile-conversation-row-actions":          `className:$l("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",v?"hidden":Ka?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+		"mobile-user-message-actions":              `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
+		"mobile-kebab-menu-pin-archive":            `const dlb=({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:d,isUnread:f,onViewDebugClick:g})=>G.createElement(HL,{side:"bottom",align:"start",className:"min-w-[180px]",finalFocus:!1},G.createElement(IL,{onClick:c,"data-testid":"conversation-rename-menu-item"},G.createElement(U,{name:"edit",size:16,className:"text-secondary-foreground shrink-0"}),G.createElement("span",null,"Rename")),`,
+		"mobile-kebab-wrapper-pin-archive":         `var ynb=y.memo(function({cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,onOpenChange:g,onViewDebugClick:h}){return y.createElement(PK,{onOpenChange:g},y.createElement(QK,{asChild:!0},y.createElement(CA,{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:k=>void k.stopPropagation()},y.createElement(T,{name:"more_vert",size:16}))),y.createElement(xnb,{cascadeId:a,onDeleteClick:b,onRenameClick:c,onMarkAsReadClick:e,isUnread:f,` + "\n" + `onViewDebugClick:h}))});`,
+		"mobile-kebab-call-pin-archive":            `y.createElement(ynb,` + "\n" + `{cascadeId:a,onDeleteClick:Ia,onRenameClick:va,onMarkAsReadClick:tb?ra:ma,isUnread:tb,onOpenChange:Ja})`,
+		"question-modal-write-in-radio":            `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
+		"question-modal-write-in-focus":            `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
+		"question-modal-prevent-radio-focus-steal": `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	}
 
 	v212Fixtures := map[string]string{
-		"mobile-user-message-actions": `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container select-none"`,
+		"mobile-user-message-actions":              `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container select-none"`,
+		"question-modal-write-in-radio":            `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
+		"question-modal-write-in-focus":            `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
+		"question-modal-prevent-radio-focus-steal": `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	}
 
 	versions := map[string]map[string]string{
@@ -401,5 +420,35 @@ func TestAllGoFilesAreGofmtFormatted(t *testing.T) {
 	unformatted := strings.TrimSpace(string(out))
 	if unformatted != "" {
 		t.Errorf("The following Go files are not formatted with gofmt:\n%s", unformatted)
+	}
+}
+
+func TestTextInputFilterLogic(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	patternRe := regexp.MustCompile(`/(\^\([^/]+\)\$)/`)
+	matches := patternRe.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("failed to find text input filter pattern in injected script")
+	}
+
+	re, err := regexp.Compile(matches[1])
+	if err != nil {
+		t.Fatalf("invalid regex pattern %q extracted from script: %v", matches[1], err)
+	}
+
+	excluded := []string{"radio", "checkbox", "button", "submit", "reset", "file", "range", "color", "hidden", "image"}
+	for _, typ := range excluded {
+		if !re.MatchString(typ) {
+			t.Errorf("expected %q to be excluded from text input list", typ)
+		}
+	}
+
+	allowed := []string{"text", "search", "email", "password", "number", "tel", "url"}
+	for _, typ := range allowed {
+		if re.MatchString(typ) {
+			t.Errorf("expected %q to be allowed as text input", typ)
+		}
 	}
 }

@@ -36,7 +36,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
-| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse, top header pinning, and conversation height adaptation above keyboard |
+| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse, top header pinning, conversation height adaptation, and stable question modal interactions (no keyboard jump on selection, instant write-in focus) |
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
 | **Server restarts** | Language server restart invalidates session; manual page refresh required | **Seamless auto-reconnect** — persistent CSRF token & gRPC status 14 translation restore connection without refreshing |

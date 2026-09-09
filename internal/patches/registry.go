@@ -57,8 +57,11 @@ var (
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}`)
 
-	fileUploadLargeFileStreamingRe     = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
-	virtualizationDisableContractionRe = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
+	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
+	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
+	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
+	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\(![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -436,6 +439,30 @@ func All() []Patch {
 			FindRe:  fileUploadLargeFileStreamingRe,
 			Replace: `if($1)if($2.size>1048576){if(window.__agyUpload){window.__agyUpload([$2]);return;}}`,
 		},
+		{
+			ID:      "question-modal-write-in-radio",
+			Desc:    "Prevent write-in radio button from unchecking on repeated label taps in single-select questions",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  questionModalWriteInRadioRe,
+			Replace: `${1}(${6}.isMultiSelect?!${4}:!0)${5}`,
+		},
+		{
+			ID:      "question-modal-write-in-focus",
+			Desc:    "Trigger write-in radio selection and keyboard focus when write-in textarea is focused",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  questionModalWriteInFocusRe,
+			Replace: `${1},onFocus:()=>{${2}||(${3}(!0),${4}.isMultiSelect||${5}())}${6}`,
+		},
+		{
+			ID:      "question-modal-prevent-radio-focus-steal",
+			Desc:    "Prevent question modal from stealing focus from write-in textarea back to objective radio options",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  questionModalPreventRadioFocusStealRe,
+			Replace: `${1}&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)${2}`,
+		},
 
 		{
 			ID:      "app-icons",
@@ -659,10 +686,22 @@ div.user-input-buttons-container > * {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
-    .aux-drawer-popup {
-      padding-bottom: var(--agy-bottom, env(safe-area-inset-bottom, 0px)) !important;
+    /* Question modal / Bottom sheet: Dock container cleanly above virtual keyboard */
+    div.fixed.inset-0:has(> .aux-drawer-popup) {
+      bottom: var(--agy-bottom, 0px) !important;
     }
-    .fixed.bottom-3 {
+    body:not(.agy-kb-open) div.fixed.inset-0:has(> .aux-drawer-popup) {
+      transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .aux-drawer-popup {
+      padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)) !important;
+      max-height: calc(100% - 1rem) !important;
+    }
+    body.agy-kb-open .aux-drawer-popup,
+    html[style*="--agy-bottom"] .aux-drawer-popup {
+      padding-bottom: 0.5rem !important;
+    }
+    div.fixed.inset-0:has(> .aux-drawer-popup) .fixed.bottom-3 {
       bottom: calc(0.75rem + var(--agy-bottom, 0px)) !important;
     }
   }
@@ -775,6 +814,16 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     el.scrollTop = el.scrollHeight;
   }
 
+  function isTextInput(el) {
+    if (!el) return false;
+    if (el.tagName === "TEXTAREA" || el.isContentEditable) return true;
+    if (el.tagName === "INPUT") {
+      var type = (el.type || "").toLowerCase();
+      return !/^(radio|checkbox|button|submit|reset|file|range|color|hidden|image)$/.test(type);
+    }
+    return false;
+  }
+
   // html is position:fixed, so clientHeight is the layout viewport and does not
   // move with Safari's toolbar the way innerHeight can.
   function base() {
@@ -815,7 +864,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var de = document.documentElement;
     var sy = window.scrollY || window.pageYOffset || 0;
     if (sy !== 0) window.scrollTo(0, 0);
-    if (de.scrollTop !== 0) de.scrollTop = 0;
+    if (de && de.scrollTop !== 0) de.scrollTop = 0;
     if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
   }
 
@@ -986,14 +1035,71 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     track(500);
   });
 
+  function isMobileDevice() {
+    return isTouch && Math.min(window.innerWidth, window.innerHeight) <= 768;
+  }
+
+  var suppressComposerUntil = 0;
+  var lastComposerTouchTime = 0;
+
+  document.addEventListener("touchstart", function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('[data-testid="agent-input-box"]')) {
+      lastComposerTouchTime = performance.now();
+    }
+  }, { capture: true, passive: true });
+
+  // When an objective option (radio) in ask_question is selected on mobile devices:
+  // Suppress spurious auto-focus jumping into the main agent composer after modal completion
+  document.addEventListener("change", function (e) {
+    if (!isMobileDevice()) return;
+    var t = e.target;
+    if (t && t.type === "radio" && typeof t.name === "string" && t.name.indexOf("ask-question-") === 0) {
+      if (t.value !== "__write_in__") {
+        suppressComposerUntil = performance.now() + 450;
+        if (t.blur) t.blur();
+        unpan();
+      }
+    }
+  }, true);
+
+  // If submit / continue button is clicked in ask_question on mobile devices:
+  document.addEventListener("click", function (e) {
+    if (!isMobileDevice()) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('[data-testid="interaction-continue-button"], [data-testid="interaction-skip-button"]')) {
+      suppressComposerUntil = performance.now() + 450;
+      unpan();
+    }
+  }, true);
+
   window.addEventListener("focusin", function (e) {
     var t = e.target;
-    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+
+    if (t && t.tagName === "INPUT" && (t.type === "radio" || t.type === "checkbox")) {
+      unpan();
+    }
+
+    if (t && isTextInput(t)) {
+      // On mobile devices, if the main agent composer is auto-focused immediately after question submission,
+      // blur it so the virtual keyboard does not pop up unexpectedly.
+      // Deliberate user touch on the composer and inputs outside the composer are never blocked!
+      if (isMobileDevice() && performance.now() < suppressComposerUntil) {
+        var isMainComposer = t.closest && t.closest('[data-testid="agent-input-box"]');
+        if (isMainComposer) {
+          var isDirectUserTap = (performance.now() - lastComposerTouchTime) < 500;
+          if (!isDirectUserTap) {
+            if (t.blur) t.blur();
+            return;
+          }
+        }
+      }
+
       checkNearBottom();
       predicted = loadPredicted();
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
-      if (predicted >= 100 && applied === 0 && isPortrait() && window.innerWidth <= 768) {
+      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait()) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         goalTop = fromTop = 0;
@@ -1004,8 +1110,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  window.addEventListener("focusout", function () {
-    track(500);
+  window.addEventListener("focusout", function (e) {
+    var t = e.target;
+    if (t && isTextInput(t)) {
+      track(500);
+    }
   });
 })();
 </script>`
@@ -1212,7 +1321,13 @@ const mobileDebug = `<script id="agy-debug">
   }
 
   function editable(t) {
-    return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (!t) return false;
+    if (t.tagName === "TEXTAREA" || t.isContentEditable) return true;
+    if (t.tagName === "INPUT") {
+      var type = (t.type || "").toLowerCase();
+      return !/^(radio|checkbox|button|submit|reset|file|range|color|hidden|image)$/.test(type);
+    }
+    return false;
   }
 
   vv.addEventListener("resize", function () { begin("vv-resize", 700); });

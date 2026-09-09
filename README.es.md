@@ -36,7 +36,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 | **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
 | **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
 | **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
-| **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Fija la barra superior, colapsa el Safe Area y adapta la altura de la conversación |
+| **Teclado en iOS** | Queda hueco en el Safe Area; saltos de viewport al enfocar | Fija la barra superior, colapsa el Safe Area, adapta la altura de la conversación y estabiliza modales de preguntas (sin saltos de teclado en opciones, foco inmediato en respuesta libre) |
 | **Subida de archivos** | Límite de 1MB por RPC de texto | **Subida por fragmentos** para logs, HARs y datasets grandes |
 | **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
 | **Reconexión tras reinicio** | El reinicio del servidor invalida el token CSRF, requiriendo recargar la página manualmente | **Reconexión automática sin recarga** — Token CSRF persistente y traducción gRPC status 14 restauran la sesión automáticamente |
