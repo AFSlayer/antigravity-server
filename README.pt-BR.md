@@ -36,7 +36,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
-| **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Fixa a barra superior, colapsa a Safe Area e adapta a altura da conversa |
+| **Teclado no iOS** | Espaço vazio no Safe Area; tela pula ao focar | Fixa a barra superior, colapsa a Safe Area, adapta a altura da conversa e estabiliza modais de perguntas (sem salto de teclado nas opções, foco imediato no texto livre) |
 | **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
 | **Reconexão após reinício** | O reinício do servidor invalida o token CSRF, exigindo recarregamento manual da página | **Reconexão automática contínua** — Token CSRF persistente e tradução gRPC status 14 restauram a sessão sem recarregar |
