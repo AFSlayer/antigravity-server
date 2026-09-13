@@ -46,7 +46,7 @@ var regexpFixtures = map[string]string{
 	"hide-user-profile-button":                  `function wmb({className:a=""}={}){return x.createElement("a",{href:"#",onClick:b=>{b.preventDefault()},className:` + "`w-6 h-6 rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-transparent text-muted-foreground ${a}`" + `,"aria-label":"User Profile (Placeholder)"`,
 	"sign-in-button":                            `rightElement:x.createElement(tz,{variant:"primary",onClick:()=>` + "\n" + `b.showLoginFlow()},"Sign In")`,
 	"mobile-skip-notification-prompt":           `var e=!!this.storageService.get("didAskForNotificationPermission");`,
-	"mobile-new-convo-view":                     `const tub=()=>{var a=yM(),b=IT();return(0,x.useCallback)((c,e)=>{b(HT.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var uub=()=>{var a=tub(),{q:b}=dM({strict:!1});return x.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},x.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},x.createElement(sub,{surface:"background"})),x.createElement("div",{className:"shrink-0 p-2"},x.createElement(e_,{cascadeId:void 0},x.createElement(b_,{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,showBottomToolbar:!0,` + "\n" + `aboveContent:x.createElement(s_,null),initialQuery:b}))))};`,
+	"mobile-new-convo-view":                     `const tub=()=>{var a=yM(),b=IT();return(0,x.useCallback)((c,e)=>{b(HT.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var uub=()=>{var a=tub(),{q:b}=dM({strict:!1});return x.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},x.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},x.createElement(sub,{surface:"background"})),`,
 	"mobile-new-convo-header":                   `CM=()=>QL({select:a=>a.location.pathname==="/"})`,
 	"mobile-back-clears-section":                `x.createElement(gZ,{iconName:"arrow_back",onClick:()=>c(),"aria-label":"Back to home",dataTestId:"mobile-back-to-home"})`,
 	"mobile-project-add-button":                 `if(d==="project"||d==="environment"||d==="status"){let za=B?void 0:d==="project"?"New Conversation in Project":d==="environment"?"New Conversation in Workspace":void 0`,
@@ -77,6 +77,7 @@ var regexpFixtures = map[string]string{
 	"question-modal-write-in-radio":             `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
+	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 }
 
 func fullOptions() Options {
@@ -157,6 +158,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
+		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -276,11 +278,24 @@ func TestHTMLInjection(t *testing.T) {
 		`div.fixed.inset-0:has(> .aux-drawer-popup)`,
 		`var suppressComposerUntil = 0;`,
 		`[data-testid="agent-input-box"]`,
+		`[data-testid="ask-question-header-text"]`,
+		`[data-testid="interaction-continue-button"]`,
+		`calc(100vh - var(--agy-bottom, 0px) - 160px)`,
+		`html.agy-has-question`,
+		`body.agy-has-question`,
+		`var hasActiveQuestion = false;`,
+		`function updateQuestionState()`,
+		`function finishQuestion()`,
+		`QUESTION_SELECTOR`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
 			t.Errorf("missing %s in output", w)
 		}
+	}
+
+	if strings.Contains(body, "min-height: 120px") {
+		t.Error("min-height: 120px was found in injected styles; this breaks the empty composer height")
 	}
 
 	if strings.Index(body, "agy-touch-action") > strings.Index(body, "</head>") {
@@ -383,10 +398,17 @@ func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 		"question-modal-prevent-radio-focus-steal": `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	}
 
+	v213Fixtures := map[string]string{
+		"question-modal-prevent-radio-focus-steal": `if(document.hasFocus()&&!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
+		"autoscroll-distance-fix":                  `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+		"mobile-new-convo-view":                    `const KLb=()=>{var a=UL(),b=bU();return(0,z.useCallback)((c,e)=>{b(aU.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var LLb=()=>{var a=KLb(),{q:b}=xL({strict:!1});F1("MOBILE_HOME_VIEW");return z.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},z.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},z.createElement(JLb,{surface:"background"})),`,
+	}
+
 	versions := map[string]map[string]string{
 		"2.10.0": v210Fixtures,
 		"2.11.0": v211Fixtures,
 		"2.12.0": v212Fixtures,
+		"2.13.0": v213Fixtures,
 	}
 
 	patches := All()
