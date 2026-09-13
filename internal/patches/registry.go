@@ -39,7 +39,7 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var ([a-zA-Z0-9_$]+)=!!this\.storageService\.get\("didAskForNotificationPermission"\);`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=\(\)=>\{var a=([a-zA-Z0-9_$]+)\(\),b=([a-zA-Z0-9_$]+)\(\);return\(0,([a-zA-Z0-9_$]+)\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{b\(([a-zA-Z0-9_$]+)\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);a\(c,\{section:([a-zA-Z0-9_$]+)\}\)\},\[a,b\]\)\};[\r\n\s]*(?:var|const)\s+([a-zA-Z0-9_$]+)=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),\{q:b\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?return ([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"shrink-0 p-2"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:void 0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,[\r\n\s]*showBottomToolbar:!0,[\r\n\s]*aboveContent:([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),null\),initialQuery:b\}\)\)\)\)\};`)
+	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{section:)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},)([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),`)
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
@@ -61,7 +61,8 @@ var (
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
-	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\(![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
+	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
+	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -177,7 +178,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
-			Replace: `var ${1}=()=>{var a=${2}(),b=${3}();return(0,${4}.useCallback)((c,${5})=>{b(${6}.map(f=>({trigger:f,ran:!1})));a(c,{section:${5},replace:!0})},[a,b])};var ${8}=()=>{var a=${1}(),{q:b,section:sec}=${9}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);return ${10}.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},isMobileNew?${10}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${10}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${10}.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},${10}.createElement(${13},{surface:"background"})),${10}.createElement("div",{className:"shrink-0 p-2"},${10}.createElement(${16},{cascadeId:void 0},${10}.createElement(${18},{conversationId:void 0,isLoading:!1,dropdownPlacement:"top-start",openConversationOptimistically:a,showBottomToolbar:!0,aboveContent:${10}.createElement(${20},null),initialQuery:b}))))};`,
+			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7}.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},${8}.createElement(${9},{surface:"background"})),`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -463,6 +464,15 @@ func All() []Patch {
 			FindRe:  questionModalPreventRadioFocusStealRe,
 			Replace: `${1}&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)${2}`,
 		},
+		{
+			ID:      "autoscroll-distance-fix",
+			Desc:    "Restore stable physical container scroll distance calculation in auto-scroll hook",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  autoscrollDistanceFixRe,
+			Replace: `return ${1}?(${1}.scrollHeight-${1}.clientHeight-${1}.scrollTop)<=${3}:!1`,
+		},
 
 		{
 			ID:      "app-icons",
@@ -627,9 +637,42 @@ div.user-input-buttons-container > * {
     padding: 0 !important;
   }
 
+  /* Adaptive Dual Mode: When a question popup or interaction is active,
+     restore Google Antigravity original pure mode:
+     - Unfreeze html & body position (position: static, overflow-y: auto)
+     - Allow native layout viewport panning (window.scrollY > 0)
+     - Allow dual scrolling (swipe down entire window + scroll top conversation)
+     - Remove keyboard-height constraints on the question card */
+  html.agy-has-question,
+  body.agy-has-question,
+  html:has(body.agy-has-question),
+  html:has([data-testid="ask-question-header-text"]),
+  html:has([data-testid="interaction-continue-button"]),
+  html:has([data-testid="interaction-skip-button"]),
+  html:has([data-testid="ask-question-writein"]),
+  html:has(input[name^="ask-question-"]),
+  html:has([data-testid="declared-permissions-modal"]),
+  body:has([data-testid="ask-question-header-text"]),
+  body:has([data-testid="interaction-continue-button"]),
+  body:has([data-testid="interaction-skip-button"]),
+  body:has([data-testid="ask-question-writein"]),
+  body:has(input[name^="ask-question-"]),
+  body:has([data-testid="declared-permissions-modal"]) {
+    position: static !important;
+    inset: auto !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: auto !important;
+  }
+
   /* Eliminate double safe-area padding from Language Server inline style */
   [data-testid="agent-input-box"] {
     padding-bottom: 0px !important;
+  }
+  [data-testid="agent-input-box"] div[role="textbox"] {
+    min-height: 0 !important;
   }
 
   /* Smooth padding-bottom transition to prevent 34px snap/jerk when keyboard dismisses */
@@ -681,16 +724,137 @@ div.user-input-buttons-container > * {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
+    div[data-testid="conversation-view"] div.flex-1.min-h-0.overflow-y-auto,
     div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
-    div[data-testid="conversation-view"] div.overflow-y-auto {
+    div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"] {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
+
+    /* Dual Mode Overrides: Restore relative flow and viewport bounds when question is active */
+    body.agy-has-question .relative.w-screen.h-\[100dvh\],
+    body:has([data-testid="ask-question-header-text"]) .relative.w-screen.h-\[100dvh\],
+    body:has([data-testid="interaction-continue-button"]) .relative.w-screen.h-\[100dvh\],
+    body:has([data-testid="ask-question-writein"]) .relative.w-screen.h-\[100dvh\],
+    body:has([data-testid="declared-permissions-modal"]) .relative.w-screen.h-\[100dvh\] {
+      position: relative !important;
+      inset: auto !important;
+      width: 100vw !important;
+      height: auto !important;
+      min-height: 100dvh !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+
+    body.agy-has-question div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="ask-question-header-text"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="interaction-continue-button"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="ask-question-writein"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="declared-permissions-modal"]) div.h-\[100dvh\].w-screen.flex.flex-col {
+      position: relative !important;
+      top: 0 !important;
+      left: auto !important;
+      right: auto !important;
+      bottom: auto !important;
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+      overflow: visible !important;
+      transition: none !important;
+    }
+
+    body.agy-has-question div[data-testid="conversation-view"],
+    body:has([data-testid="ask-question-header-text"]) div[data-testid="conversation-view"],
+    body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"],
+    body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"],
+    body:has([data-testid="declared-permissions-modal"]) div[data-testid="conversation-view"] {
+      overflow-y: auto !important;
+      max-height: 100% !important;
+      min-height: 0 !important;
+      overscroll-behavior-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+
+    body.agy-has-question div[data-testid="conversation-view"] div.flex-1.min-h-0.overflow-y-auto,
+    body.agy-has-question div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
+    body.agy-has-question div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"],
+    body:has([data-testid="ask-question-header-text"]) div[data-testid="conversation-view"] div.flex-1.min-h-0.overflow-y-auto,
+    body:has([data-testid="ask-question-header-text"]) div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
+    body:has([data-testid="ask-question-header-text"]) div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"],
+    body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"] div.flex-1.min-h-0.overflow-y-auto,
+    body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
+    body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"],
+    body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"] div.flex-1.min-h-0.overflow-y-auto,
+    body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"] div.h-full.overflow-y-auto,
+    body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"] {
+      overflow-y: auto !important;
+      overscroll-behavior-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+
+    /* Question modal / Option list constraints:
+       Ensure header and action buttons never shrink */
+    div:has(> [data-testid="ask-question-header-text"]),
+    div:has(> div > [data-testid="ask-question-header-text"]),
+    div:has(> div > div > [data-testid="ask-question-header-text"]),
+    [data-testid="ask-question-header-text"] {
+      flex-shrink: 0 !important;
+    }
+    div:has(> [data-testid="interaction-continue-button"]),
+    div:has(> * > [data-testid="interaction-continue-button"]) {
+      flex-shrink: 0 !important;
+    }
+    /* Question card / modal container: clamp max-height so action buttons never get pushed off screen */
+    div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
+    div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]) {
+      max-height: calc(100dvh - var(--agy-bottom, 0px) - 50px) !important;
+      max-height: calc(100vh - var(--agy-bottom, 0px) - 50px) !important;
+      min-height: 0 !important;
+    }
+    /* Dual Mode: Release max-height clamp in question mode */
+    body.agy-has-question div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
+    body.agy-has-question div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]),
+    body:has([data-testid="ask-question-header-text"]) div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
+    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]),
+    body:has([data-testid="interaction-continue-button"]) div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
+    body:has([data-testid="interaction-continue-button"]) div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]) {
+      max-height: none !important;
+    }
+
+    /* Question modal options list: scroll options within available height comfortably above keyboard or screen bottom */
+    div[role="radiogroup"]:has(input[name^="ask-question-"]),
+    div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
+    div.flex.flex-col:has(> div > label > input[name^="ask-question-"]) {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      overscroll-behavior-y: contain !important;
+      padding-right: 2px !important;
+    }
+    body.agy-kb-open div[role="radiogroup"]:has(input[name^="ask-question-"]),
+    body.agy-kb-open div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
+    html[style*="--agy-bottom"] div[role="radiogroup"]:has(input[name^="ask-question-"]),
+    html[style*="--agy-bottom"] div.flex.flex-col:has(> * > label > input[name^="ask-question-"]) {
+      max-height: calc(100vh - var(--agy-bottom, 0px) - 160px) !important;
+      max-height: calc(100dvh - var(--agy-bottom, 0px) - 160px) !important;
+    }
+    /* Dual Mode: Release options list max-height in question mode */
+    body.agy-has-question div[role="radiogroup"]:has(input[name^="ask-question-"]),
+    body.agy-has-question div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
+    body.agy-has-question div.flex.flex-col:has(> div > label > input[name^="ask-question-"]),
+    body:has([data-testid="ask-question-header-text"]) div[role="radiogroup"]:has(input[name^="ask-question-"]),
+    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
+    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> div > label > input[name^="ask-question-"]) {
+      max-height: none !important;
+    }
+
     /* Question modal / Bottom sheet: Dock container cleanly above virtual keyboard */
-    div.fixed.inset-0:has(> .aux-drawer-popup) {
+    div.fixed.inset-0:has(> .aux-drawer-popup),
+    div.fixed.inset-0:has(.aux-drawer-popup) {
       bottom: var(--agy-bottom, 0px) !important;
     }
-    body:not(.agy-kb-open) div.fixed.inset-0:has(> .aux-drawer-popup) {
+    body:not(.agy-kb-open) div.fixed.inset-0:has(> .aux-drawer-popup),
+    body:not(.agy-kb-open) div.fixed.inset-0:has(.aux-drawer-popup) {
       transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .aux-drawer-popup {
@@ -701,8 +865,23 @@ div.user-input-buttons-container > * {
     html[style*="--agy-bottom"] .aux-drawer-popup {
       padding-bottom: 0.5rem !important;
     }
-    div.fixed.inset-0:has(> .aux-drawer-popup) .fixed.bottom-3 {
+    div.fixed.inset-0:has(> .aux-drawer-popup) .fixed.bottom-3,
+    div.fixed.inset-0:has(.aux-drawer-popup) .fixed.bottom-3 {
       bottom: calc(0.75rem + var(--agy-bottom, 0px)) !important;
+    }
+
+    /* Dual Mode: Release drawer popup bounds in question mode */
+    body.agy-has-question div.fixed.inset-0:has(> .aux-drawer-popup),
+    body.agy-has-question div.fixed.inset-0:has(.aux-drawer-popup),
+    body:has([data-testid="ask-question-header-text"]) div.fixed.inset-0:has(> .aux-drawer-popup),
+    body:has([data-testid="ask-question-header-text"]) div.fixed.inset-0:has(.aux-drawer-popup) {
+      bottom: 0px !important;
+    }
+    body.agy-has-question div.fixed.inset-0:has(> .aux-drawer-popup) .fixed.bottom-3,
+    body.agy-has-question div.fixed.inset-0:has(.aux-drawer-popup) .fixed.bottom-3,
+    body:has([data-testid="ask-question-header-text"]) div.fixed.inset-0:has(> .aux-drawer-popup) .fixed.bottom-3,
+    body:has([data-testid="ask-question-header-text"]) div.fixed.inset-0:has(.aux-drawer-popup) .fixed.bottom-3 {
+      bottom: 0.75rem !important;
     }
   }
 }
@@ -762,6 +941,77 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var cachedScroller = null;
   var wasNearBottom = true;
   var shouldScrollOnOpen = false;
+
+  var hasActiveQuestion = false;
+  var finishingQuestionUntil = 0;
+
+  var QUESTION_SELECTOR = [
+    '[data-testid="ask-question-header-text"]',
+    '[data-testid="ask-question-writein"]',
+    'input[name^="ask-question-"]',
+    '[data-testid="interaction-continue-button"]',
+    '[data-testid="interaction-skip-button"]',
+    '[data-testid="ask-question-dismiss-button"]',
+    '[data-testid="declared-permissions-modal"]',
+    '[data-testid="declared-permissions-confirm"]'
+  ].join(",");
+
+  function checkQuestionActive() {
+    if (performance.now() < finishingQuestionUntil) {
+      return false;
+    }
+    return !!document.querySelector(QUESTION_SELECTOR);
+  }
+
+  function updateQuestionState() {
+    var has = checkQuestionActive();
+    if (has === hasActiveQuestion) return;
+    hasActiveQuestion = has;
+    if (has) {
+      document.body.classList.add("agy-has-question");
+      document.documentElement.classList.add("agy-has-question");
+      document.documentElement.style.removeProperty("--agy-bottom");
+      document.documentElement.style.removeProperty("--agy-top");
+      document.body.classList.remove("agy-kb-open");
+      applied = 0;
+      appliedTop = 0;
+      goal = 0;
+      goalTop = 0;
+      settled = true;
+      holdUntil = 0;
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    } else {
+      var act = document.activeElement;
+      if (act && (isTextInput(act) || (act.closest && act.closest(QUESTION_SELECTOR)))) {
+        if (act.blur) act.blur();
+      }
+      document.body.classList.remove("agy-has-question");
+      document.documentElement.classList.remove("agy-has-question");
+      window.scrollTo(0, 0);
+      unpan();
+      track(500);
+    }
+  }
+
+  function finishQuestion() {
+    finishingQuestionUntil = performance.now() + 800;
+    var active = document.activeElement;
+    if (active && (isTextInput(active) || (active.closest && active.closest(QUESTION_SELECTOR)))) {
+      if (active.blur) active.blur();
+    }
+    suppressComposerUntil = performance.now() + 600;
+    if (hasActiveQuestion) {
+      hasActiveQuestion = false;
+      document.body.classList.remove("agy-has-question");
+      document.documentElement.classList.remove("agy-has-question");
+      window.scrollTo(0, 0);
+      unpan();
+      track(500);
+    }
+  }
 
   // The messages live in a scroller nested inside the conversation view.
   // Direct selector and reference caching avoid forced layout thrashing (reflow)
@@ -856,11 +1106,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   // Safari reveals the focused composer by panning the layout viewport, and it
   // reports that pan as a document scroll even here, where the document is fixed
-  // and has nothing to scroll. Fixed elements move with it, so the whole shell
-  // slides off the top of the screen until the offset is put back. Undoing it
-  // once, mid-animation, is what made the shell lurch; doing it every frame keeps
-  // the offset from ever being on screen for longer than one frame.
+  // and has nothing to scroll.
+  // In Question Mode, unpan is bypassed so native layout panning and swipe-down scrolling
+  // work exactly like original Google Antigravity.
   function unpan() {
+    if (hasActiveQuestion) return;
     var de = document.documentElement;
     var sy = window.scrollY || window.pageYOffset || 0;
     if (sy !== 0) window.scrollTo(0, 0);
@@ -893,6 +1143,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var deadline = 0;
 
   function write(kb, top) {
+    if (hasActiveQuestion) return;
     if (typeof top !== "number") top = 0;
     if (Math.abs(kb - applied) < 1 && Math.abs(top - appliedTop) < 1) return;
 
@@ -920,6 +1171,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }
 
   function frame() {
+    if (hasActiveQuestion) {
+      raf = 0;
+      return;
+    }
     unpan();
 
     var topOffset = Math.round(vv.offsetTop || 0);
@@ -987,6 +1242,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }
 
   function track(ms) {
+    if (hasActiveQuestion) return;
     unpan();
     var until = performance.now() + ms;
     if (until > deadline) deadline = until;
@@ -994,6 +1250,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }
 
   vv.addEventListener("resize", function () {
+    updateQuestionState();
+    if (hasActiveQuestion) return;
     predicted = loadPredicted();
     track(700);
   });
@@ -1010,27 +1268,52 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   }, { capture: true, passive: true });
 
+  // Track touch coordinates for swipe-down keyboard dismiss
+  var touchStartY = 0;
+  var touchStartX = 0;
+
   // Cancel pending auto-scroll if user touches the conversation view during open
   document.addEventListener("touchstart", function (e) {
+    if (e.touches && e.touches.length === 1) {
+      touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
+    }
     var t = e.target;
     if (t && t.closest && t.closest('[data-testid="conversation-view"]')) {
       shouldScrollOnOpen = false;
     }
   }, { passive: true });
 
-  window.addEventListener("touchmove", function () {
+  window.addEventListener("touchmove", function (e) {
+    if (hasActiveQuestion) return;
     if (applied > 0 || appliedTop > 0) {
       unpan();
+    }
+    if (!e.touches || e.touches.length !== 1) return;
+    var curY = e.touches[0].clientY;
+    var curX = e.touches[0].clientX;
+    var deltaY = curY - touchStartY;
+    var deltaX = curX - touchStartX;
+
+    // Swipe down gesture to dismiss virtual keyboard in regular chat mode
+    if ((applied > 0 || document.body.classList.contains("agy-kb-open")) && deltaY > 45 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5) {
+      var active = document.activeElement;
+      if (active && isTextInput(active) && e.target !== active && (!active.contains || !active.contains(e.target))) {
+        active.blur();
+      }
     }
   }, { passive: true });
 
   window.addEventListener("touchend", function () {
+    if (hasActiveQuestion) return;
     if (applied > 0 || appliedTop > 0) {
       unpan();
     }
   }, { passive: true });
 
   window.addEventListener("orientationchange", function () {
+    updateQuestionState();
+    if (hasActiveQuestion) return;
     predicted = loadPredicted();
     track(500);
   });
@@ -1058,22 +1341,35 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (t.value !== "__write_in__") {
         suppressComposerUntil = performance.now() + 450;
         if (t.blur) t.blur();
-        unpan();
       }
     }
   }, true);
 
-  // If submit / continue button is clicked in ask_question on mobile devices:
+  // If submit / continue / skip button is clicked in ask_question or permission modal:
   document.addEventListener("click", function (e) {
-    if (!isMobileDevice()) return;
     var t = e.target;
-    if (t && t.closest && t.closest('[data-testid="interaction-continue-button"], [data-testid="interaction-skip-button"]')) {
-      suppressComposerUntil = performance.now() + 450;
-      unpan();
+    if (!t) return;
+    var btn = t.closest && t.closest(
+      '[data-testid="interaction-continue-button"],' +
+      '[data-testid="interaction-skip-button"],' +
+      '[data-testid="ask-question-dismiss-button"],' +
+      '[data-testid="declared-permissions-confirm"]'
+    );
+    if (btn) {
+      // In multi-question steps, "Continue" moves to next step; only "Submit" finishes the entire modal
+      var isNextStepOnly = btn.getAttribute("data-testid") === "interaction-continue-button" &&
+        btn.textContent && btn.textContent.indexOf("Continue") !== -1;
+      if (!isNextStepOnly) {
+        finishQuestion();
+      }
     }
   }, true);
 
   window.addEventListener("focusin", function (e) {
+    updateQuestionState();
+    if (hasActiveQuestion) {
+      return;
+    }
     var t = e.target;
 
     if (t && t.tagName === "INPUT" && (t.type === "radio" || t.type === "checkbox")) {
@@ -1110,12 +1406,43 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  window.addEventListener("focusout", function (e) {
-    var t = e.target;
-    if (t && isTextInput(t)) {
-      track(500);
+  window.addEventListener("focusout", function () {
+    if (hasActiveQuestion) return;
+    track(500);
+  });
+
+  // When a question modal or interaction card appears, maintain bottom scroll
+  var lastQuestionModalSeen = false;
+  var modalObserver = new MutationObserver(function () {
+    updateQuestionState();
+    var hasModal = hasActiveQuestion;
+    if (hasModal && !lastQuestionModalSeen) {
+      lastQuestionModalSeen = true;
+      // Question modal just appeared: ensure the chat scroller stays anchored to the bottom
+      var anchorBottom = function () {
+        var sc = chatScroller();
+        if (sc) sc.scrollTop = sc.scrollHeight;
+        var cv = document.querySelector('[data-testid="conversation-view"]');
+        if (cv && cv !== sc) cv.scrollTop = cv.scrollHeight;
+      };
+      requestAnimationFrame(anchorBottom);
+      setTimeout(anchorBottom, 100);
+    } else if (!hasModal && lastQuestionModalSeen) {
+      lastQuestionModalSeen = false;
     }
   });
+
+  if (document.body) {
+    modalObserver.observe(document.body, { childList: true, subtree: true });
+    updateQuestionState();
+  } else {
+    document.addEventListener("DOMContentLoaded", function () {
+      if (document.body) {
+        modalObserver.observe(document.body, { childList: true, subtree: true });
+        updateQuestionState();
+      }
+    }, { once: true });
+  }
 })();
 </script>`
 
