@@ -128,8 +128,6 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 
 	want := []string{
 		`window.location.origin`,
-		`window.matchMedia("(pointer:coarse)")`,
-		`var vz=function(){return null};var vzDisabled=(`,
 		`function wmb(){return null};function wmbDisabled(`,
 		`initialPath:"/home/ubuntu/workspace",fetchDirectoryContents:`,
 		`Upload File`,
@@ -166,9 +164,6 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(body, `v.byEffort.get(w);y&&b(y)}`) {
-		t.Error("model-effort onClick handler was not removed")
-	}
 	if !strings.Contains(body, `onClick:()=>{window.location.href="/__agy/signin"}`) {
 		t.Error("sign-in button was not redirected")
 	}
@@ -216,6 +211,25 @@ func TestMobileKebabPatchesDisabled(t *testing.T) {
 		"mobile-kebab-menu-pin-archive",
 		"mobile-kebab-wrapper-pin-archive",
 		"mobile-kebab-call-pin-archive",
+	} {
+		if got := byID[id].Status; got != StatusDisabled {
+			t.Errorf("%s: want disabled, got %s", id, got)
+		}
+	}
+}
+
+func TestDisabledPatches(t *testing.T) {
+	_, report := Apply(MainJS, []byte(""), fullOptions())
+	byID := map[string]Result{}
+	for _, r := range report {
+		byID[r.ID] = r
+	}
+
+	for _, id := range []string{
+		"mobile-enter-newline",
+		"model-effort-submenu",
+		"hide-mic-button",
+		"mobile-hide-aux-sidebar",
 	} {
 		if got := byID[id].Status; got != StatusDisabled {
 			t.Errorf("%s: want disabled, got %s", id, got)
@@ -287,6 +301,9 @@ func TestHTMLInjection(t *testing.T) {
 		`function updateQuestionState()`,
 		`function finishQuestion()`,
 		`QUESTION_SELECTOR`,
+		`div.group\/pane > div.select-none:first-child div[aria-hidden="true"].shrink-0`,
+		`div.group\/pane > div.select-none:first-child > div.flex.items-center.gap-1.min-w-0`,
+		`padding-left: 0.75rem !important;`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -399,9 +416,18 @@ func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 	}
 
 	v213Fixtures := map[string]string{
+		"mobile-titlebar-delete-hook":              `var {handleArchive:a,handleRestore:b,handlePin:c,handleUnpin:e,isArchiveSupported:f,handleShare:g,showShareModal:h,shareUrl:k,handleCloseShareModal:l,onShare:m}=n(p??"")`,
+		"mobile-titlebar-delete-modal":             `c=wAb({cascadeId:a,paneId:b,includeRemoveFromSplit:!1});return f.length>0||g.length>0||h.length>0||k.length>0?z.createElement(z.Fragment,null,`,
 		"question-modal-prevent-radio-focus-steal": `if(document.hasFocus()&&!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 		"autoscroll-distance-fix":                  `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 		"mobile-new-convo-view":                    `const KLb=()=>{var a=UL(),b=bU();return(0,z.useCallback)((c,e)=>{b(aU.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var LLb=()=>{var a=KLb(),{q:b}=xL({strict:!1});F1("MOBILE_HOME_VIEW");return z.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},z.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},z.createElement(JLb,{surface:"background"})),`,
+	}
+
+	v214Fixtures := map[string]string{
+		"mobile-titlebar-delete-hook":              `var {handleArchive:u,handleRestore:v,handlePin:w,handleUnpin:x,isArchiveSupported:A,handleShare:B,showShareModal:C,` + "\n" + `shareUrl:D,handleCloseShareModal:E,onShare:F}=fW(t??"")`,
+		"mobile-titlebar-delete-modal":             `c=isb({cascadeId:t,paneId:c,includeRemoveFromSplit:!1});return h.length>0||c.length>0||g.length>0||b.length>0||f?z.createElement(z.Fragment,null,`,
+		"question-modal-prevent-radio-focus-steal": `if(document.hasFocus()&&!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
+		"autoscroll-distance-fix":                  `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 	}
 
 	versions := map[string]map[string]string{
@@ -409,6 +435,7 @@ func TestAdaptiveCrossVersionCompatibility(t *testing.T) {
 		"2.11.0": v211Fixtures,
 		"2.12.0": v212Fixtures,
 		"2.13.0": v213Fixtures,
+		"2.14.0": v214Fixtures,
 	}
 
 	patches := All()
