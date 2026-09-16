@@ -21,9 +21,9 @@ var (
 	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
 	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
 
-	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
+	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
-	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\|\|([a-zA-Z0-9_$]+)\.length>0\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
+	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+\}\)=>)`)
 
 	mobileKebabMenuPinArchiveRe      = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)([^\}]*)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
@@ -96,38 +96,41 @@ func All() []Patch {
 		// insert its default newline. There are three registerCommand(FE, ...)
 		// call sites; only this one is the message composer.
 		{
-			ID:      "mobile-enter-newline",
-			Desc:    "Enter inserts a newline on touch devices; Cmd/Ctrl+Enter sends",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileEnterNewlineRe,
-			Replace: `registerCommand($1,k=>{if(!k)return!1;if((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&!k.metaKey&&!k.ctrlKey)return!1;k.preventDefault();`,
+			ID:       "mobile-enter-newline",
+			Desc:     "Enter inserts a newline on touch devices; Cmd/Ctrl+Enter sends",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   mobileEnterNewlineRe,
+			Replace:  `registerCommand($1,k=>{if(!k)return!1;if((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&!k.metaKey&&!k.ctrlKey)return!1;k.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
 		// the popup before the submenu can be used. Removing the handler leaves
 		// the submenu reachable.
 		{
-			ID:      "model-effort-submenu",
-			Desc:    "Tapping a model opens its reasoning-effort submenu instead of picking medium",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  modelEffortRe,
-			Replace: "",
+			ID:       "model-effort-submenu",
+			Desc:     "Tapping a model opens its reasoning-effort submenu instead of picking medium",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   modelEffortRe,
+			Replace:  "",
 		},
 		// Replacing the component with a function rather than an arrow keeps the
 		// anchor "var vz=(" out of the replacement, so the rewrite cannot match
 		// its own output.
 		{
-			ID:      "hide-mic-button",
-			Desc:    "Hide the voice-recording button (transcription is unavailable in standalone mode)",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  hideMicButtonRe,
-			Replace: `${1}${2}=function(){return null};var ${2}Disabled=(`,
+			ID:       "hide-mic-button",
+			Desc:     "Hide the voice-recording button (transcription is unavailable in standalone mode)",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   hideMicButtonRe,
+			Replace:  `${1}${2}=function(){return null};var ${2}Disabled=(`,
 		},
 		// The titlebar user profile icon is a dead placeholder in standalone mode (2.8.x; removed upstream in 2.9.x).
 		// Replacing the component with a function returning null hides it cleanly.
@@ -290,7 +293,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteModalRe,
-			Replace: `${1}window.__agyDeleteModal?${8}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(typeof agyDel==="function"&&${2})agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
+			Replace: `${1}window.__agyDeleteModal?${4}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(typeof agyDel==="function"&&${2})agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
 		},
 		{
 			ID:       "mobile-kebab-menu-pin-archive",
@@ -323,13 +326,14 @@ func All() []Patch {
 			Replace:  `$1.createElement($2,{cascadeId:$3,onDeleteClick:($4),onRenameClick:$5,onMarkAsReadClick:$6,isUnread:$7,onOpenChange:$8,onPinClick:()=>b.handlePin?.(a),isPinned:b.isPinned,onArchiveClick:()=>b.handleArchive?.(a)})`,
 		},
 		{
-			ID:      "mobile-hide-aux-sidebar",
-			Desc:    "Hide unclickable auxiliary sidebar toggle icon on mobile navigation bar",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileHideAuxSidebarRe,
-			Replace: `null`,
+			ID:       "mobile-hide-aux-sidebar",
+			Desc:     "Hide unclickable auxiliary sidebar toggle icon on mobile navigation bar",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  func(Options) bool { return false },
+			FindRe:   mobileHideAuxSidebarRe,
+			Replace:  `null`,
 		},
 		{
 			ID:      "settings-rules-editor",
@@ -924,6 +928,20 @@ div.user-input-buttons-container > * {
   div[data-testid^="conversation-row-"] [data-testid="conversation-restore-button"],
   div[data-testid^="conversation-row-"] [data-testid="conversation-delete-button"] {
     display: none !important;
+  }
+
+  /* Mobile pane titlebar (second header line with breadcrumbs):
+     Eliminate desktop window-control dummy spacers and align breadcrumbs seamlessly */
+  div.group\/pane > div.select-none:first-child div[aria-hidden="true"].shrink-0,
+  div.group\/pane > div.select-none:first-child div.shrink-0:empty {
+    display: none !important;
+    width: 0 !important;
+  }
+  div.group\/pane > div.select-none:first-child > div.flex.items-center.justify-end {
+    padding-right: 0.5rem !important;
+  }
+  div.group\/pane > div.select-none:first-child > div.flex.items-center.gap-1.min-w-0 {
+    padding-left: 0.75rem !important;
   }
 }
 </style>`
