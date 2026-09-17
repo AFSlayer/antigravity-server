@@ -771,10 +771,10 @@ div.user-input-buttons-container > * {
     body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"],
     body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"],
     body:has([data-testid="declared-permissions-modal"]) div[data-testid="conversation-view"] {
-      overflow-y: auto !important;
+      overflow-y: hidden !important;
       max-height: 100% !important;
       min-height: 0 !important;
-      overscroll-behavior-y: auto !important;
+      overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
 
@@ -986,6 +986,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (has === hasActiveQuestion) return;
     hasActiveQuestion = has;
     if (has) {
+      checkNearBottom();
       document.body.classList.add("agy-has-question");
       document.documentElement.classList.add("agy-has-question");
       document.documentElement.style.removeProperty("--agy-bottom");
@@ -1000,6 +1001,15 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (raf) {
         cancelAnimationFrame(raf);
         raf = 0;
+      }
+      if (wasNearBottom) {
+        var fixBottom = function () {
+          var sc = chatScroller();
+          if (sc) sc.scrollTop = sc.scrollHeight;
+        };
+        requestAnimationFrame(fixBottom);
+        setTimeout(fixBottom, 50);
+        setTimeout(fixBottom, 150);
       }
     } else {
       var act = document.activeElement;
@@ -1041,8 +1051,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var root = document.querySelector('[data-testid="conversation-view"]');
     if (!root) return null;
 
-    // Direct target: the main message stream container in Antigravity
-    var el = root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
+    // Direct target: the main autoscroll viewport in Antigravity
+    var el = root.querySelector('[data-testid="autoscroll-viewport"]') ||
+             root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
     if (el) {
       cachedScroller = el;
       return el;
@@ -1058,10 +1069,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       }
     }
 
-    if (root.classList.contains("overflow-y-auto")) {
-      cachedScroller = root;
-      return root;
-    }
     return null;
   }
 
@@ -1440,11 +1447,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       var anchorBottom = function () {
         var sc = chatScroller();
         if (sc) sc.scrollTop = sc.scrollHeight;
-        var cv = document.querySelector('[data-testid="conversation-view"]');
-        if (cv && cv !== sc) cv.scrollTop = cv.scrollHeight;
       };
       requestAnimationFrame(anchorBottom);
-      setTimeout(anchorBottom, 100);
+      setTimeout(anchorBottom, 50);
+      setTimeout(anchorBottom, 150);
     } else if (!hasModal && lastQuestionModalSeen) {
       lastQuestionModalSeen = false;
     }
