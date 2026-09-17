@@ -771,10 +771,10 @@ div.user-input-buttons-container > * {
     body:has([data-testid="interaction-continue-button"]) div[data-testid="conversation-view"],
     body:has([data-testid="ask-question-writein"]) div[data-testid="conversation-view"],
     body:has([data-testid="declared-permissions-modal"]) div[data-testid="conversation-view"] {
-      overflow-y: auto !important;
+      overflow-y: hidden !important;
       max-height: 100% !important;
       min-height: 0 !important;
-      overscroll-behavior-y: auto !important;
+      overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
     }
 
@@ -814,42 +814,18 @@ div.user-input-buttons-container > * {
       max-height: calc(100vh - var(--agy-bottom, 0px) - 50px) !important;
       min-height: 0 !important;
     }
-    /* Dual Mode: Release max-height clamp in question mode */
-    body.agy-has-question div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
-    body.agy-has-question div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]),
-    body:has([data-testid="ask-question-header-text"]) div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
-    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]),
-    body:has([data-testid="interaction-continue-button"]) div.outline-none.flex.flex-col:has([data-testid="interaction-continue-button"]),
-    body:has([data-testid="interaction-continue-button"]) div.flex.flex-col:has(> * > [data-testid="interaction-continue-button"]) {
-      max-height: none !important;
-    }
-
     /* Question modal options list: scroll options within available height comfortably above keyboard or screen bottom */
     div[role="radiogroup"]:has(input[name^="ask-question-"]),
     div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
     div.flex.flex-col:has(> div > label > input[name^="ask-question-"]) {
       flex: 1 1 auto !important;
       min-height: 0 !important;
+      max-height: calc(100dvh - var(--agy-bottom, 0px) - 160px) !important;
+      max-height: calc(100vh - var(--agy-bottom, 0px) - 160px) !important;
       overflow-y: auto !important;
       -webkit-overflow-scrolling: touch !important;
       overscroll-behavior-y: contain !important;
       padding-right: 2px !important;
-    }
-    body.agy-kb-open div[role="radiogroup"]:has(input[name^="ask-question-"]),
-    body.agy-kb-open div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
-    html[style*="--agy-bottom"] div[role="radiogroup"]:has(input[name^="ask-question-"]),
-    html[style*="--agy-bottom"] div.flex.flex-col:has(> * > label > input[name^="ask-question-"]) {
-      max-height: calc(100vh - var(--agy-bottom, 0px) - 160px) !important;
-      max-height: calc(100dvh - var(--agy-bottom, 0px) - 160px) !important;
-    }
-    /* Dual Mode: Release options list max-height in question mode */
-    body.agy-has-question div[role="radiogroup"]:has(input[name^="ask-question-"]),
-    body.agy-has-question div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
-    body.agy-has-question div.flex.flex-col:has(> div > label > input[name^="ask-question-"]),
-    body:has([data-testid="ask-question-header-text"]) div[role="radiogroup"]:has(input[name^="ask-question-"]),
-    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> * > label > input[name^="ask-question-"]),
-    body:has([data-testid="ask-question-header-text"]) div.flex.flex-col:has(> div > label > input[name^="ask-question-"]) {
-      max-height: none !important;
     }
 
     /* Question modal / Bottom sheet: Dock container cleanly above virtual keyboard */
@@ -986,6 +962,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (has === hasActiveQuestion) return;
     hasActiveQuestion = has;
     if (has) {
+      checkNearBottom();
       document.body.classList.add("agy-has-question");
       document.documentElement.classList.add("agy-has-question");
       document.documentElement.style.removeProperty("--agy-bottom");
@@ -1000,6 +977,15 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (raf) {
         cancelAnimationFrame(raf);
         raf = 0;
+      }
+      if (wasNearBottom) {
+        var fixBottom = function () {
+          var sc = chatScroller();
+          if (sc) sc.scrollTop = sc.scrollHeight;
+        };
+        requestAnimationFrame(fixBottom);
+        setTimeout(fixBottom, 50);
+        setTimeout(fixBottom, 150);
       }
     } else {
       var act = document.activeElement;
@@ -1041,8 +1027,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var root = document.querySelector('[data-testid="conversation-view"]');
     if (!root) return null;
 
-    // Direct target: the main message stream container in Antigravity
-    var el = root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
+    // Direct target: the main autoscroll viewport in Antigravity
+    var el = root.querySelector('[data-testid="autoscroll-viewport"]') ||
+             root.querySelector("div.h-full.overflow-y-auto, div.overflow-y-auto.min-h-0");
     if (el) {
       cachedScroller = el;
       return el;
@@ -1058,10 +1045,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       }
     }
 
-    if (root.classList.contains("overflow-y-auto")) {
-      cachedScroller = root;
-      return root;
-    }
     return null;
   }
 
@@ -1429,22 +1412,13 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     track(500);
   });
 
-  // When a question modal or interaction card appears, maintain bottom scroll
+  // Observe DOM for question modal or interaction card appearance
   var lastQuestionModalSeen = false;
   var modalObserver = new MutationObserver(function () {
     updateQuestionState();
     var hasModal = hasActiveQuestion;
     if (hasModal && !lastQuestionModalSeen) {
       lastQuestionModalSeen = true;
-      // Question modal just appeared: ensure the chat scroller stays anchored to the bottom
-      var anchorBottom = function () {
-        var sc = chatScroller();
-        if (sc) sc.scrollTop = sc.scrollHeight;
-        var cv = document.querySelector('[data-testid="conversation-view"]');
-        if (cv && cv !== sc) cv.scrollTop = cv.scrollHeight;
-      };
-      requestAnimationFrame(anchorBottom);
-      setTimeout(anchorBottom, 100);
     } else if (!hasModal && lastQuestionModalSeen) {
       lastQuestionModalSeen = false;
     }

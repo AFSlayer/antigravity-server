@@ -304,6 +304,8 @@ func TestHTMLInjection(t *testing.T) {
 		`div.group\/pane > div.select-none:first-child div[aria-hidden="true"].shrink-0`,
 		`div.group\/pane > div.select-none:first-child > div.flex.items-center.gap-1.min-w-0`,
 		`padding-left: 0.75rem !important;`,
+		`root.querySelector('[data-testid="autoscroll-viewport"]')`,
+		`body.agy-has-question div[data-testid="conversation-view"]`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -313,6 +315,10 @@ func TestHTMLInjection(t *testing.T) {
 
 	if strings.Contains(body, "min-height: 120px") {
 		t.Error("min-height: 120px was found in injected styles; this breaks the empty composer height")
+	}
+
+	if strings.Contains(body, "cv.scrollTop = cv.scrollHeight") {
+		t.Error("cv.scrollTop = cv.scrollHeight was found in injected scripts; this violently scrolls the parent conversation-view")
 	}
 
 	if strings.Index(body, "agy-touch-action") > strings.Index(body, "</head>") {
