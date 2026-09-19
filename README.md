@@ -36,7 +36,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
-| **iOS keyboard fit** | Bottom safe-area gap remains; viewport jumps on focus | Safe-area collapse, top header pinning, conversation height adaptation, and adaptive dual-mode question modal interactions (native viewport panning & dual scrolling) |
+| **iOS keyboard** | Bottom safe-area gap remains open; viewport jumps on focus; Enter corrupts IME composition | Pinned top bar, collapsed safe area, adapted height, stabilized question modal interaction, and CJK/Korean IME composition protection on Enter (native viewport panning & dual scrolling) |
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
 | **Server restarts** | Language server restart invalidates session; manual page refresh required | **Seamless auto-reconnect** — persistent CSRF token & gRPC status 14 translation restore connection without refreshing |
@@ -253,7 +253,7 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll | Dynamic visualViewport offset tracking, 0px safe-area collapse, and pinned conversation layout |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
-| **Input Behavior** | Mobile Enter key sends message instead of newline | Enter creates a newline; Send button or Cmd/Ctrl+Enter submits |
+| **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition | Preserves native newline, prevents IME composition corruption on Enter/Backspace; Cmd/Ctrl+Enter submits |
 | **Model Selection** | Tapping a model closes the menu immediately | Opens the reasoning effort submenu on tap |
 
 Run `agy-server doctor` to inspect the status of all patches against your installed bundle.
