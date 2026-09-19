@@ -13,7 +13,7 @@ var (
 
 	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",replace:!0,throw:!0\}\)`)
 
-	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),k=>\{if\(!k\)return!1;k\.preventDefault\(\);`)
+	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
@@ -92,18 +92,19 @@ func All() []Patch {
 			FindRe:   skipOnboardingRe,
 			Replace:  `return null`,
 		},
-		// Returning false from the Lexical ENTER command handler lets the editor
-		// insert its default newline. There are three registerCommand(FE, ...)
-		// call sites; only this one is the message composer.
+		// Returning false from the Lexical ENTER command handler lets the browser/editor
+		// handle native newline insertion and IME composition commit cleanly.
+		// On touch devices without send modifiers (Cmd/Ctrl), or during CJK IME composition,
+		// bypass preventDefault() to prevent character duplication and ghost remnants.
 		{
 			ID:       "mobile-enter-newline",
-			Desc:     "Enter inserts a newline on touch devices; Cmd/Ctrl+Enter sends",
+			Desc:     "Preserve native newline and prevent IME composition corruption on touch devices",
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			Enabled:  func(Options) bool { return false },
+			Enabled:  mobile,
 			FindRe:   mobileEnterNewlineRe,
-			Replace:  `registerCommand($1,k=>{if(!k)return!1;if((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&!k.metaKey&&!k.ctrlKey)return!1;k.preventDefault();`,
+			Replace:  `registerCommand($1,$2=>{if(!$2)return!1;var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
@@ -1411,6 +1412,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (hasActiveQuestion) return;
     track(500);
   });
+
+  // Track IME composition completion timestamp for WebKit Enter race condition
+  document.addEventListener("compositionend", function () {
+    window.__agyLastCompEnd = performance.now();
+  }, true);
 
   // Observe DOM for question modal or interaction card appearance
   var lastQuestionModalSeen = false;

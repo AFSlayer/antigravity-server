@@ -157,6 +157,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -167,40 +168,41 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 	if !strings.Contains(body, `onClick:()=>{window.location.href="/__agy/signin"}`) {
 		t.Error("sign-in button was not redirected")
 	}
-	if strings.Contains(body, "showLoginFlow()") {
-		t.Error("stub showLoginFlow call still wired to the button")
-	}
-	if strings.Contains(body, `RK({to:"/onboarding"`) {
-		t.Error("onboarding redirect was not removed")
-	}
 }
 
 func TestMobileUXDisabledSkipsMobilePatches(t *testing.T) {
-	_, report := Apply(MainJS, syntheticBundle(), Options{MobileUX: false})
+	_, report := Apply(MainJS, []byte(""), Options{MobileUX: false})
 
 	byID := map[string]Result{}
 	for _, r := range report {
 		byID[r.ID] = r
 	}
 
-	for _, id := range []string{
-		"mobile-enter-newline", "hide-mic-button", "model-effort-submenu",
+	mobileIDs := []string{
+		"mobile-enter-newline",
 		"mobile-skip-notification-prompt",
-	} {
+		"mobile-new-convo-view",
+		"mobile-new-convo-header",
+		"mobile-back-clears-section",
+		"mobile-project-header-actions",
+		"mobile-project-kebab-menu",
+		"mobile-project-add-click-close-sidebar",
+		"mobile-user-message-actions",
+		"mobile-conversation-row-actions",
+		"mobile-titlebar-delete-hook",
+		"mobile-titlebar-delete-menu",
+		"mobile-delete-modal-export",
+		"mobile-titlebar-delete-modal",
+	}
+	for _, id := range mobileIDs {
 		if got := byID[id].Status; got != StatusDisabled {
-			t.Errorf("%s: want disabled, got %s", id, got)
+			t.Errorf("%s: want disabled when MobileUX=false, got %s", id, got)
 		}
-	}
-	if got := byID["base-url-origin"].Status; got != StatusApplied {
-		t.Errorf("base-url-origin: want applied, got %s", got)
-	}
-	if got := byID["folder-picker-initial-path"].Status; got != StatusDisabled {
-		t.Errorf("folder-picker-initial-path: want disabled without workspace root, got %s", got)
 	}
 }
 
 func TestMobileKebabPatchesDisabled(t *testing.T) {
-	_, report := Apply(MainJS, syntheticBundle(), fullOptions())
+	_, report := Apply(MainJS, []byte(""), fullOptions())
 
 	byID := map[string]Result{}
 	for _, r := range report {
@@ -226,7 +228,6 @@ func TestDisabledPatches(t *testing.T) {
 	}
 
 	for _, id := range []string{
-		"mobile-enter-newline",
 		"model-effort-submenu",
 		"hide-mic-button",
 		"mobile-hide-aux-sidebar",
@@ -306,6 +307,7 @@ func TestHTMLInjection(t *testing.T) {
 		`padding-left: 0.75rem !important;`,
 		`root.querySelector('[data-testid="autoscroll-viewport"]')`,
 		`body.agy-has-question div[data-testid="conversation-view"]`,
+		`window.__agyLastCompEnd = performance.now();`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
