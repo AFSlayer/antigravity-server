@@ -243,7 +243,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 44 patches, 25 of them touch-specific and the rest covering uploads, sign-in and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 45 patches, 25 of them touch-specific and the rest covering uploads, navigation, sign-in and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
@@ -253,7 +253,7 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll | Dynamic visualViewport offset tracking, 0px safe-area collapse, and pinned conversation layout |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
-| **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition | Preserves native newline, prevents IME composition corruption on Enter/Backspace; Cmd/Ctrl+Enter submits |
+| **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition; line navigation jumps to text start when slash commands exist | Preserves native newline, prevents IME corruption, and restores visual line start navigation on Cmd/Ctrl+Left / Home with slash commands; Cmd/Ctrl+Enter submits |
 | **Model Selection** | Tapping a model closes the menu immediately | Opens the reasoning effort submenu on tap |
 
 Run `agy-server doctor` to inspect the status of all patches against your installed bundle.

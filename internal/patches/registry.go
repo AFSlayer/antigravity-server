@@ -406,6 +406,13 @@ func All() []Patch {
 			Replace: uploaderScript,
 		},
 		{
+			ID:      "composer-line-start-nav",
+			Desc:    "Fix Cmd/Ctrl+ArrowLeft and Home jumping to start of text when slash commands or chips exist",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: lineStartNavScript,
+		},
+		{
 			ID:      "composer-upload-menu-item",
 			Desc:    "Add Upload File menu item to the composer plus menu",
 			Target:  MainJS,
@@ -2024,6 +2031,30 @@ const uploaderScript = `<script>
         window.__agyUpload(files);
       }
     }
+  }, true);
+})();
+</script>`
+
+const lineStartNavScript = `<script id="agy-line-start-nav">
+(function() {
+  window.addEventListener('keydown', function(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'Home') return;
+    var isLineStart = (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) || e.key === 'Home';
+    if (!isLineStart) return;
+
+    var active = document.activeElement;
+    if (!active || !active.isContentEditable) return;
+
+    // Only intercept when decorators (slash commands, mentions, chips) are present
+    if (!active.querySelector('[data-lexical-decorator="true"]')) return;
+
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+
+    // Move or extend selection to beginning of current visual line
+    sel.modify(e.shiftKey ? 'extend' : 'move', 'backward', 'lineboundary');
+    e.preventDefault();
+    e.stopPropagation();
   }, true);
 })();
 </script>`

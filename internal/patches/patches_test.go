@@ -309,6 +309,7 @@ func TestHTMLInjection(t *testing.T) {
 		`body.agy-has-question div[data-testid="conversation-view"]`,
 		`window.__agyLastCompEnd = performance.now();`,
 		`window.dispatchEvent(new MouseEvent('mouseup'));`,
+		`agy-line-start-nav`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
