@@ -407,7 +407,7 @@ func All() []Patch {
 		},
 		{
 			ID:      "composer-line-start-nav",
-			Desc:    "Fix Cmd/Ctrl+ArrowLeft and Home jumping to start of text when slash commands or chips exist",
+			Desc:    "Fix Cmd+ArrowLeft (macOS) and Home jumping to start of text when slash commands or chips exist",
 			Target:  HTML,
 			Kind:    InjectHead,
 			Replace: lineStartNavScript,
@@ -2037,10 +2037,13 @@ const uploaderScript = `<script>
 
 const lineStartNavScript = `<script id="agy-line-start-nav">
 (function() {
+  var isMac = typeof navigator !== 'undefined' && 
+    Boolean((navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
+            (navigator.platform && navigator.platform.toUpperCase().indexOf('MAC') >= 0) ||
+            (navigator.userAgent && /Macintosh|Mac OS X/.test(navigator.userAgent)));
+
   window.addEventListener('keydown', function(e) {
     if (e.key !== 'ArrowLeft' && e.key !== 'Home') return;
-    var isLineStart = (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) || e.key === 'Home';
-    if (!isLineStart) return;
 
     var active = document.activeElement;
     if (!active || !active.isContentEditable) return;
@@ -2049,12 +2052,41 @@ const lineStartNavScript = `<script id="agy-line-start-nav">
     if (!active.querySelector('[data-lexical-decorator="true"]')) return;
 
     var sel = window.getSelection();
-    if (!sel || !sel.rangeCount) return;
+    if (!sel || !sel.rangeCount || typeof sel.modify !== 'function') return;
 
-    // Move or extend selection to beginning of current visual line
-    sel.modify(e.shiftKey ? 'extend' : 'move', 'backward', 'lineboundary');
-    e.preventDefault();
-    e.stopPropagation();
+    var alter = e.shiftKey ? 'extend' : 'move';
+
+    // Case 1: Pure Home (all platforms) -> move to line start
+    if (e.key === 'Home' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'lineboundary');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
+    }
+
+    // Case 2: Cmd + ArrowLeft on macOS -> move to line start
+    if (isMac && e.key === 'ArrowLeft' && e.metaKey && !e.ctrlKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'lineboundary');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
+    }
+
+    // Case 3: Ctrl + ArrowLeft on Non-Mac (Windows/Linux)
+    // Upstream Lexical's MOVE_TO_START mistakenly triggers on Ctrl+Left on non-Mac
+    // and jumps to position 0 when decorators exist. Restore native word navigation.
+    if (!isMac && e.key === 'ArrowLeft' && e.ctrlKey && !e.metaKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'word');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
+    }
   }, true);
 })();
 </script>`
