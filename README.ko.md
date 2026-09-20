@@ -243,7 +243,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 44개가 있고 그중 25개가 터치 전용이며, 나머지는 업로드·로그인·캐시 무효화를 담당합니다. 그중 일부:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 45개가 있고 그중 25개가 터치 전용이며, 나머지는 업로드·네비게이션·로그인·캐시 무효화를 담당합니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |
@@ -253,7 +253,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 | **가상 키보드 및 스크롤** | iOS Safari 뷰포트 출렁임 및 스크롤 시 하단 여백 벌어짐 | Visual Viewport 오프셋 실시간 추종, Safe Area 0px 축소 및 대화창 레이아웃 고정 |
 | **파일 업로드** | 1MB RPC 용량 제한으로 대용량 파일 실패 | 청크 스트리밍 엔드포인트를 통해 디스크로 직접 전송 |
 | **터치 반응** | 300ms 탭 딜레이 및 더블탭 확대 발생 | `touch-action: manipulation`으로 즉각적인 터치 반응 보장 |
-| **입력 방식** | 모바일 엔터 시 즉시 전송되거나 한글/CJK IME 조합 깨짐("안녕녀", 글자 중복) 발생 | 네이티브 줄바꿈 유지, 엔터/백스페이스 시 한글 IME 조합 보존 및 글자 꼬임 방지; 전송 버튼 및 Cmd/Ctrl+Enter로 전송 |
+| **입력 방식** | 모바일 엔터 시 즉시 전송 또는 IME 깨짐; 슬래시 커맨드/칩 존재 시 줄 시작 이동 오작동 | 네이티브 줄바꿈 유지, 엔터/백스페이스 시 한글 IME 조합 보존; 슬래시 커맨드/태그 포함 시 Cmd+Left(macOS) 및 Home(모든 OS) 줄 시작 정상 이동 및 Ctrl+Left 단어 이동 단축키 보존; Cmd/Ctrl+Enter로 전송 |
 | **모델 선택** | 모델 탭 시 메뉴가 바로 닫히는 현상 | 모델 탭 시 reasoning effort 서브메뉴 정상 오픈 |
 
 `agy-server doctor` 명령어로 설치된 번들에 대한 패치 무결성을 진단할 수 있습니다.

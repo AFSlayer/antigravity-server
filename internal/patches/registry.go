@@ -406,6 +406,13 @@ func All() []Patch {
 			Replace: uploaderScript,
 		},
 		{
+			ID:      "composer-line-start-nav",
+			Desc:    "Fix Cmd+ArrowLeft (macOS) and Home jumping to start of text when slash commands or chips exist",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: lineStartNavScript,
+		},
+		{
 			ID:      "composer-upload-menu-item",
 			Desc:    "Add Upload File menu item to the composer plus menu",
 			Target:  MainJS,
@@ -2023,6 +2030,62 @@ const uploaderScript = `<script>
       if (window.__agyUpload) {
         window.__agyUpload(files);
       }
+    }
+  }, true);
+})();
+</script>`
+
+const lineStartNavScript = `<script id="agy-line-start-nav">
+(function() {
+  var isMac = typeof navigator !== 'undefined' && 
+    Boolean((navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
+            (navigator.platform && navigator.platform.toUpperCase().indexOf('MAC') >= 0) ||
+            (navigator.userAgent && /Macintosh|Mac OS X/.test(navigator.userAgent)));
+
+  window.addEventListener('keydown', function(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'Home') return;
+
+    var active = document.activeElement;
+    if (!active || !active.isContentEditable) return;
+
+    // Only intercept when decorators (slash commands, mentions, chips) are present
+    if (!active.querySelector('[data-lexical-decorator="true"]')) return;
+
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || typeof sel.modify !== 'function') return;
+
+    var alter = e.shiftKey ? 'extend' : 'move';
+
+    // Case 1: Pure Home (all platforms) -> move to line start
+    if (e.key === 'Home' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'lineboundary');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
+    }
+
+    // Case 2: Cmd + ArrowLeft on macOS -> move to line start
+    if (isMac && e.key === 'ArrowLeft' && e.metaKey && !e.ctrlKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'lineboundary');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
+    }
+
+    // Case 3: Ctrl + ArrowLeft on Non-Mac (Windows/Linux)
+    // Upstream Lexical's MOVE_TO_START mistakenly triggers on Ctrl+Left on non-Mac
+    // and jumps to position 0 when decorators exist. Restore native word navigation.
+    if (!isMac && e.key === 'ArrowLeft' && e.ctrlKey && !e.metaKey && !e.altKey) {
+      try {
+        sel.modify(alter, 'backward', 'word');
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (_) {}
+      return;
     }
   }, true);
 })();
