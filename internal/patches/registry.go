@@ -1848,10 +1848,7 @@ const uploaderScript = `<script>
     }
   }
 
-  window.__agyUpload = function(files) {
-    if (!files || files.length === 0) return;
-    var file = files[0];
-
+  function uploadSingleFile(file) {
     var convoId = getActiveConversationId();
     var projectPath = getActiveProjectPath();
 
@@ -1968,6 +1965,13 @@ const uploaderScript = `<script>
     xhr.timeout = 120000;
     xhr.open('POST', '/__agy/api/upload');
     xhr.send(formData);
+  }
+
+  window.__agyUpload = function(files) {
+    if (!files || files.length === 0) return;
+    for (var i = 0; i < files.length; i++) {
+      uploadSingleFile(files[i]);
+    }
   };
 
   var hiddenFileInput = null;
@@ -1975,6 +1979,7 @@ const uploaderScript = `<script>
     if (!hiddenFileInput) {
       hiddenFileInput = document.createElement('input');
       hiddenFileInput.type = 'file';
+      hiddenFileInput.multiple = true;
       hiddenFileInput.style.display = 'none';
       document.body.appendChild(hiddenFileInput);
       hiddenFileInput.addEventListener('change', function(e) {
@@ -1987,5 +1992,38 @@ const uploaderScript = `<script>
     hiddenFileInput.value = '';
     hiddenFileInput.click();
   };
+
+  // Drag and drop support using Antigravity native UI
+  window.addEventListener('dragover', function(e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, true);
+
+  window.addEventListener('drop', function(e) {
+    // Immediately reset native drag overlay state
+    window.dispatchEvent(new MouseEvent('mouseup'));
+
+    var files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    var needsStreaming = false;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var isSmallImage = f.type.startsWith('image/') && f.size <= 1048576;
+      if (!isSmallImage) {
+        needsStreaming = true;
+        break;
+      }
+    }
+
+    if (needsStreaming) {
+      e.preventDefault();
+      if (window.__agyUpload) {
+        window.__agyUpload(files);
+      }
+    }
+  }, true);
 })();
 </script>`
