@@ -308,6 +308,7 @@ func TestHTMLInjection(t *testing.T) {
 		`root.querySelector('[data-testid="autoscroll-viewport"]')`,
 		`body.agy-has-question div[data-testid="conversation-view"]`,
 		`window.__agyLastCompEnd = performance.now();`,
+		`window.dispatchEvent(new MouseEvent('mouseup'));`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
