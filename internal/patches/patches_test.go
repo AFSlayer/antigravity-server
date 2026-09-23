@@ -312,6 +312,9 @@ func TestHTMLInjection(t *testing.T) {
 		`agy-line-start-nav`,
 		`overflow-anchor: auto !important;`,
 		`updateTopScrollGuard()`,
+		`agy-connection-watchdog`,
+		`checkAndDismissLostConnectionBanner`,
+		`checkConversationSpinnerStuck`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {

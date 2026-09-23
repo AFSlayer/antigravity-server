@@ -149,6 +149,8 @@ En servidores Linux headless, `agy-server` incluye un servicio de actualización
 Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de servicio) o la conexión cae brevemente:
 - **Token CSRF Persistente**: Mantiene el mismo token de autenticación tras los reinicios, evitando el rechazo de sesiones activas.
 - **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
+- **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
+- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión en 6 segundos, evitando spinners infinitos.
 
 ---
 
