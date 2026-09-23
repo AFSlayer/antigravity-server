@@ -110,6 +110,7 @@ O Antigravity Server suporta o padrão Progressive Web App (PWA). Ao adicioná-l
 - **Controles por Toque**: Botões Desfazer (`↶`) e Copiar (`📋`) permanentemente visíveis nos balões de mensagem.
 - **Gerenciamento de Conversas**: Exclua conversas pela barra superior e fixe ou arquive pelo menu lateral.
 - **Ajuste Preciso do Teclado**: Fixa a barra de navegação superior, reduz a Safe Area para 0px e adapta a altura da conversa.
+- **Ancoragem de Rolagem e Proteção Superior**: Evita tempestades de requisições infinitas ao rolar para cima em conversas longas e preserva a posição de rolagem.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="A interface web mobile com patches, num navegador de celular" />
