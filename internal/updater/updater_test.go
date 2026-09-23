@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
 )
@@ -234,12 +235,162 @@ func TestCheckAndApplySelfHealsMissingVersion(t *testing.T) {
 	}
 
 	// When checkAndApply runs on existing binary with unknown version, it should self-heal and record version without calling reloadLS
-	checkAndApply(context.Background(), cfg, targetPath, reloadLS)
+	mockSelfHeal := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.16.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+	checkAndApply(context.Background(), cfg, targetPath, reloadLS, nil, 10*time.Minute, mockSelfHeal, false)
 
 	if reloadCalled {
 		t.Errorf("expected reloadLS NOT to be called on self-healing path")
 	}
 	if cfg.IDEVersion == "" || cfg.IDEVersion == "unknown" {
 		t.Errorf("expected ide_version to be self-healed, got %q", cfg.IDEVersion)
+	}
+}
+
+func TestCheckAndApplyDailyMaintenanceRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	cfg := &config.Config{
+		IDEVersion:     "2.16.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockUpToDate := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.16.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+
+	// 1. When allowMaintenanceRestart is false (e.g. initial boot check), reloadLS should not be called
+	var reloadCalled bool
+	reloadLS := func() { reloadCalled = true }
+
+	isIdleCalled := false
+	isIdle := func() bool {
+		isIdleCalled = true
+		return true
+	}
+
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, mockUpToDate, false)
+	if restarted {
+		t.Errorf("expected restarted=false when allowMaintenanceRestart=false")
+	}
+	if reloadCalled {
+		t.Errorf("expected reloadLS NOT to be called when allowMaintenanceRestart=false")
+	}
+	if isIdleCalled {
+		t.Errorf("expected isIdle NOT to be checked when allowMaintenanceRestart=false")
+	}
+
+	// 2. When allowMaintenanceRestart is true and isIdle returns true, reloadLS must be called
+	reloadCalled = false
+	isIdleCalled = false
+
+	restarted = checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, mockUpToDate, true)
+	if !restarted {
+		t.Errorf("expected restarted=true when idle maintenance restart triggers")
+	}
+	if !reloadCalled {
+		t.Errorf("expected reloadLS to be called for idle maintenance restart")
+	}
+	if !isIdleCalled {
+		t.Errorf("expected isIdle to be evaluated")
+	}
+}
+
+func TestCheckAndApplyDailyMaintenanceDeferredWhenBusy(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	cfg := &config.Config{
+		IDEVersion:     "2.16.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockUpToDate := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.16.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+
+	var reloadCalled bool
+	reloadLS := func() { reloadCalled = true }
+
+	checks := 0
+	isIdle := func() bool {
+		checks++
+		// First check (immediate) is busy, second check (after 1st retry tick) is idle
+		return checks >= 2
+	}
+
+	retryInterval := 20 * time.Millisecond
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, retryInterval, mockUpToDate, true)
+	if !restarted {
+		t.Errorf("expected restarted=true after deferred retry succeeded")
+	}
+	if !reloadCalled {
+		t.Errorf("expected reloadLS to be called once server became idle")
+	}
+	if checks < 2 {
+		t.Errorf("expected at least 2 idle checks (initial busy + retry idle), got %d", checks)
+	}
+}
+
+func TestStartAutoUpdaterWithOptionsMaintenanceLoop(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	cfg := &config.Config{
+		IDEVersion:     "2.16.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockUpToDate := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.16.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reloaded := make(chan struct{}, 1)
+	reloadLS := func() {
+		select {
+		case reloaded <- struct{}{}:
+		default:
+		}
+	}
+
+	StartAutoUpdaterWithOptions(ctx, cfg, AutoUpdaterOptions{
+		CheckInterval:     30 * time.Millisecond,
+		IdleRetryInterval: 10 * time.Millisecond,
+		InitialDelay:      0, // immediate initial check
+		TargetPath:        targetPath,
+		ReloadLS:          reloadLS,
+		IsIdle:            func() bool { return true },
+		CheckUpdate:       mockUpToDate,
+	})
+
+	select {
+	case <-reloaded:
+		// Maintenance restart succeeded via ticker
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for maintenance restart from AutoUpdater loop")
 	}
 }
