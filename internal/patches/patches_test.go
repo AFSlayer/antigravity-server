@@ -310,6 +310,8 @@ func TestHTMLInjection(t *testing.T) {
 		`window.__agyLastCompEnd = performance.now();`,
 		`window.dispatchEvent(new MouseEvent('mouseup'));`,
 		`agy-line-start-nav`,
+		`overflow-anchor: auto !important;`,
+		`updateTopScrollGuard()`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {

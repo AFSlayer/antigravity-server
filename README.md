@@ -110,6 +110,7 @@ Antigravity Server supports the Progressive Web App (PWA) standard. Adding it to
 - **Touch-Friendly Controls**: Undo (`↶`) and Copy (`📋`) buttons remain permanently visible on mobile message bubbles.
 - **Full Conversation Management**: Delete conversations via the titlebar menu and toggle Pin/Archive directly from the history dropdown.
 - **Precise Keyboard Tracking**: Automatically collapses safe area insets to 0px and pins top navigation bar while adapting conversation height.
+- **Smooth Scroll Anchoring & Top Guard**: Prevents infinite history fetch storms and anchors scroll position when scrolling up to read earlier messages in long conversations.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="The patched mobile web UI in a phone browser" />
@@ -252,7 +253,7 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Navigation** | Project `(+)` button omitted on mobile screens | Restores the `(+)` New Conversation button next to each project row |
 | **Conversation Actions** | No delete, pin, or archive on touch | Adds Delete, Pin, and Archive to the `⋮` kebab menu and titlebar |
 | **Message Actions** | Undo and Copy buttons hidden behind hover states | Displays Undo (`↶`) and Copy (`📋`) buttons on touch devices |
-| **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll | Dynamic visualViewport offset tracking, 0px safe-area collapse, and pinned conversation layout |
+| **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll; upward scroll in long chats triggers cascading fetch storms | Dynamic visualViewport offset tracking, 0px safe-area collapse, pinned conversation layout, CSS scroll anchoring, and top-scroll guard against cascading fetch storms |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
 | **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition; line navigation jumps to text start when slash commands exist | Preserves native newline, prevents IME corruption, and restores visual line start navigation on Cmd+Left (macOS) / Home (all OS) with slash commands while preserving Ctrl+Left word navigation; Cmd/Ctrl+Enter submits |

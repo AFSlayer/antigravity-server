@@ -741,6 +741,7 @@ div.user-input-buttons-container > * {
     div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"] {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
+      overflow-anchor: auto !important;
     }
 
     /* Dual Mode Overrides: Restore relative flow and viewport bounds when question is active */
@@ -1425,10 +1426,131 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     window.__agyLastCompEnd = performance.now();
   }, true);
 
-  // Observe DOM for question modal or interaction card appearance
+  // Mobile Conversation Top-Scroll Guard & Anchoring
+  // Prevents cascading fetch storm when scrolling to top on mobile and preserves scroll position.
+  var topSentinelLockedUntil = 0;
+  var lastScrollHeight = 0;
+  var lastScrollTop = 0;
+  var initialLoadGuardUntil = performance.now() + 1500;
+  var currentConvoUrl = window.location.pathname;
+  var guardedScroller = null;
+
+  function getTopSentinel(sc) {
+    if (!sc) return null;
+    return sc.querySelector('div.h-px.w-full[aria-hidden="true"]') ||
+           sc.querySelector('div.h-px.w-full:first-child');
+  }
+
+  function updateTopScrollGuard() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    if (window.location.pathname !== currentConvoUrl) {
+      currentConvoUrl = window.location.pathname;
+      initialLoadGuardUntil = performance.now() + 1500;
+      topSentinelLockedUntil = 0;
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+    }
+
+    var sentinel = getTopSentinel(sc);
+    if (!sentinel) return;
+
+    var now = performance.now();
+    var shouldLock = (now < initialLoadGuardUntil) || (now < topSentinelLockedUntil);
+
+    if (shouldLock) {
+      if (sentinel.style.display !== "none") {
+        sentinel.style.setProperty("display", "none", "important");
+      }
+    } else {
+      if (sentinel.style.display === "none") {
+        sentinel.style.removeProperty("display");
+      }
+    }
+  }
+
+  function handleScrollerScroll() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    var curTop = sc.scrollTop;
+
+    // Once user has scrolled down past 50px, unlock the top sentinel
+    if (curTop >= 50 && topSentinelLockedUntil > 0) {
+      topSentinelLockedUntil = 0;
+      var sentinel = getTopSentinel(sc);
+      if (sentinel && performance.now() >= initialLoadGuardUntil) {
+        sentinel.style.removeProperty("display");
+      }
+    }
+
+    lastScrollTop = curTop;
+    lastScrollHeight = sc.scrollHeight;
+  }
+
+  function handleScrollerMutation() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    var curHeight = sc.scrollHeight;
+    var curTop = sc.scrollTop;
+
+    // Detect prepend: content expanded while at or near top
+    if (lastScrollHeight > 0 && curHeight > lastScrollHeight) {
+      var delta = curHeight - lastScrollHeight;
+      if (lastScrollTop <= 50 && delta >= 30) {
+        // Prepend detected: lock sentinel for 3s to stop cascading fetch storm
+        topSentinelLockedUntil = performance.now() + 3000;
+        var sentinel = getTopSentinel(sc);
+        if (sentinel) {
+          sentinel.style.setProperty("display", "none", "important");
+        }
+
+        // Programmatic scroll position restoration for mobile WebKit
+        var targetTop = lastScrollTop + delta;
+        sc.scrollTop = targetTop;
+        requestAnimationFrame(function () {
+          sc.scrollTop = targetTop;
+        });
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 50);
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 150);
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 300);
+      }
+    }
+
+    lastScrollHeight = curHeight;
+    lastScrollTop = curTop;
+    updateTopScrollGuard();
+  }
+
+  function attachScrollerGuard() {
+    var sc = chatScroller();
+    if (!sc) return;
+    if (guardedScroller !== sc) {
+      if (guardedScroller) {
+        guardedScroller.removeEventListener("scroll", handleScrollerScroll);
+      }
+      guardedScroller = sc;
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+      sc.addEventListener("scroll", handleScrollerScroll, { passive: true });
+    }
+    updateTopScrollGuard();
+  }
+
+  // Observe DOM for question modal or interaction card appearance and scroller updates
   var lastQuestionModalSeen = false;
   var modalObserver = new MutationObserver(function () {
     updateQuestionState();
+    attachScrollerGuard();
+    handleScrollerMutation();
     var hasModal = hasActiveQuestion;
     if (hasModal && !lastQuestionModalSeen) {
       lastQuestionModalSeen = true;
@@ -1440,11 +1562,13 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   if (document.body) {
     modalObserver.observe(document.body, { childList: true, subtree: true });
     updateQuestionState();
+    attachScrollerGuard();
   } else {
     document.addEventListener("DOMContentLoaded", function () {
       if (document.body) {
         modalObserver.observe(document.body, { childList: true, subtree: true });
         updateQuestionState();
+        attachScrollerGuard();
       }
     }, { once: true });
   }
