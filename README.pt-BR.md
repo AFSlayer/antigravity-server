@@ -40,6 +40,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 | **Upload de arquivos** | Limite de 1MB por RPC de texto | **Upload por streaming fragmentado** para logs, HARs e datasets grandes |
 | **Caminho da conexão** | Retransmitido pelos servidores do Google | **Direto** — seu próprio domínio, LAN ou VPN |
 | **Reconexão após reinício** | O reinício do servidor invalida o token CSRF, exigindo recarregamento manual da página | **Reconexão automática contínua** — Token CSRF persistente e tradução gRPC status 14 restauram a sessão sem recarregar |
+| **Manutenção de memória** | A memória se acumula indefinidamente (~4GB+) em sessões longas | **Reinício diário na ociosidade** — Reinicia o servidor em janelas de ociosidade sem interromper o trabalho ativo |
 | **Acesso sem conta Google** | Impossível — a conta é a porta | Sua própria senha (PBKDF2), sessões e rate-limiting |
 
 ---
@@ -134,10 +135,11 @@ Interface perfeitamente responsiva para navegadores de computadores e tablets:
 
 ---
 
-### 🔄 Atualizações Automáticas sem Quedas
+### 🔄 Atualizações Automáticas sem Quedas e Manutenção Diária de Memória
 Em servidores Linux headless, o `agy-server` inclui serviço de atualização automática:
 - Verifica diariamente novas versões oficiais do `language_server`.
 - Substitui o binário de forma atômica e segura.
+- **Reinício diário na ociosidade (Daily Idle Restart)**: Quando estiver atualizado, reinicia periodicamente o `language_server` em janelas de ociosidade (zero streams ativos e mais de 15 minutos sem tráfego) para liberar a memória acumulada. Se for detectado tráfego ativo, o reinício é adiado com segurança a cada 10 minutos.
 - Verificação manual: execute `agy-server update`.
 
 ---

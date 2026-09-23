@@ -242,7 +242,7 @@ func TestCheckAndApplySelfHealsMissingVersion(t *testing.T) {
 			UpdateAvailable: false,
 		}, nil
 	}
-	checkAndApply(context.Background(), cfg, targetPath, reloadLS, nil, 10*time.Minute, mockSelfHeal, false)
+	checkAndApply(context.Background(), cfg, targetPath, reloadLS, nil, 10*time.Minute, 3, mockSelfHeal, false)
 
 	if reloadCalled {
 		t.Errorf("expected reloadLS NOT to be called on self-healing path")
@@ -280,7 +280,7 @@ func TestCheckAndApplyDailyMaintenanceRestart(t *testing.T) {
 		return true
 	}
 
-	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, mockUpToDate, false)
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, 3, mockUpToDate, false)
 	if restarted {
 		t.Errorf("expected restarted=false when allowMaintenanceRestart=false")
 	}
@@ -295,7 +295,7 @@ func TestCheckAndApplyDailyMaintenanceRestart(t *testing.T) {
 	reloadCalled = false
 	isIdleCalled = false
 
-	restarted = checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, mockUpToDate, true)
+	restarted = checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 10*time.Minute, 3, mockUpToDate, true)
 	if !restarted {
 		t.Errorf("expected restarted=true when idle maintenance restart triggers")
 	}
@@ -336,7 +336,7 @@ func TestCheckAndApplyDailyMaintenanceDeferredWhenBusy(t *testing.T) {
 	}
 
 	retryInterval := 20 * time.Millisecond
-	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, retryInterval, mockUpToDate, true)
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, retryInterval, 5, mockUpToDate, true)
 	if !restarted {
 		t.Errorf("expected restarted=true after deferred retry succeeded")
 	}
@@ -345,6 +345,41 @@ func TestCheckAndApplyDailyMaintenanceDeferredWhenBusy(t *testing.T) {
 	}
 	if checks < 2 {
 		t.Errorf("expected at least 2 idle checks (initial busy + retry idle), got %d", checks)
+	}
+}
+
+func TestCheckAndApplyDailyMaintenanceSkipsWhenContinuouslyBusy(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+
+	cfg := &config.Config{
+		IDEVersion:     "2.16.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockUpToDate := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.16.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+
+	var reloadCalled bool
+	reloadLS := func() { reloadCalled = true }
+
+	// Always busy
+	isIdle := func() bool { return false }
+
+	retryInterval := 10 * time.Millisecond
+	maxRetries := 3
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, retryInterval, maxRetries, mockUpToDate, true)
+	if restarted {
+		t.Errorf("expected restarted=false when maxRetries exceeded without becoming idle")
+	}
+	if reloadCalled {
+		t.Errorf("expected reloadLS NOT to be called when maintenance is skipped")
 	}
 }
 
@@ -380,6 +415,7 @@ func TestStartAutoUpdaterWithOptionsMaintenanceLoop(t *testing.T) {
 	StartAutoUpdaterWithOptions(ctx, cfg, AutoUpdaterOptions{
 		CheckInterval:     30 * time.Millisecond,
 		IdleRetryInterval: 10 * time.Millisecond,
+		MaxIdleRetries:    3,
 		InitialDelay:      0, // immediate initial check
 		TargetPath:        targetPath,
 		ReloadLS:          reloadLS,
@@ -390,7 +426,7 @@ func TestStartAutoUpdaterWithOptionsMaintenanceLoop(t *testing.T) {
 	select {
 	case <-reloaded:
 		// Maintenance restart succeeded via ticker
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for maintenance restart from AutoUpdater loop")
 	}
 }

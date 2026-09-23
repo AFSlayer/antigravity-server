@@ -17,6 +17,7 @@ type CheckUpdateFunc func(currentVersion string) (*UpdateInfo, error)
 type AutoUpdaterOptions struct {
 	CheckInterval     time.Duration // defaults to 24 hours
 	IdleRetryInterval time.Duration // defaults to 10 minutes
+	MaxIdleRetries    int           // defaults to 6 (max 1 hour deferral)
 	InitialDelay      time.Duration // defaults to 5 minutes
 	TargetPath        string
 	ReloadLS          func()
@@ -26,13 +27,19 @@ type AutoUpdaterOptions struct {
 
 // StartAutoUpdater runs a background loop in serve mode that checks once a day for official Antigravity updates
 // and performs daily language server maintenance restarts when the server is idle.
-func StartAutoUpdater(ctx context.Context, cfg *config.Config, reloadLS func(), isIdle func() bool) {
+func StartAutoUpdater(ctx context.Context, cfg *config.Config, reloadLS func(), isIdle ...func() bool) {
+	var idleFn func() bool
+	if len(isIdle) > 0 {
+		idleFn = isIdle[0]
+	}
+
 	StartAutoUpdaterWithOptions(ctx, cfg, AutoUpdaterOptions{
 		CheckInterval:     24 * time.Hour,
 		IdleRetryInterval: 10 * time.Minute,
+		MaxIdleRetries:    6,
 		InitialDelay:      5 * time.Minute,
 		ReloadLS:          reloadLS,
-		IsIdle:            isIdle,
+		IsIdle:            idleFn,
 	})
 }
 
@@ -57,6 +64,10 @@ func StartAutoUpdaterWithOptions(ctx context.Context, cfg *config.Config, opts A
 	if retryInterval <= 0 {
 		retryInterval = 10 * time.Minute
 	}
+	maxRetries := opts.MaxIdleRetries
+	if maxRetries <= 0 {
+		maxRetries = 6
+	}
 
 	checkUpdateFn := opts.CheckUpdate
 	if checkUpdateFn == nil {
@@ -77,7 +88,7 @@ func StartAutoUpdaterWithOptions(ctx context.Context, cfg *config.Config, opts A
 		}
 
 		// Initial check: check for updates only; do not restart for maintenance immediately after boot
-		checkAndApply(ctx, cfg, targetPath, opts.ReloadLS, opts.IsIdle, retryInterval, checkUpdateFn, false)
+		checkAndApply(ctx, cfg, targetPath, opts.ReloadLS, opts.IsIdle, retryInterval, maxRetries, checkUpdateFn, false)
 
 		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
@@ -87,13 +98,13 @@ func StartAutoUpdaterWithOptions(ctx context.Context, cfg *config.Config, opts A
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				checkAndApply(ctx, cfg, targetPath, opts.ReloadLS, opts.IsIdle, retryInterval, checkUpdateFn, true)
+				checkAndApply(ctx, cfg, targetPath, opts.ReloadLS, opts.IsIdle, retryInterval, maxRetries, checkUpdateFn, true)
 			}
 		}
 	}()
 }
 
-func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, reloadLS func(), isIdle func() bool, retryInterval time.Duration, checkUpdate CheckUpdateFunc, allowMaintenanceRestart bool) bool {
+func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, reloadLS func(), isIdle func() bool, retryInterval time.Duration, maxRetries int, checkUpdate CheckUpdateFunc, allowMaintenanceRestart bool) bool {
 	if checkUpdate == nil {
 		checkUpdate = CheckUpdate
 	}
@@ -140,11 +151,12 @@ func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, r
 			return true
 		}
 
-		// If active traffic exists, defer restart by retryInterval until server becomes idle.
-		log.Printf("[auto-updater] server is busy with active traffic, deferring daily maintenance restart by %v...", retryInterval)
+		// If active traffic exists, defer restart by retryInterval until server becomes idle or maxRetries is reached.
+		log.Printf("[auto-updater] server is busy with active traffic, deferring daily maintenance restart by %v (max %d retries)...", retryInterval, maxRetries)
 		retryTicker := time.NewTicker(retryInterval)
 		defer retryTicker.Stop()
 
+		retries := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -157,7 +169,12 @@ func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, r
 					}
 					return true
 				}
-				log.Printf("[auto-updater] server still busy with active traffic, deferring maintenance restart by %v...", retryInterval)
+				retries++
+				if retries >= maxRetries {
+					log.Printf("[auto-updater] server remained busy after %d deferred attempts; skipping daily maintenance restart for today", retries)
+					return false
+				}
+				log.Printf("[auto-updater] server still busy (attempt %d/%d), deferring maintenance restart by %v...", retries, maxRetries, retryInterval)
 			}
 		}
 	}

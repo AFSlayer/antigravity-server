@@ -121,7 +121,7 @@ func (p *Proxy) LastActivity() time.Time {
 // IsIdle returns true if there are zero active connections and no request activity has occurred
 // for at least the specified threshold duration.
 func (p *Proxy) IsIdle(threshold time.Duration) bool {
-	if p.activeConns.Load() > 0 {
+	if p.activeConns.Load() != 0 {
 		return false
 	}
 	last := p.LastActivity()
