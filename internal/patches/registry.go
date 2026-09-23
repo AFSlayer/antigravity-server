@@ -2227,7 +2227,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   var lastPingSuccess = 0;
   var isChecking = false;
 
-  function pingServer(onSuccess) {
+  function pingServer(onSuccess, onError) {
     if (isChecking) return;
     isChecking = true;
     fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
@@ -2236,14 +2236,17 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
         if (r.ok) {
           lastPingSuccess = Date.now();
           if (onSuccess) onSuccess();
+        } else {
+          if (onError) onError();
         }
       })
       .catch(function () {
         isChecking = false;
+        if (onError) onError();
       });
   }
 
-  // 1. Auto-dismiss "Lost connection" banner when server is verified alive
+  // 1. Auto-dismiss "Lost connection" banner ONLY when server is verified alive
   function checkAndDismissLostConnectionBanner() {
     var banners = document.querySelectorAll('div[data-testid="feature-banner"]');
     if (!banners || banners.length === 0) return;
@@ -2251,29 +2254,25 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     banners.forEach(function (b) {
       var text = (b.textContent || "").toLowerCase();
       if (text.indexOf("lost connection") !== -1 || text.indexOf("reconnecting") !== -1) {
-        // If we recently had a successful ping within 10s, dismiss immediately
-        if (Date.now() - lastPingSuccess < 10000) {
+        // Probe server actively; dismiss if OK, restore banner if connection actually down
+        pingServer(function () {
           if (b.style.display !== "none") {
             b.style.setProperty("display", "none", "important");
           }
-        } else {
-          // Probe the server; dismiss if 200 OK
-          pingServer(function () {
-            if (b.style.display !== "none") {
-              b.style.setProperty("display", "none", "important");
-            }
-          });
-        }
+        }, function () {
+          if (b.style.display === "none") {
+            b.style.removeProperty("display");
+          }
+        });
       }
     });
   }
 
-  // 2. Watchdog: Automatically recover if conversation loading spinner is stuck for > 6s
+  // 2. Watchdog: Recover if conversation loading spinner is stuck > 6s AND server is verified alive
   var stuckTimerStart = 0;
   var currentPath = window.location.pathname;
 
   function checkConversationSpinnerStuck() {
-    // Only monitor on conversation routes
     if (window.location.pathname.indexOf("/c/") !== 0) {
       stuckTimerStart = 0;
       return;
@@ -2290,9 +2289,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
       return;
     }
 
-    // Check if loading spinner is visible inside conversation view
     var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
-    // Check if conversation messages have rendered
     var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
 
     if (spinner && !hasMessages) {
@@ -2300,12 +2297,20 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
       if (!stuckTimerStart) {
         stuckTimerStart = now;
       } else if (now - stuckTimerStart > 6000) {
-        // Stuck for more than 6s! Check reload throttle (max once per 30s)
+        // Guard against losing user draft in composer
+        var composer = document.querySelector('[contenteditable="true"]');
+        if (composer && (composer.textContent || "").trim().length > 0) {
+          return;
+        }
+
         var lastReload = parseInt(sessionStorage.getItem("agy_stuck_reload") || "0", 10);
         if (now - lastReload > 30000) {
-          sessionStorage.setItem("agy_stuck_reload", now.toString());
-          console.warn("[agy-watchdog] Conversation spinner stuck > 6s, recovering connection via clean reload");
-          window.location.reload();
+          // Verify server is alive before reloading; never reload into a dead server!
+          pingServer(function () {
+            sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
+            console.warn("[agy-watchdog] Conversation spinner stuck > 6s with live server, recovering connection via clean reload");
+            window.location.reload();
+          });
         }
       }
     } else {
@@ -2313,7 +2318,6 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
   }
 
-  // Observe DOM mutations to catch banner and monitor spinner
   var watchdogObserver = new MutationObserver(function () {
     checkAndDismissLostConnectionBanner();
     checkConversationSpinnerStuck();
@@ -2321,28 +2325,28 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 
   function initWatchdog() {
     if (document.body) {
-      watchdogObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+      // childList and subtree are sufficient; omit characterData to prevent token streaming jank
+      watchdogObserver.observe(document.body, { childList: true, subtree: true });
     }
-    // Periodic check every 1s
+
     setInterval(function () {
       checkAndDismissLostConnectionBanner();
       checkConversationSpinnerStuck();
     }, 1000);
 
-    // Activity hooks: immediately dismiss stale banners when user interacts
     document.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         pingServer(checkAndDismissLostConnectionBanner);
       }
     }, true);
 
-    // Visibility / Foreground resume handler
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") {
         stuckTimerStart = 0;
         pingServer(checkAndDismissLostConnectionBanner);
       }
     });
+
     window.addEventListener("pageshow", function () {
       stuckTimerStart = 0;
       pingServer(checkAndDismissLostConnectionBanner);
