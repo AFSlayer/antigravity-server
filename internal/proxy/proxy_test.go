@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
@@ -374,5 +375,86 @@ func TestProxyErrorHandlerGRPCWeb(t *testing.T) {
 
 	if resp3.StatusCode != http.StatusBadGateway {
 		t.Errorf("regular request: want 502 Bad Gateway, got %d", resp3.StatusCode)
+	}
+}
+
+func TestProxyIdleTracking(t *testing.T) {
+	holdUpstream := make(chan struct{})
+	upstreamEntered := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/blocking", func(w http.ResponseWriter, r *http.Request) {
+		close(upstreamEntered)
+		<-holdUpstream
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("done"))
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+
+	p, err := New(Options{
+		TargetPort: upstreamPort(t, server),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	front := httptest.NewServer(p.Handler())
+	defer front.Close()
+
+	if got := p.ActiveConnections(); got != 0 {
+		t.Errorf("initial active conns: want 0, got %d", got)
+	}
+	if p.LastActivity().IsZero() {
+		t.Errorf("expected non-zero initial last activity")
+	}
+
+	// Launch in-flight request
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		resp, err := http.Get(front.URL + "/blocking")
+		if err != nil {
+			t.Errorf("http.Get failed: %v", err)
+			return
+		}
+		_ = resp.Body.Close()
+	}()
+
+	<-upstreamEntered
+
+	// During in-flight request, activeConns should be 1 and IsIdle should be false even with threshold 0
+	if got := p.ActiveConnections(); got != 1 {
+		t.Errorf("in-flight active conns: want 1, got %d", got)
+	}
+	if p.IsIdle(0) {
+		t.Errorf("expected IsIdle(0) to be false during in-flight request")
+	}
+
+	// Release upstream and wait for completion
+	close(holdUpstream)
+	<-reqDone
+
+	// Wait briefly for server-side handler defer to finish activeConns decrement
+	for i := 0; i < 50; i++ {
+		if p.ActiveConnections() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := p.ActiveConnections(); got != 0 {
+		t.Errorf("after completion active conns: want 0, got %d", got)
+	}
+
+	// Check idle with long threshold vs short threshold
+	if p.IsIdle(10 * time.Second) {
+		t.Errorf("expected IsIdle(10s) to be false right after request completion")
+	}
+
+	// Sleep small interval to verify threshold expiration
+	time.Sleep(30 * time.Millisecond)
+	if !p.IsIdle(20 * time.Millisecond) {
+		t.Errorf("expected IsIdle(20ms) to be true after 30ms elapsed")
 	}
 }

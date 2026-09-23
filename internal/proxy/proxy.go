@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/patches"
@@ -36,9 +37,11 @@ type Options struct {
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
-	handler  *httputil.ReverseProxy
-	opts     Options
-	reported sync.Map
+	handler        *httputil.ReverseProxy
+	opts           Options
+	reported       sync.Map
+	activeConns    atomic.Int64
+	lastActivityNs atomic.Int64
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -49,6 +52,7 @@ func New(opts Options) (*Proxy, error) {
 	}
 
 	p := &Proxy{opts: opts}
+	p.touchActivity()
 
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.FlushInterval = -1
@@ -83,8 +87,49 @@ func New(opts Options) (*Proxy, error) {
 	return p, nil
 }
 
-// Handler returns the HTTP handler to mount.
-func (p *Proxy) Handler() http.Handler { return p.handler }
+// Handler returns the HTTP handler to mount, tracking in-flight streams and activity for idle detection.
+func (p *Proxy) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.activeConns.Add(1)
+		p.touchActivity()
+		defer func() {
+			p.activeConns.Add(-1)
+			p.touchActivity()
+		}()
+		p.handler.ServeHTTP(w, r)
+	})
+}
+
+func (p *Proxy) touchActivity() {
+	p.lastActivityNs.Store(time.Now().UnixNano())
+}
+
+// ActiveConnections returns the number of currently active in-flight requests or streams.
+func (p *Proxy) ActiveConnections() int64 {
+	return p.activeConns.Load()
+}
+
+// LastActivity returns the timestamp of the most recent request initiation or completion.
+func (p *Proxy) LastActivity() time.Time {
+	ns := p.lastActivityNs.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
+// IsIdle returns true if there are zero active connections and no request activity has occurred
+// for at least the specified threshold duration.
+func (p *Proxy) IsIdle(threshold time.Duration) bool {
+	if p.activeConns.Load() != 0 {
+		return false
+	}
+	last := p.LastActivity()
+	if last.IsZero() {
+		return true
+	}
+	return time.Since(last) >= threshold
+}
 
 func wantsPatch(req *http.Request) bool {
 	if req.URL.Path == "/main.js" {

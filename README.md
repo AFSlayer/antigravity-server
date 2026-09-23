@@ -40,6 +40,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
 | **Server restarts** | Language server restart invalidates session; manual page refresh required | **Seamless auto-reconnect** — persistent CSRF token & gRPC status 14 translation restore connection without refreshing |
+| **Memory maintenance** | Memory accumulates indefinitely (~4GB+) over long sessions | **Daily idle restart** — resets language server during idle windows without interrupting active work |
 | **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
 
 ---
@@ -134,10 +135,11 @@ In addition to mobile devices, Antigravity Server runs smoothly in any modern de
 
 ---
 
-### 🔄 Zero-Downtime Automatic Updates
+### 🔄 Zero-Downtime Automatic Updates & Daily Memory Maintenance
 On headless Linux servers, `agy-server` includes a background auto-updater service:
 - Checks Google's official release buckets daily for new `language_server` versions.
 - Downloads and replaces the core binary atomically with zero downtime.
+- **Daily Idle Restart**: When up to date, periodically restarts `language_server` during idle periods (zero active streams and 15+ minutes of inactivity) to reclaim memory accumulated from long conversations. If active user traffic is detected, maintenance is safely deferred by 10 minutes.
 - Manual check & upgrade: run `agy-server update`.
 
 ---

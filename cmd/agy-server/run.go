@@ -188,9 +188,12 @@ func (r *runner) start() error {
 					_ = proc.Signal(syscall.SIGTERM)
 				}
 			}
-			stopWithReason("Restarting server to apply Antigravity update…")
+			stopWithReason("Restarting server for update or daily maintenance…")
 		}
-		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS)
+		isIdle := func() bool {
+			return p.IsIdle(15 * time.Minute)
+		}
+		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS, isIdle)
 	}
 
 	ui.NewSignIn(signin.New(instance, r.shimURLFile)).Register(publicMux)
