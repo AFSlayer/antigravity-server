@@ -413,6 +413,13 @@ func All() []Patch {
 			Replace: lineStartNavScript,
 		},
 		{
+			ID:      "connection-watchdog",
+			Desc:    "Auto-dismiss stale connection banners once reconnected and recover from stuck loading spinners",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: connectionWatchdogScript,
+		},
+		{
 			ID:      "composer-upload-menu-item",
 			Desc:    "Add Upload File menu item to the composer plus menu",
 			Target:  MainJS,
@@ -2212,5 +2219,186 @@ const lineStartNavScript = `<script id="agy-line-start-nav">
       return;
     }
   }, true);
+})();
+</script>`
+
+const connectionWatchdogScript = `<script id="agy-connection-watchdog">
+(function () {
+  var lastPingSuccess = 0;
+  var activePingPromise = null;
+  var MAX_RELOAD_ATTEMPTS = 3;
+
+  function pingServer(onSuccess, onError, force) {
+    var now = Date.now();
+    if (!force && (now - lastPingSuccess < 3000)) {
+      if (onSuccess) onSuccess();
+      return;
+    }
+
+    if (!activePingPromise) {
+      activePingPromise = fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          activePingPromise = null;
+          if (data && data.available === false) {
+            throw new Error("Language server unavailable");
+          }
+          lastPingSuccess = Date.now();
+        })
+        .catch(function (err) {
+          activePingPromise = null;
+          throw err;
+        });
+    }
+
+    activePingPromise
+      .then(function () {
+        if (onSuccess) onSuccess();
+      })
+      .catch(function (err) {
+        if (onError) onError(err);
+      });
+  }
+
+  // 1. Auto-dismiss "Lost connection" banner ONLY when server is verified alive
+  function checkAndDismissLostConnectionBanner() {
+    var banners = document.querySelectorAll('div[data-testid="feature-banner"]');
+    if (!banners || banners.length === 0) return;
+
+    banners.forEach(function (b) {
+      var text = (b.textContent || "").toLowerCase();
+      if (text.indexOf("lost connection") !== -1 || text.indexOf("reconnecting") !== -1 || text.indexOf("연결") !== -1) {
+        // Probe server actively; dismiss if OK, restore banner if connection actually down
+        pingServer(function () {
+          if (b.style.display !== "none") {
+            b.style.setProperty("display", "none", "important");
+          }
+        }, function () {
+          if (b.style.display === "none") {
+            b.style.removeProperty("display");
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Watchdog: Recover if conversation loading spinner is stuck > 8s AND server is verified alive
+  var stuckTimerStart = 0;
+  var currentPath = window.location.pathname;
+
+  function checkConversationSpinnerStuck() {
+    if (window.location.pathname.indexOf("/c/") !== 0) {
+      stuckTimerStart = 0;
+      return;
+    }
+
+    if (window.location.pathname !== currentPath) {
+      currentPath = window.location.pathname;
+      stuckTimerStart = 0;
+    }
+
+    var convoView = document.querySelector('div[data-testid="conversation-view"]');
+    if (!convoView) {
+      stuckTimerStart = 0;
+      return;
+    }
+
+    var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
+    var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
+
+    if (hasMessages) {
+      // Conversation loaded successfully; reset reload retry circuit breaker
+      sessionStorage.removeItem("agy_stuck_reload_count");
+      sessionStorage.removeItem("agy_stuck_reload");
+      stuckTimerStart = 0;
+      return;
+    }
+
+    if (spinner && !hasMessages) {
+      var now = Date.now();
+      if (!stuckTimerStart) {
+        stuckTimerStart = now;
+      } else if (now - stuckTimerStart > 8000) {
+        // Guard against losing user draft in composer
+        var composer = document.querySelector('[contenteditable="true"]');
+        if (composer && (composer.textContent || "").trim().length > 0) {
+          return;
+        }
+
+        // Circuit breaker: stop reloading if maximum attempts reached
+        var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
+        if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+          console.warn("[agy-watchdog] Conversation spinner stuck > 8s, but max reload attempts reached (circuit breaker triggered)");
+          return;
+        }
+
+        var lastReload = parseInt(sessionStorage.getItem("agy_stuck_reload") || "0", 10);
+        if (now - lastReload > 30000) {
+          // Verify server is alive before reloading; never reload into a dead server!
+          pingServer(function () {
+            sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
+            sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
+            console.warn("[agy-watchdog] Conversation spinner stuck > 8s with live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
+            window.location.reload();
+          });
+        }
+      }
+    } else {
+      stuckTimerStart = 0;
+    }
+  }
+
+  // Debounced DOM observer via requestAnimationFrame to eliminate streaming layout churn
+  var domCheckTimer = null;
+  function scheduleDOMCheck() {
+    if (domCheckTimer) return;
+    domCheckTimer = requestAnimationFrame(function () {
+      domCheckTimer = null;
+      checkAndDismissLostConnectionBanner();
+      checkConversationSpinnerStuck();
+    });
+  }
+
+  var watchdogObserver = new MutationObserver(scheduleDOMCheck);
+
+  function initWatchdog() {
+    if (document.body) {
+      // childList and subtree are sufficient; omit characterData to prevent token streaming jank
+      watchdogObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    setInterval(function () {
+      checkAndDismissLostConnectionBanner();
+      checkConversationSpinnerStuck();
+    }, 1000);
+
+    document.addEventListener("keydown", function (e) {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") {
+        pingServer(checkAndDismissLostConnectionBanner);
+      }
+    }, true);
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") {
+        stuckTimerStart = 0;
+        pingServer(checkAndDismissLostConnectionBanner);
+      }
+    });
+
+    window.addEventListener("pageshow", function () {
+      stuckTimerStart = 0;
+      pingServer(checkAndDismissLostConnectionBanner);
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initWatchdog);
+  } else {
+    initWatchdog();
+  }
 })();
 </script>`

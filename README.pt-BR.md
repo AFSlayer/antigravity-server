@@ -149,6 +149,8 @@ Em servidores Linux headless, o `agy-server` inclui serviço de atualização au
 Quando o servidor de linguagem reinicia (durante atualizações ou reinícios de serviço) ou ocorre uma breve queda de rede:
 - **Token CSRF Persistente**: Mantém o mesmo token de autenticação após reinícios, evitando rejeições de sessões ativas.
 - **Tradução de Protocolo gRPC-Web**: Converte falhas transitórias em `grpc-status: 14` (Unavailable) em vez de erro HTTP 502 HTML, permitindo que o fluxo de estado nativo do Antigravity se reconecte automaticamente em segundos sem recarregar a aba do navegador.
+- **Fechamento Automático de Banners de Desconexão**: Oculta automaticamente o aviso "Lost connection" assim que a comunicação ativa com o servidor for restabelecida.
+- **Guardião contra Travamento do Spinner**: Detecta se o WebKit mobile trava em streams HTTP/2 multiplexados e recupera a conexão em 8 segundos, evitando spinners infinitos.
 
 ---
 
@@ -204,6 +206,26 @@ server {
 
 > [!IMPORTANT]
 > Configure `--trusted-proxies 127.0.0.1/32` (ou a variável `AGY_TRUSTED_PROXIES=127.0.0.1/32`) para que a proteção contra força bruta identifique o IP real do usuário.
+
+---
+
+## Patches de Experiência Mobile (UX)
+
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 45 patches, sendo 25 dedicados a dispositivos móveis/toque e os demais responsáveis por uploads, navegação, autenticação e invalidação de cache. Amostra de patches:
+
+| Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
+| :--- | :--- | :--- |
+| **Navegação** | Botão de nova conversa `(+)` omitido em telas móveis | Restaura o botão `(+)` de Nova Conversa ao lado de cada projeto |
+| **Ações de Conversa** | Sem suporte para excluir, fixar ou arquivar no toque | Adiciona Excluir, Fixar e Arquivar ao menu kebab `⋮` e à barra de título |
+| **Ações de Mensagem** | Botões desfazer e copiar ocultos sob estado hover | Exibe botões Desfazer (`↶`) e Copiar (`📋`) permanentemente no toque |
+| **Teclado Virtual e Rolagem** | Viewport oscila e deixa vãos no iOS Safari; rolagem para o topo em conversas longas gera tempestade de requisições | Rastreamento de visualViewport, redução de Safe Area para 0px, layout travado, ancoragem de rolagem CSS e guardião contra requisições em cascata |
+| **Envio de Arquivos** | Limite RPC de 1MB falha com logs ou datasets grandes | Envia arquivos de forma assíncrona para o disco via endpoint de streaming fragmentado |
+| **Resposta ao Toque** | Atraso de toque de 300ms e zoom de toque duplo | Aplica `touch-action: manipulation` para resposta imediata ao toque |
+| **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; WebKit mobile trava em streams HTTP/2 | Oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>8s) via guardião cliente |
+| **Comportamento de Entrada** | Enter mobile envia mensagem ou corrompe composição IME; navegação falha na presença de comandos slash | Preserva quebra de linha nativa, protege composição IME, restaura navegação para o início da linha (Cmd+Esquerda / Home) e por palavras (Ctrl+Esquerda), envia com Cmd/Ctrl+Enter |
+| **Seleção de Modelo** | Tocar em um modelo fecha o menu imediatamente | Abre corretamente o submenu de esforço de raciocínio (reasoning effort) |
+
+Execute `agy-server doctor` para verificar o status de todos os patches em relação ao pacote instalado.
 
 ---
 
