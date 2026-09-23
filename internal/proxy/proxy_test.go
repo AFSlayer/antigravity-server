@@ -435,6 +435,14 @@ func TestProxyIdleTracking(t *testing.T) {
 	close(holdUpstream)
 	<-reqDone
 
+	// Wait briefly for server-side handler defer to finish activeConns decrement
+	for i := 0; i < 50; i++ {
+		if p.ActiveConnections() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if got := p.ActiveConnections(); got != 0 {
 		t.Errorf("after completion active conns: want 0, got %d", got)
 	}
