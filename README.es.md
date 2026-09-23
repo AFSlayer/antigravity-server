@@ -150,7 +150,7 @@ Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de s
 - **Token CSRF Persistente**: Mantiene el mismo token de autenticación tras los reinicios, evitando el rechazo de sesiones activas.
 - **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
 - **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
-- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión en 6 segundos, evitando spinners infinitos.
+- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión en 8 segundos, evitando spinners infinitos.
 
 ---
 
@@ -206,6 +206,26 @@ server {
 
 > [!IMPORTANT]
 > Configura `--trusted-proxies 127.0.0.1/32` (o la variable `AGY_TRUSTED_PROXIES=127.0.0.1/32`) para que la protección contra fuerza bruta identifique la IP real del cliente.
+
+---
+
+## Parches de Experiencia Móvil (UX)
+
+El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 45 parches, 25 de ellos específicos para pantallas táctiles y el resto dedicados a cargas, navegación, inicio de sesión e invalidación de caché. Ejemplos destacados:
+
+| Categoría | Comportamiento del Paquete de Escritorio | Parche de agy-server |
+| :--- | :--- | :--- |
+| **Navegación** | Botón de nuevo proyecto `(+)` omitido en pantallas móviles | Restaura el botón `(+)` Nueva Conversación junto a cada proyecto |
+| **Gestión de Conversaciones** | Sin opciones de eliminar, fijar o archivar en táctil | Añade Eliminar, Fijar y Archivar al menú kebab `⋮` y a la barra de título |
+| **Acciones de Mensaje** | Botones de deshacer y copiar ocultos tras estados hover | Muestra permanentemente los botones Deshacer (`↶`) 및 Copiar (`📋`) en táctil |
+| **Teclado Virtual y Desplazamiento** | Rebote de viewport y espacios en blanco en iOS Safari; desplazamiento superior en chats largos dispara tormentas de peticiones | Seguimiento dinámico de visualViewport, colapso de Safe Area a 0px, fijación de layout, anclaje de desplazamiento CSS y guardián contra tormentas de peticiones |
+| **Carga de Archivos** | Límite RPC de 1MB falla con logs o datasets grandes | Transmite archivos asíncronamente al disco mediante endpoint de streaming por fragmentos |
+| **Respuesta Táctil** | Retardo de pulsación de 300ms y zoom por doble toque | Configura `touch-action: manipulation` para una respuesta táctil instantánea |
+| **Estabilidad de Conexión** | Banner "Lost connection" visible tras reconexión exitosa; WebKit móvil se cuelga en flujos HTTP/2 | Oculta automáticamente avisos obsoletos de desconexión tras verificar conectividad y recupera spinners bloqueados (>8s) mediante guardián |
+| **Entrada de Texto** | Enter en móvil envía mensaje o rompe composición IME; navegación por teclado salta al inicio con comandos slash | Mantiene salto de línea nativo, protege composición IME, restaura navegación al inicio de línea (Cmd+Izquierda / Inicio) y por palabras (Ctrl+Izquierda), envía con Cmd/Ctrl+Enter |
+| **Selección de Modelo** | Tocar un modelo cierra el menú inmediatamente | Abre correctamente el submenú de nivel de razonamiento (reasoning effort) |
+
+Ejecute `agy-server doctor` para verificar la integridad de todos los parches aplicados a su instalación.
 
 ---
 

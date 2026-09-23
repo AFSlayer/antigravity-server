@@ -516,3 +516,45 @@ func TestTextInputFilterLogic(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	requiredGuards := []string{
+		"activePingPromise",
+		"MAX_RELOAD_ATTEMPTS = 3",
+		`sessionStorage.getItem("agy_stuck_reload_count")`,
+		`sessionStorage.removeItem("agy_stuck_reload_count")`,
+		`sessionStorage.removeItem("agy_stuck_reload")`,
+		`document.querySelector('[contenteditable="true"]')`,
+		`data.available === false`,
+		`now - lastPingSuccess < 3000`,
+		`now - stuckTimerStart > 8000`,
+		`now - lastReload > 30000`,
+		`requestAnimationFrame`,
+		`e.isComposing || e.keyCode === 229`,
+		`b.style.removeProperty("display")`,
+	}
+
+	for _, guard := range requiredGuards {
+		if !strings.Contains(body, guard) {
+			t.Errorf("missing watchdog safety guard %q in injected HTML", guard)
+		}
+	}
+
+	// Ensure characterData is omitted from observer options to prevent token streaming jank
+	watchdogRe := regexp.MustCompile(`watchdogObserver\.observe\([^,]+,\s*\{([^}]+)\}\)`)
+	matches := watchdogRe.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("failed to locate watchdogObserver.observe in injected script")
+	}
+	if strings.Contains(matches[1], "characterData") {
+		t.Errorf("watchdogObserver should not observe characterData: %s", matches[1])
+	}
+
+	// Verify that window.location.reload() is strictly wrapped inside pingServer callback
+	if !strings.Contains(body, "pingServer(function () {") || !strings.Contains(body, "window.location.reload();") {
+		t.Errorf("window.location.reload() must be protected inside pingServer callback")
+	}
+}

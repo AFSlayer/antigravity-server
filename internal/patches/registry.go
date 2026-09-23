@@ -2225,24 +2225,41 @@ const lineStartNavScript = `<script id="agy-line-start-nav">
 const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 (function () {
   var lastPingSuccess = 0;
-  var isChecking = false;
+  var activePingPromise = null;
+  var MAX_RELOAD_ATTEMPTS = 3;
 
-  function pingServer(onSuccess, onError) {
-    if (isChecking) return;
-    isChecking = true;
-    fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) {
-        isChecking = false;
-        if (r.ok) {
+  function pingServer(onSuccess, onError, force) {
+    var now = Date.now();
+    if (!force && (now - lastPingSuccess < 3000)) {
+      if (onSuccess) onSuccess();
+      return;
+    }
+
+    if (!activePingPromise) {
+      activePingPromise = fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          activePingPromise = null;
+          if (data && data.available === false) {
+            throw new Error("Language server unavailable");
+          }
           lastPingSuccess = Date.now();
-          if (onSuccess) onSuccess();
-        } else {
-          if (onError) onError();
-        }
+        })
+        .catch(function (err) {
+          activePingPromise = null;
+          throw err;
+        });
+    }
+
+    activePingPromise
+      .then(function () {
+        if (onSuccess) onSuccess();
       })
-      .catch(function () {
-        isChecking = false;
-        if (onError) onError();
+      .catch(function (err) {
+        if (onError) onError(err);
       });
   }
 
@@ -2253,7 +2270,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 
     banners.forEach(function (b) {
       var text = (b.textContent || "").toLowerCase();
-      if (text.indexOf("lost connection") !== -1 || text.indexOf("reconnecting") !== -1) {
+      if (text.indexOf("lost connection") !== -1 || text.indexOf("reconnecting") !== -1 || text.indexOf("연결") !== -1) {
         // Probe server actively; dismiss if OK, restore banner if connection actually down
         pingServer(function () {
           if (b.style.display !== "none") {
@@ -2268,7 +2285,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     });
   }
 
-  // 2. Watchdog: Recover if conversation loading spinner is stuck > 6s AND server is verified alive
+  // 2. Watchdog: Recover if conversation loading spinner is stuck > 8s AND server is verified alive
   var stuckTimerStart = 0;
   var currentPath = window.location.pathname;
 
@@ -2292,14 +2309,29 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
     var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
 
+    if (hasMessages) {
+      // Conversation loaded successfully; reset reload retry circuit breaker
+      sessionStorage.removeItem("agy_stuck_reload_count");
+      sessionStorage.removeItem("agy_stuck_reload");
+      stuckTimerStart = 0;
+      return;
+    }
+
     if (spinner && !hasMessages) {
       var now = Date.now();
       if (!stuckTimerStart) {
         stuckTimerStart = now;
-      } else if (now - stuckTimerStart > 6000) {
+      } else if (now - stuckTimerStart > 8000) {
         // Guard against losing user draft in composer
         var composer = document.querySelector('[contenteditable="true"]');
         if (composer && (composer.textContent || "").trim().length > 0) {
+          return;
+        }
+
+        // Circuit breaker: stop reloading if maximum attempts reached
+        var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
+        if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+          console.warn("[agy-watchdog] Conversation spinner stuck > 8s, but max reload attempts reached (circuit breaker triggered)");
           return;
         }
 
@@ -2308,7 +2340,8 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
           // Verify server is alive before reloading; never reload into a dead server!
           pingServer(function () {
             sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
-            console.warn("[agy-watchdog] Conversation spinner stuck > 6s with live server, recovering connection via clean reload");
+            sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
+            console.warn("[agy-watchdog] Conversation spinner stuck > 8s with live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
             window.location.reload();
           });
         }
@@ -2318,10 +2351,18 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
   }
 
-  var watchdogObserver = new MutationObserver(function () {
-    checkAndDismissLostConnectionBanner();
-    checkConversationSpinnerStuck();
-  });
+  // Debounced DOM observer via requestAnimationFrame to eliminate streaming layout churn
+  var domCheckTimer = null;
+  function scheduleDOMCheck() {
+    if (domCheckTimer) return;
+    domCheckTimer = requestAnimationFrame(function () {
+      domCheckTimer = null;
+      checkAndDismissLostConnectionBanner();
+      checkConversationSpinnerStuck();
+    });
+  }
+
+  var watchdogObserver = new MutationObserver(scheduleDOMCheck);
 
   function initWatchdog() {
     if (document.body) {
@@ -2335,6 +2376,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }, 1000);
 
     document.addEventListener("keydown", function (e) {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") {
         pingServer(checkAndDismissLostConnectionBanner);
       }
