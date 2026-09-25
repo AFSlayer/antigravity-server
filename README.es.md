@@ -150,7 +150,7 @@ Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de s
 - **Token CSRF Persistente**: Mantiene el mismo token de autenticación tras los reinicios, evitando el rechazo de sesiones activas.
 - **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
 - **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
-- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión en 8 segundos, evitando spinners infinitos.
+- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión tras 30 segundos con red inactiva, evitando spinners infinitos sin interrumpir descargas pesadas.
 
 ---
 
@@ -221,7 +221,7 @@ El paquete web servido por Antigravity —ya sea a través del puente remoto ofi
 | **Teclado Virtual y Desplazamiento** | Rebote de viewport y espacios en blanco en iOS Safari; desplazamiento superior en chats largos dispara tormentas de peticiones | Seguimiento dinámico de visualViewport, colapso de Safe Area a 0px, fijación de layout, anclaje de desplazamiento CSS y guardián contra tormentas de peticiones |
 | **Carga de Archivos** | Límite RPC de 1MB falla con logs o datasets grandes | Transmite archivos asíncronamente al disco mediante endpoint de streaming por fragmentos |
 | **Respuesta Táctil** | Retardo de pulsación de 300ms y zoom por doble toque | Configura `touch-action: manipulation` para una respuesta táctil instantánea |
-| **Estabilidad de Conexión** | Banner "Lost connection" visible tras reconexión exitosa; WebKit móvil se cuelga en flujos HTTP/2 | Oculta automáticamente avisos obsoletos de desconexión tras verificar conectividad y recupera spinners bloqueados (>8s) mediante guardián |
+| **Estabilidad de Conexión** | Banner "Lost connection" visible tras reconexión exitosa; WebKit móvil se cuelga en flujos HTTP/2 | Oculta automáticamente avisos obsoletos de desconexión tras verificar conectividad y recupera spinners bloqueados (>30s con red inactiva) mediante guardián |
 | **Entrada de Texto** | Enter en móvil envía mensaje o rompe composición IME; navegación por teclado salta al inicio con comandos slash | Mantiene salto de línea nativo, protege composición IME, restaura navegación al inicio de línea (Cmd+Izquierda / Inicio) y por palabras (Ctrl+Izquierda), envía con Cmd/Ctrl+Enter |
 | **Selección de Modelo** | Tocar un modelo cierra el menú inmediatamente | Abre correctamente el submenú de nivel de razonamiento (reasoning effort) |
 

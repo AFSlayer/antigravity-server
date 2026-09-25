@@ -150,7 +150,7 @@ Quando o servidor de linguagem reinicia (durante atualizações ou reinícios de
 - **Token CSRF Persistente**: Mantém o mesmo token de autenticação após reinícios, evitando rejeições de sessões ativas.
 - **Tradução de Protocolo gRPC-Web**: Converte falhas transitórias em `grpc-status: 14` (Unavailable) em vez de erro HTTP 502 HTML, permitindo que o fluxo de estado nativo do Antigravity se reconecte automaticamente em segundos sem recarregar a aba do navegador.
 - **Fechamento Automático de Banners de Desconexão**: Oculta automaticamente o aviso "Lost connection" assim que a comunicação ativa com o servidor for restabelecida.
-- **Guardião contra Travamento do Spinner**: Detecta se o WebKit mobile trava em streams HTTP/2 multiplexados e recupera a conexão em 8 segundos, evitando spinners infinitos.
+- **Guardião contra Travamento do Spinner**: Detecta se o WebKit mobile trava em streams HTTP/2 multiplexados e recupera a conexão após 30 segundos com rede inativa, evitando spinners infinitos sem interromper downloads pesados.
 
 ---
 
@@ -221,7 +221,7 @@ O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo
 | **Teclado Virtual e Rolagem** | Viewport oscila e deixa vãos no iOS Safari; rolagem para o topo em conversas longas gera tempestade de requisições | Rastreamento de visualViewport, redução de Safe Area para 0px, layout travado, ancoragem de rolagem CSS e guardião contra requisições em cascata |
 | **Envio de Arquivos** | Limite RPC de 1MB falha com logs ou datasets grandes | Envia arquivos de forma assíncrona para o disco via endpoint de streaming fragmentado |
 | **Resposta ao Toque** | Atraso de toque de 300ms e zoom de toque duplo | Aplica `touch-action: manipulation` para resposta imediata ao toque |
-| **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; WebKit mobile trava em streams HTTP/2 | Oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>8s) via guardião cliente |
+| **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; WebKit mobile trava em streams HTTP/2 | Oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>30s com rede inativa) via guardião cliente |
 | **Comportamento de Entrada** | Enter mobile envia mensagem ou corrompe composição IME; navegação falha na presença de comandos slash | Preserva quebra de linha nativa, protege composição IME, restaura navegação para o início da linha (Cmd+Esquerda / Home) e por palavras (Ctrl+Esquerda), envia com Cmd/Ctrl+Enter |
 | **Seleção de Modelo** | Tocar em um modelo fecha o menu imediatamente | Abre corretamente o submenu de esforço de raciocínio (reasoning effort) |
 
