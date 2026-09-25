@@ -1438,14 +1438,66 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var topSentinelLockedUntil = 0;
   var lastScrollHeight = 0;
   var lastScrollTop = 0;
-  var initialLoadGuardUntil = performance.now() + 1500;
+  var initialLoadGuardUntil = performance.now() + 2000;
+  window.__agyInitialLoadUntil = initialLoadGuardUntil;
   var currentConvoUrl = window.location.pathname;
   var guardedScroller = null;
+
+  // Intercept and throttle RequestAgentStatePageUpdate to strictly prevent fetch storms
+  if (!window.__agyFetchIntercepted && window.fetch) {
+    window.__agyFetchIntercepted = true;
+    var _origFetch = window.fetch;
+    var _lastPageUpdateReq = 0;
+
+    window.fetch = function (resource, init) {
+      var urlStr = (typeof resource === "string") ? resource : (resource && resource.url) || "";
+      if (urlStr.indexOf("RequestAgentStatePageUpdate") !== -1) {
+        var now = performance.now();
+        // 1. Guard against initial entry fetch storm (first 2 seconds of conversation load)
+        // 2. Minimum 1.5s cooldown between pagination fetches
+        if (now < (window.__agyInitialLoadUntil || 0) || (now - _lastPageUpdateReq < 1500)) {
+          // Return synthetic empty gRPC-Web response to satisfy caller without network storm
+          return Promise.resolve(new Response(new Uint8Array([0, 0, 0, 0, 0]), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/grpc-web+proto",
+              "grpc-status": "0",
+              "grpc-message": ""
+            }
+          }));
+        }
+        _lastPageUpdateReq = now;
+      }
+      return _origFetch.apply(this, arguments);
+    };
+  }
 
   function getTopSentinel(sc) {
     if (!sc) return null;
     return sc.querySelector('div.h-px.w-full[aria-hidden="true"]') ||
            sc.querySelector('div.h-px.w-full:first-child');
+  }
+
+  function lockTopSentinel(sentinel) {
+    if (!sentinel) return;
+    // CRITICAL: NEVER use display:none! In W3C DOM spec, display:none returns bounding rect {0,0}.
+    // Antigravity virtualization Rqb() calculates: sentinel.bottom > viewport.top - 150 (0 > -102 === true),
+    // which causes endless 100ms fetch storms!
+    // Instead, offset sentinel coordinate to top: -2000px with visibility: hidden.
+    sentinel.style.setProperty("position", "absolute", "important");
+    sentinel.style.setProperty("top", "-2000px", "important");
+    sentinel.style.setProperty("visibility", "hidden", "important");
+    sentinel.style.setProperty("pointer-events", "none", "important");
+    sentinel.style.removeProperty("display");
+  }
+
+  function unlockTopSentinel(sentinel) {
+    if (!sentinel) return;
+    sentinel.style.removeProperty("position");
+    sentinel.style.removeProperty("top");
+    sentinel.style.removeProperty("visibility");
+    sentinel.style.removeProperty("pointer-events");
+    sentinel.style.removeProperty("display");
   }
 
   function updateTopScrollGuard() {
@@ -1454,7 +1506,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
     if (window.location.pathname !== currentConvoUrl) {
       currentConvoUrl = window.location.pathname;
-      initialLoadGuardUntil = performance.now() + 1500;
+      initialLoadGuardUntil = performance.now() + 2000;
+      window.__agyInitialLoadUntil = initialLoadGuardUntil;
       topSentinelLockedUntil = 0;
       lastScrollHeight = sc.scrollHeight;
       lastScrollTop = sc.scrollTop;
@@ -1467,13 +1520,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     var shouldLock = (now < initialLoadGuardUntil) || (now < topSentinelLockedUntil);
 
     if (shouldLock) {
-      if (sentinel.style.display !== "none") {
-        sentinel.style.setProperty("display", "none", "important");
-      }
+      lockTopSentinel(sentinel);
     } else {
-      if (sentinel.style.display === "none") {
-        sentinel.style.removeProperty("display");
-      }
+      unlockTopSentinel(sentinel);
     }
   }
 
@@ -1488,7 +1537,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       topSentinelLockedUntil = 0;
       var sentinel = getTopSentinel(sc);
       if (sentinel && performance.now() >= initialLoadGuardUntil) {
-        sentinel.style.removeProperty("display");
+        unlockTopSentinel(sentinel);
       }
     }
 
@@ -1511,7 +1560,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
         topSentinelLockedUntil = performance.now() + 3000;
         var sentinel = getTopSentinel(sc);
         if (sentinel) {
-          sentinel.style.setProperty("display", "none", "important");
+          lockTopSentinel(sentinel);
         }
 
         // Programmatic scroll position restoration for mobile WebKit

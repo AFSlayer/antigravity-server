@@ -558,3 +558,37 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 		t.Errorf("window.location.reload() must be protected inside pingServer callback")
 	}
 }
+
+func TestTopSentinelGuardAndFetchInterceptor(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	requiredGuards := []string{
+		"window.__agyFetchIntercepted",
+		"window.__agyInitialLoadUntil",
+		"RequestAgentStatePageUpdate",
+		"lockTopSentinel",
+		"unlockTopSentinel",
+		`"top", "-2000px"`,
+		`"visibility", "hidden"`,
+		`"pointer-events", "none"`,
+		"application/grpc-web+proto",
+		`now - _lastPageUpdateReq < 1500`,
+	}
+
+	for _, guard := range requiredGuards {
+		if !strings.Contains(body, guard) {
+			t.Errorf("missing top sentinel / fetch storm guard %q in injected HTML", guard)
+		}
+	}
+
+	// Verify that sentinel locking NEVER sets display:none (W3C DOM 0x0 bug leading to Rqb fetch storm)
+	lockSentinelRe := regexp.MustCompile(`function lockTopSentinel\([^)]*\)\s*\{([^}]+)\}`)
+	matches := lockSentinelRe.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("failed to locate lockTopSentinel function in injected script")
+	}
+	if strings.Contains(matches[1], `display", "none"`) {
+		t.Errorf("lockTopSentinel MUST NOT use display:none (triggers Rqb fetch storm): %s", matches[1])
+	}
+}
