@@ -535,14 +535,6 @@ func All() []Patch {
 			Replace: mobileDebug,
 		},
 		{
-			ID:      "mobile-signin-banner",
-			Desc:    "Show a sign-in prompt on touch devices, which Antigravity omits there",
-			Target:  HTML,
-			Kind:    InjectHead,
-			Enabled: mobile,
-			Replace: signInBanner,
-		},
-		{
 			ID:     "cache-bust",
 			Desc:   "Invalidate cached bundles when the applied patch set changes",
 			Target: HTML,
@@ -1853,145 +1845,6 @@ const mobileDebug = `<script id="agy-debug">
 })();
 </script>`
 
-const signInBanner = `<style id="agy-signin-banner-style">
-#agy-signin-banner-el {
-  position: fixed;
-  z-index: 40;
-  display: none;
-  text-decoration: none;
-  animation: agy-banner-in 0.18s ease-out;
-}
-@keyframes agy-banner-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
-}
-</style>
-<script id="agy-signin-banner">
-(function () {
-  if (!(window.matchMedia && window.matchMedia("(pointer:coarse)").matches)) return;
-  if (location.pathname.indexOf("/__agy/") === 0) return;
-
-  // Antigravity's own auth banner, reproduced with its classes and icon so it themes
-  // with the app. Its mobile layout omits the real one, which on desktop sits above
-  // the composer card.
-  //
-  // The banner lives on document.body and is positioned over that spot rather than
-  // inserted next to the card: the card is inside React's tree, so anything put
-  // there is removed on the next render, and re-adding it in a loop thrashes the
-  // layout badly enough to break the app's own keyboard handling.
-  var ICON =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"' +
-    ' fill="currentColor" class="h-4 w-4 shrink-0 text-yellow-500" aria-hidden="true">' +
-    '<path d="M74.62-140L480-840L885.38-140H74.62ZM178-200H782L480-720L178-200Zm324.92-57.08q9.38-9.38 ' +
-    '9.38-22.92t-9.38-22.92T480-312.31t-22.92,9.38T447.69-280t9.38,22.92T480-247.69t22.92-9.38ZM450-352.31h60v-200H450v200ZM480-460Z"/>' +
-    "</svg>";
-
-  var banner = document.createElement("a");
-  banner.id = "agy-signin-banner-el";
-  banner.href = "/__agy/signin";
-  banner.className =
-    "bg-muted px-3 min-h-[30px] py-1.5 flex items-center gap-2 text-sm border rounded-lg";
-  banner.innerHTML =
-    ICON +
-    '<span class="text-foreground"><span>To use the agent, please login </span>' +
-    '<span class="text-current underline">here</span></span>';
-
-  // The composer is the only editable region on screen. Its card is the outermost
-  // ancestor that still has a visible margin on both sides, since the wrappers above
-  // it span the full width. Requiring an actual inset rather than merely "not quite
-  // full width" is what keeps the banner from stretching edge to edge. Matching on
-  // width rather than height keeps it detectable while the keyboard is open, which
-  // shrinks innerHeight and broke an earlier ratio-based rule.
-  function composerCard() {
-    var editable = document.querySelector('[contenteditable="true"]');
-    if (!editable) return null;
-
-    var card = null;
-    var node = editable;
-    var viewport = window.innerWidth;
-
-    for (var i = 0; i < 10 && node.parentElement && node.parentElement !== document.body; i++) {
-      node = node.parentElement;
-      var box = node.getBoundingClientRect();
-      if (box.left >= 6 && box.right <= viewport - 6 && box.width >= viewport * 0.5 && box.height > 24) {
-        card = node;
-      }
-    }
-    return card;
-  }
-
-  // Antigravity does render its own banner inside a chat, just not on the project
-  // list, so showing ours unconditionally puts two of them on screen. Detect the real
-  // one by the copy it shares with the desktop layout and stand down when it is
-  // there. If Google restyles it this stops matching and the duplicate comes back,
-  // which is the mild failure mode of the two.
-  function nativeBanner() {
-    var nodes = document.querySelectorAll('[class*="bg-muted"]');
-    for (var i = 0; i < nodes.length; i++) {
-      if (nodes[i] !== banner && nodes[i].textContent.indexOf("please login") >= 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  var lastKey = "";
-
-  function sync() {
-    var card = nativeBanner() ? null : composerCard();
-    if (!card) {
-      if (banner.style.display !== "none") banner.style.display = "none";
-      lastKey = "";
-      return;
-    }
-
-    var box = card.getBoundingClientRect();
-    if (box.width <= 0) return;
-
-    if (banner.style.display === "none") banner.style.display = "flex";
-
-    // Both getBoundingClientRect and position:fixed resolve against the layout
-    // viewport, so tracking the card needs no adjustment for Safari's pan: the two
-    // move together. Subtracting the pan here pushed the banner off-screen instead.
-    var height = banner.offsetHeight || 32;
-    var top = Math.max(4, box.top - height - 8);
-    var key = box.left + ":" + box.width + ":" + top;
-    if (key === lastKey) return;
-    lastKey = key;
-
-    banner.style.left = box.left + "px";
-    banner.style.width = box.width + "px";
-    banner.style.top = top + "px";
-  }
-
-  function start() {
-    document.body.appendChild(banner);
-    sync();
-
-    window.addEventListener("resize", sync, { passive: true });
-    window.addEventListener("scroll", sync, { passive: true });
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", sync, { passive: true });
-      window.visualViewport.addEventListener("scroll", sync, { passive: true });
-    }
-    setInterval(sync, 1000);
-  }
-
-  function check() {
-    fetch("/__agy/api/signin/status", { credentials: "same-origin" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && !d.signedIn) start(); })
-      .catch(function () {});
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", check);
-  } else {
-    check();
-  }
-})();
-</script>`
-
 const uploaderScript = `<script>
 (function() {
   function formatBytes(bytes) {
@@ -2306,16 +2159,13 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
 
     if (!activePingPromise) {
-      activePingPromise = fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
+      activePingPromise = fetch("/__agy/ping", { credentials: "same-origin", cache: "no-store" })
         .then(function (r) {
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json().catch(function () { return {}; });
         })
         .then(function (data) {
           activePingPromise = null;
-          if (data && data.available === false) {
-            throw new Error("Language server unavailable");
-          }
           lastPingSuccess = Date.now();
         })
         .catch(function (err) {

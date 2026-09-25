@@ -154,7 +154,7 @@ func TestProxyInjectsIntoHTML(t *testing.T) {
 
 	out := body(t, get(t, front.URL, "/", "text/html"))
 
-	for _, want := range []string{"agy-touch-action", "agy-safe-area", "agy-keyboard-detect", "agy-signin-banner", `src="/main.js?agy=k1"`} {
+	for _, want := range []string{"agy-touch-action", "agy-safe-area", "agy-keyboard-detect", "agy-connection-watchdog", `src="/main.js?agy=k1"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in patched HTML", want)
 		}
