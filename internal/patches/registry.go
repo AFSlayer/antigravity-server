@@ -2276,6 +2276,27 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   var lastPingSuccess = 0;
   var activePingPromise = null;
   var MAX_RELOAD_ATTEMPTS = 3;
+  var lastNetworkActivity = Date.now();
+
+  // Track network fetch activity so we never interrupt in-progress downloads of large conversations/summaries
+  if (window.fetch && !window.__agyFetchActivityTracked) {
+    window.__agyFetchActivityTracked = true;
+    var _origFetchForWatchdog = window.fetch;
+    window.fetch = function () {
+      lastNetworkActivity = Date.now();
+      var p = _origFetchForWatchdog.apply(this, arguments);
+      if (p && p.then) {
+        return p.then(function (res) {
+          lastNetworkActivity = Date.now();
+          return res;
+        }, function (err) {
+          lastNetworkActivity = Date.now();
+          throw err;
+        });
+      }
+      return p;
+    };
+  }
 
   function pingServer(onSuccess, onError, force) {
     var now = Date.now();
@@ -2334,7 +2355,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     });
   }
 
-  // 2. Watchdog: Recover if conversation loading spinner is stuck > 8s AND server is verified alive
+  // 2. Watchdog: Recover if conversation loading spinner is stuck > 30s AND network is completely idle (>5s)
   var stuckTimerStart = 0;
   var currentPath = window.location.pathname;
 
@@ -2368,9 +2389,15 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 
     if (spinner && !hasMessages) {
       var now = Date.now();
+      // If network communication is actively ongoing (e.g. streaming large conversation/summaries), defer stuck timer
+      if (now - lastNetworkActivity < 5000) {
+        stuckTimerStart = now;
+        return;
+      }
+
       if (!stuckTimerStart) {
         stuckTimerStart = now;
-      } else if (now - stuckTimerStart > 8000) {
+      } else if (now - stuckTimerStart > 30000) {
         // Guard against losing user draft in composer
         var composer = document.querySelector('[contenteditable="true"]');
         if (composer && (composer.textContent || "").trim().length > 0) {
@@ -2380,7 +2407,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
         // Circuit breaker: stop reloading if maximum attempts reached
         var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
         if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
-          console.warn("[agy-watchdog] Conversation spinner stuck > 8s, but max reload attempts reached (circuit breaker triggered)");
+          console.warn("[agy-watchdog] Conversation spinner stuck > 30s, but max reload attempts reached (circuit breaker triggered)");
           return;
         }
 
@@ -2390,7 +2417,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
           pingServer(function () {
             sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
             sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
-            console.warn("[agy-watchdog] Conversation spinner stuck > 8s with live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
+            console.warn("[agy-watchdog] Conversation spinner stuck > 30s with idle network and live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
             window.location.reload();
           });
         }
