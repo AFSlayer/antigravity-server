@@ -152,7 +152,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`Save`,
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
-		`contractionSafetyPx:1E8,outerRadiusPx:2E8`,
+		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
@@ -311,7 +311,7 @@ func TestHTMLInjection(t *testing.T) {
 		`window.dispatchEvent(new MouseEvent('mouseup'));`,
 		`agy-line-start-nav`,
 		`overflow-anchor: auto !important;`,
-		`updateTopScrollGuard()`,
+		`handleScrollerMutation()`,
 		`agy-connection-watchdog`,
 		`checkAndDismissLostConnectionBanner`,
 		`checkConversationSpinnerStuck`,
@@ -566,31 +566,15 @@ func TestTopSentinelGuardAndFetchInterceptor(t *testing.T) {
 	body := string(out)
 
 	requiredGuards := []string{
-		"window.__agyFetchIntercepted",
-		"window.__agyInitialLoadUntil",
-		"RequestAgentStatePageUpdate",
-		"lockTopSentinel",
-		"unlockTopSentinel",
-		`"top", "-2000px"`,
-		`"visibility", "hidden"`,
-		`"pointer-events", "none"`,
-		"application/grpc-web+proto",
-		`now - _lastPageUpdateReq < 1500`,
+		"handleScrollerMutation",
+		"targetTop = lastScrollTop + delta",
+		"sc.scrollTop = targetTop",
+		"chatScroller",
 	}
 
 	for _, guard := range requiredGuards {
 		if !strings.Contains(body, guard) {
-			t.Errorf("missing top sentinel / fetch storm guard %q in injected HTML", guard)
+			t.Errorf("missing top scroll prepend anchoring element %q in injected HTML", guard)
 		}
-	}
-
-	// Verify that sentinel locking NEVER sets display:none (W3C DOM 0x0 bug leading to Rqb fetch storm)
-	lockSentinelRe := regexp.MustCompile(`function lockTopSentinel\([^)]*\)\s*\{([^}]+)\}`)
-	matches := lockSentinelRe.FindStringSubmatch(body)
-	if len(matches) < 2 {
-		t.Fatalf("failed to locate lockTopSentinel function in injected script")
-	}
-	if strings.Contains(matches[1], `display", "none"`) {
-		t.Errorf("lockTopSentinel MUST NOT use display:none (triggers Rqb fetch storm): %s", matches[1])
 	}
 }

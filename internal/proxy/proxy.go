@@ -42,6 +42,8 @@ type Proxy struct {
 	reported       sync.Map
 	activeConns    atomic.Int64
 	lastActivityNs atomic.Int64
+	mainJSMu       sync.RWMutex
+	cachedMainJS   []byte
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -67,6 +69,14 @@ func New(opts Options) (*Proxy, error) {
 	host := target.Host
 	base := rp.Director
 	rp.Director = func(req *http.Request) {
+		if orig := req.Header.Get("Origin"); orig != "" {
+			req.Header.Set("X-Original-Origin", orig)
+		}
+		if clientHost := req.Header.Get("X-Forwarded-Host"); clientHost != "" {
+			req.Header.Set("X-Client-Host", clientHost)
+		} else if req.Host != "" {
+			req.Header.Set("X-Client-Host", req.Host)
+		}
 		base(req)
 		req.Host = host
 		req.Header.Set("Origin", target.String())
@@ -96,6 +106,25 @@ func (p *Proxy) Handler() http.Handler {
 			p.activeConns.Add(-1)
 			p.touchActivity()
 		}()
+
+		// Fast-path: Serve pre-warmed / cached main.js immediately from memory (0ms latency)
+		if r.URL.Path == "/main.js" && r.Method == http.MethodGet {
+			p.mainJSMu.RLock()
+			cached := p.cachedMainJS
+			p.mainJSMu.RUnlock()
+			if cached != nil {
+				w.Header().Set("Content-Type", "application/javascript")
+				w.Header().Set("Content-Length", strconv.Itoa(len(cached)))
+				if r.URL.Query().Get("agy") != "" {
+					w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+				} else {
+					w.Header().Set("Cache-Control", "no-store")
+				}
+				_, _ = w.Write(cached)
+				return
+			}
+		}
+
 		p.handler.ServeHTTP(w, r)
 	})
 }
@@ -159,9 +188,50 @@ func targetFor(resp *http.Response) (patches.Target, bool) {
 }
 
 func (p *Proxy) modifyResponse(resp *http.Response) error {
+	// Restore CORS Access-Control-Allow-Origin header if overwritten by internal upstream loopback target
+	if resp.Request != nil {
+		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
+			orig := resp.Request.Header.Get("X-Original-Origin")
+			if orig == "" {
+				proto := resp.Request.Header.Get("X-Forwarded-Proto")
+				if proto == "" {
+					proto = "https"
+				}
+				host := resp.Request.Header.Get("X-Forwarded-Host")
+				if host == "" {
+					host = resp.Request.Header.Get("X-Client-Host")
+				}
+				if host == "" {
+					host = resp.Request.Host
+				}
+				orig = proto + "://" + host
+			}
+			resp.Header.Set("Access-Control-Allow-Origin", orig)
+		}
+	}
+
 	target, ok := targetFor(resp)
 	if !ok {
 		return nil
+	}
+
+	if target == patches.MainJS {
+		p.mainJSMu.RLock()
+		cached := p.cachedMainJS
+		p.mainJSMu.RUnlock()
+		if cached != nil {
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(cached))
+			resp.ContentLength = int64(len(cached))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(cached)))
+			resp.Header.Set("Content-Type", "application/javascript")
+			if resp.Request.URL.Query().Get("agy") != "" {
+				resp.Header.Set("Cache-Control", "no-cache, must-revalidate")
+			} else {
+				resp.Header.Set("Cache-Control", "no-store")
+			}
+			return nil
+		}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -172,6 +242,12 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	patched, report := patches.Apply(target, body, p.opts.Patch)
 	p.report(target, report)
+
+	if target == patches.MainJS {
+		p.mainJSMu.Lock()
+		p.cachedMainJS = patched
+		p.mainJSMu.Unlock()
+	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(patched))
 	resp.ContentLength = int64(len(patched))
