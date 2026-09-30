@@ -380,7 +380,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: func(Options) bool { return true },
 			FindRe:  virtualizationDisableContractionRe,
-			Replace: `contractionSafetyPx:1E8,outerRadiusPx:2E8`,
+			Replace: `contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
 		},
 
 		// Always start the folder picker at the configured workspace root instead of
@@ -1434,156 +1434,75 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   }, true);
 
   // Mobile Conversation Top-Scroll Guard & Anchoring
-  // Prevents cascading fetch storm when scrolling to top on mobile and preserves scroll position.
-  var topSentinelLockedUntil = 0;
+  // Preserves scroll position when prepending older messages to prevent infinite fetch storms.
   var lastScrollHeight = 0;
   var lastScrollTop = 0;
-  var initialLoadGuardUntil = performance.now() + 2000;
-  window.__agyInitialLoadUntil = initialLoadGuardUntil;
   var currentConvoUrl = window.location.pathname;
   var guardedScroller = null;
-
-  // Intercept and throttle RequestAgentStatePageUpdate to strictly prevent fetch storms
-  if (!window.__agyFetchIntercepted && window.fetch) {
-    window.__agyFetchIntercepted = true;
-    var _origFetch = window.fetch;
-    var _lastPageUpdateReq = 0;
-
-    window.fetch = function (resource, init) {
-      var urlStr = (typeof resource === "string") ? resource : (resource && resource.url) || "";
-      if (urlStr.indexOf("RequestAgentStatePageUpdate") !== -1) {
-        var now = performance.now();
-        // 1. Guard against initial entry fetch storm (first 2 seconds of conversation load)
-        // 2. Minimum 1.5s cooldown between pagination fetches
-        if (now < (window.__agyInitialLoadUntil || 0) || (now - _lastPageUpdateReq < 1500)) {
-          // Return synthetic empty gRPC-Web response to satisfy caller without network storm
-          return Promise.resolve(new Response(new Uint8Array([0, 0, 0, 0, 0]), {
-            status: 200,
-            headers: {
-              "Content-Type": "application/grpc-web+proto",
-              "grpc-status": "0",
-              "grpc-message": ""
-            }
-          }));
-        }
-        _lastPageUpdateReq = now;
-      }
-      return _origFetch.apply(this, arguments);
-    };
-  }
-
-  function getTopSentinel(sc) {
-    if (!sc) return null;
-    return sc.querySelector('div.h-px.w-full[aria-hidden="true"]') ||
-           sc.querySelector('div.h-px.w-full:first-child');
-  }
-
-  function lockTopSentinel(sentinel) {
-    if (!sentinel) return;
-    // CRITICAL: NEVER use display:none! In W3C DOM spec, display:none returns bounding rect {0,0}.
-    // Antigravity virtualization Rqb() calculates: sentinel.bottom > viewport.top - 150 (0 > -102 === true),
-    // which causes endless 100ms fetch storms!
-    // Instead, offset sentinel coordinate to top: -2000px with visibility: hidden.
-    sentinel.style.setProperty("position", "absolute", "important");
-    sentinel.style.setProperty("top", "-2000px", "important");
-    sentinel.style.setProperty("visibility", "hidden", "important");
-    sentinel.style.setProperty("pointer-events", "none", "important");
-    sentinel.style.removeProperty("display");
-  }
-
-  function unlockTopSentinel(sentinel) {
-    if (!sentinel) return;
-    sentinel.style.removeProperty("position");
-    sentinel.style.removeProperty("top");
-    sentinel.style.removeProperty("visibility");
-    sentinel.style.removeProperty("pointer-events");
-    sentinel.style.removeProperty("display");
-  }
-
-  function updateTopScrollGuard() {
-    var sc = chatScroller();
-    if (!sc) return;
-
-    if (window.location.pathname !== currentConvoUrl) {
-      currentConvoUrl = window.location.pathname;
-      initialLoadGuardUntil = performance.now() + 2000;
-      window.__agyInitialLoadUntil = initialLoadGuardUntil;
-      topSentinelLockedUntil = 0;
-      lastScrollHeight = sc.scrollHeight;
-      lastScrollTop = sc.scrollTop;
-    }
-
-    var sentinel = getTopSentinel(sc);
-    if (!sentinel) return;
-
-    var now = performance.now();
-    var shouldLock = (now < initialLoadGuardUntil) || (now < topSentinelLockedUntil);
-
-    if (shouldLock) {
-      lockTopSentinel(sentinel);
-    } else {
-      unlockTopSentinel(sentinel);
-    }
-  }
+  var convoNavigatedAt = performance.now();
+  var userScrolledNearTop = false;
 
   function handleScrollerScroll() {
     var sc = chatScroller();
     if (!sc) return;
-
-    var curTop = sc.scrollTop;
-
-    // Once user has scrolled down past 50px, unlock the top sentinel
-    if (curTop >= 50 && topSentinelLockedUntil > 0) {
-      topSentinelLockedUntil = 0;
-      var sentinel = getTopSentinel(sc);
-      if (sentinel && performance.now() >= initialLoadGuardUntil) {
-        unlockTopSentinel(sentinel);
-      }
-    }
-
-    lastScrollTop = curTop;
+    lastScrollTop = sc.scrollTop;
     lastScrollHeight = sc.scrollHeight;
+    // Track if user actively scrolled near top (< 120px) after initial mount
+    if (sc.scrollTop <= 120 && performance.now() - convoNavigatedAt >= 2500) {
+      userScrolledNearTop = true;
+    } else if (sc.scrollTop > 150) {
+      userScrolledNearTop = false;
+    }
   }
 
   function handleScrollerMutation() {
     var sc = chatScroller();
     if (!sc) return;
 
+    if (window.location.pathname !== currentConvoUrl) {
+      currentConvoUrl = window.location.pathname;
+      convoNavigatedAt = performance.now();
+      userScrolledNearTop = false;
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+      return;
+    }
+
+    // Guard: During initial conversation load (first 2.5s), messages are being mounted.
+    // Never misinterpret initial message mount as a user-initiated prepend!
+    if (performance.now() - convoNavigatedAt < 2500) {
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+      return;
+    }
+
     var curHeight = sc.scrollHeight;
     var curTop = sc.scrollTop;
 
-    // Detect prepend: content expanded while at or near top
-    if (lastScrollHeight > 0 && curHeight > lastScrollHeight) {
+    // Detect prepend: content expanded while user was actively scrolled near top
+    if (userScrolledNearTop && lastScrollHeight > 0 && curHeight > lastScrollHeight) {
       var delta = curHeight - lastScrollHeight;
-      if (lastScrollTop <= 50 && delta >= 30) {
-        // Prepend detected: lock sentinel for 3s to stop cascading fetch storm
-        topSentinelLockedUntil = performance.now() + 3000;
-        var sentinel = getTopSentinel(sc);
-        if (sentinel) {
-          lockTopSentinel(sentinel);
-        }
-
-        // Programmatic scroll position restoration for mobile WebKit
+      if (lastScrollTop <= 100 && delta >= 30) {
+        // Prepend detected: anchor scroll position by adding delta
         var targetTop = lastScrollTop + delta;
         sc.scrollTop = targetTop;
         requestAnimationFrame(function () {
           sc.scrollTop = targetTop;
         });
         setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+          if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
         }, 50);
         setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+          if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
         }, 150);
         setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+          if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
         }, 300);
       }
     }
 
     lastScrollHeight = curHeight;
     lastScrollTop = curTop;
-    updateTopScrollGuard();
   }
 
   function attachScrollerGuard() {
@@ -1598,7 +1517,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       lastScrollTop = sc.scrollTop;
       sc.addEventListener("scroll", handleScrollerScroll, { passive: true });
     }
-    updateTopScrollGuard();
   }
 
   // Observe DOM for question modal or interaction card appearance and scroller updates
@@ -2377,7 +2295,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
 
     var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
-    var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
+    var hasMessages = convoView.querySelector('[data-turn-content], [data-testid="turn-content"], [data-testid="user-input-step"], .turn-content, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] > div > div');
 
     if (hasMessages) {
       // Conversation loaded successfully; reset reload retry circuit breaker

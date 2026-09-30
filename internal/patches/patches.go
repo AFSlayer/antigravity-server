@@ -234,7 +234,7 @@ func CacheKey(version string, opts Options) string {
 	if version != "" {
 		h.Write([]byte(version))
 	} else {
-		h.Write([]byte("v0.2.0"))
+		h.Write([]byte("v0.2.1-fix"))
 	}
 	h.Write([]byte{0})
 	h.Write([]byte(opts.WorkspaceRoot))
