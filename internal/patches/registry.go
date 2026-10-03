@@ -63,7 +63,7 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
-	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{var [a-zA-Z0-9_$]+=new URLSearchParams\(window\.location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true":[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2"\}`)
+	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true":[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2"\}`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -498,15 +498,17 @@ func All() []Patch {
 		// iOS Safari the default fetch streaming transport regularly stalls
 		// mid-response, which leaves the conversation list empty or the
 		// conversation spinner running forever. Make WebSocket the default and
-		// keep ?useWebSocket=false or ?wsTransport=1 as an escape hatch.
+		// keep ?useWebSocket=false as a per-page escape hatch. Operators can turn
+		// it off for everyone with --disable-patch websocket-transport-default.
+		// Not optional: if the selector disappears the iOS stalls come back, so
+		// doctor and the startup report must flag it as missing.
 		{
-			ID:       "websocket-transport-default",
-			Desc:     "Use the bundled WebSocket RPC transport by default instead of fetch streaming",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   websocketTransportDefaultRe,
-			Replace:  `${1}!=="1"}`,
+			ID:      "websocket-transport-default",
+			Desc:    "Use the bundled WebSocket RPC transport by default instead of fetch streaming",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  websocketTransportDefaultRe,
+			Replace: `${1}!=="1"}`,
 		},
 
 		{
@@ -2212,7 +2214,8 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   var MAX_RELOAD_ATTEMPTS = 3;
   var lastNetworkActivity = Date.now();
 
-  // Track network fetch activity including streaming response bodies so we never interrupt in-progress downloads
+  // Track fetch activity, including chunks read through response.body.getReader()
+  // as streaming RPC clients do, so we never interrupt in-progress downloads
   if (window.fetch && !window.__agyFetchActivityTracked) {
     window.__agyFetchActivityTracked = true;
     var _origFetchForWatchdog = window.fetch;
@@ -2252,23 +2255,27 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   }
 
   // The RPC transport may run over a single WebSocket instead of fetch, so
-  // count inbound frames as network activity too.
-  if (window.WebSocket && !window.__agyWsActivityTracked) {
+  // count inbound data frames as network activity too. The transport probes
+  // an idle socket with a ping; small liveness frames like the replies are
+  // skipped so a healthy socket with a stuck view still lets the watchdog fire.
+  if (window.WebSocket && window.Proxy && window.Reflect && !window.__agyWsActivityTracked) {
     window.__agyWsActivityTracked = true;
-    var _OrigWSForWatchdog = window.WebSocket;
-    var TrackedWebSocket = function (url, protocols) {
-      var ws = protocols === undefined ? new _OrigWSForWatchdog(url) : new _OrigWSForWatchdog(url, protocols);
+    var wsControlFrameRe = /"type"\s*:\s*"(?:ping|pong|heartbeat|keepalive)"/;
+    var onWsMessage = function (e) {
+      var d = e && e.data;
+      if (typeof d === "string" && d.length < 512 && wsControlFrameRe.test(d)) return;
       lastNetworkActivity = Date.now();
-      ws.addEventListener("message", function () { lastNetworkActivity = Date.now(); });
-      ws.addEventListener("open", function () { lastNetworkActivity = Date.now(); });
-      return ws;
     };
-    TrackedWebSocket.prototype = _OrigWSForWatchdog.prototype;
-    TrackedWebSocket.CONNECTING = 0;
-    TrackedWebSocket.OPEN = 1;
-    TrackedWebSocket.CLOSING = 2;
-    TrackedWebSocket.CLOSED = 3;
-    window.WebSocket = TrackedWebSocket;
+    var onWsOpen = function () { lastNetworkActivity = Date.now(); };
+    window.WebSocket = new Proxy(window.WebSocket, {
+      construct: function (target, args, newTarget) {
+        var ws = Reflect.construct(target, args, newTarget);
+        lastNetworkActivity = Date.now();
+        ws.addEventListener("message", onWsMessage);
+        ws.addEventListener("open", onWsOpen);
+        return ws;
+      }
+    });
   }
 
   function pingServer(onSuccess, onError, force) {
