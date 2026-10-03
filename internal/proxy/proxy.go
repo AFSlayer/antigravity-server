@@ -123,7 +123,7 @@ func (p *Proxy) Handler() http.Handler {
 		}
 
 		// Fast-path: Serve pre-warmed / cached main.js immediately from memory (0ms latency)
-		if r.URL.Path == "/main.js" && r.Method == http.MethodGet {
+		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			cached, tag := p.cachedBundle()
 			if cached != nil {
 				setBundleValidators(w.Header(), tag)
@@ -133,7 +133,9 @@ func (p *Proxy) Handler() http.Handler {
 				}
 				w.Header().Set("Content-Type", "application/javascript")
 				w.Header().Set("Content-Length", strconv.Itoa(len(cached)))
-				_, _ = w.Write(cached)
+				if r.Method == http.MethodGet {
+					_, _ = w.Write(cached)
+				}
 				return
 			}
 		}
@@ -397,13 +399,6 @@ func firstValue(v string) string {
 		v = v[:i]
 	}
 	return strings.TrimSpace(v)
-}
-
-func hostname(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		return h
-	}
-	return strings.Trim(hostport, "[]")
 }
 
 func isLoopbackName(host string) bool {

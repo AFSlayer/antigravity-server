@@ -447,8 +447,21 @@ func TestProxyHeadDoesNotPolluteMainJSCache(t *testing.T) {
 	if !strings.Contains(data, "window.location") {
 		t.Error("GET did not return expected patched bundle content")
 	}
-	if getResp.Header.Get("ETag") == `""` || getResp.Header.Get("ETag") == "" {
-		t.Error("GET returned empty ETag")
+	// Send a second HEAD request; it should be served from memory fast-path with identical headers and 0-byte body
+	reqFast, _ := http.NewRequest(http.MethodHead, front.URL+"/main.js?agy=k1", nil)
+	fastResp, err := http.DefaultClient.Do(reqFast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fastResp.Body.Close()
+	if fastResp.StatusCode != http.StatusOK {
+		t.Errorf("fast-path HEAD want 200, got %d", fastResp.StatusCode)
+	}
+	if fastResp.Header.Get("ETag") != getResp.Header.Get("ETag") {
+		t.Errorf("fast-path HEAD ETag mismatch: got %q, want %q", fastResp.Header.Get("ETag"), getResp.Header.Get("ETag"))
+	}
+	if b, _ := io.ReadAll(fastResp.Body); len(b) != 0 {
+		t.Errorf("fast-path HEAD must have 0-byte body, got %d bytes", len(b))
 	}
 }
 
