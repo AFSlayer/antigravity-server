@@ -63,6 +63,7 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
+	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{var [a-zA-Z0-9_$]+=new URLSearchParams\(window\.location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true":[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2"\}`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -491,6 +492,21 @@ func All() []Patch {
 			Enabled: func(Options) bool { return true },
 			FindRe:  autoscrollDistanceFixRe,
 			Replace: `return ${1}?(${1}.scrollHeight-${1}.clientHeight-${1}.scrollTop)<=${3}:!1`,
+		},
+		// The bundle ships a WebSocket transport that multiplexes every RPC over
+		// /connect-websocket, but only enables it behind ?useWebSocket=true. On
+		// iOS Safari the default fetch streaming transport regularly stalls
+		// mid-response, which leaves the conversation list empty or the
+		// conversation spinner running forever. Make WebSocket the default and
+		// keep ?useWebSocket=false or ?wsTransport=1 as an escape hatch.
+		{
+			ID:       "websocket-transport-default",
+			Desc:     "Use the bundled WebSocket RPC transport by default instead of fetch streaming",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   websocketTransportDefaultRe,
+			Replace:  `${1}!=="1"}`,
 		},
 
 		{
@@ -2196,7 +2212,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   var MAX_RELOAD_ATTEMPTS = 3;
   var lastNetworkActivity = Date.now();
 
-  // Track network fetch activity so we never interrupt in-progress downloads of large conversations/summaries
+  // Track network fetch activity including streaming response bodies so we never interrupt in-progress downloads
   if (window.fetch && !window.__agyFetchActivityTracked) {
     window.__agyFetchActivityTracked = true;
     var _origFetchForWatchdog = window.fetch;
@@ -2206,6 +2222,25 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
       if (p && p.then) {
         return p.then(function (res) {
           lastNetworkActivity = Date.now();
+          if (res && res.body && typeof res.body.getReader === "function") {
+            var _origGetReader = res.body.getReader.bind(res.body);
+            res.body.getReader = function () {
+              var reader = _origGetReader.apply(this, arguments);
+              if (reader && typeof reader.read === "function") {
+                var _origRead = reader.read.bind(reader);
+                reader.read = function () {
+                  return _origRead.apply(this, arguments).then(function (chunk) {
+                    lastNetworkActivity = Date.now();
+                    return chunk;
+                  }, function (err) {
+                    lastNetworkActivity = Date.now();
+                    throw err;
+                  });
+                };
+              }
+              return reader;
+            };
+          }
           return res;
         }, function (err) {
           lastNetworkActivity = Date.now();
@@ -2214,6 +2249,26 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
       }
       return p;
     };
+  }
+
+  // The RPC transport may run over a single WebSocket instead of fetch, so
+  // count inbound frames as network activity too.
+  if (window.WebSocket && !window.__agyWsActivityTracked) {
+    window.__agyWsActivityTracked = true;
+    var _OrigWSForWatchdog = window.WebSocket;
+    var TrackedWebSocket = function (url, protocols) {
+      var ws = protocols === undefined ? new _OrigWSForWatchdog(url) : new _OrigWSForWatchdog(url, protocols);
+      lastNetworkActivity = Date.now();
+      ws.addEventListener("message", function () { lastNetworkActivity = Date.now(); });
+      ws.addEventListener("open", function () { lastNetworkActivity = Date.now(); });
+      return ws;
+    };
+    TrackedWebSocket.prototype = _OrigWSForWatchdog.prototype;
+    TrackedWebSocket.CONNECTING = 0;
+    TrackedWebSocket.OPEN = 1;
+    TrackedWebSocket.CLOSING = 2;
+    TrackedWebSocket.CLOSED = 3;
+    window.WebSocket = TrackedWebSocket;
   }
 
   function pingServer(onSuccess, onError, force) {

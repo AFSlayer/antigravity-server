@@ -78,6 +78,7 @@ var regexpFixtures = map[string]string{
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,
 }
 
 func fullOptions() Options {
@@ -157,6 +158,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+		`return b!==null?b==="true":a.get("wsTransport")!=="1"}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {

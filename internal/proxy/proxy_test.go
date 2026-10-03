@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bufio"
 	"compress/gzip"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -204,6 +206,72 @@ func TestProxyCachesKeyedBundleAndNotHTML(t *testing.T) {
 	html := get(t, front.URL, "/", "text/html")
 	if html.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("HTML must not be cached, got %q", html.Header.Get("Cache-Control"))
+	}
+}
+
+// The bundle's WebSocket RPC transport connects to /connect-websocket, and the
+// language server rejects the upgrade unless Origin is its own loopback
+// address. The proxy must pass the upgrade through with Origin rewritten.
+func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/connect-websocket" || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			http.NotFound(w, r)
+			return
+		}
+		origin, err := url.Parse(r.Header.Get("Origin"))
+		if err != nil || origin.Hostname() != "127.0.0.1" {
+			http.Error(w, "bad origin", http.StatusForbidden)
+			return
+		}
+		conn, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = rw.Flush()
+		line, err := rw.ReadString('\n')
+		if err != nil {
+			return
+		}
+		_, _ = rw.WriteString("echo:" + line)
+		_ = rw.Flush()
+	}))
+	t.Cleanup(ls.Close)
+
+	front, _ := newTestProxy(t, ls)
+
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	_, _ = io.WriteString(conn, "GET /connect-websocket HTTP/1.1\r\n"+
+		"Host: agy.example.com\r\n"+
+		"Origin: https://agy.example.com\r\n"+
+		"Upgrade: websocket\r\n"+
+		"Connection: Upgrade\r\n"+
+		"Sec-WebSocket-Version: 13\r\n"+
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("want 101 Switching Protocols, got %d", resp.StatusCode)
+	}
+
+	_, _ = io.WriteString(conn, "ping\n")
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "echo:ping\n" {
+		t.Errorf("upgraded connection did not relay data, got %q", line)
 	}
 }
 
