@@ -151,7 +151,7 @@ Antigravity ServerはPWA（Progressive Web App）規格をサポートしてい�
 - **gRPC-Webプロトコル変換**: アップストリーム一時切断時に502 HTMLではなく標準`grpc-status: 14` (Unavailable)を返却し、フロントエンドの状態購読ストリームがブラウザのリロードなしで即座に自動復帰。
 - **再接続後の切断警告バナー自動解除**: サーバー再接続完了後、コンポーザー下部に残存する「Lost connection」警告バナーを即座に検知して自動消去。
 - **読み込みスピナー停止自動復帰**: モバイルWebKitのHTTP/2ストリーム遅延により、fetchとWebSocketの通信がどちらも止まったままスピナーが30秒以上継続した場合、クライアントウォッチドッグが自動的に接続を再読み込みして復帰。
-- **WebSocket RPCトランスポート**: すべてのRPCをfetchストリーミングではなく、バンドルに元から含まれる`/connect-websocket`の単一接続でやり取りします。iOS Safariではfetchストリームの応答が途中で止まることが多く、会話一覧が空のままになったり会話のスピナーが回り続けたりしていました。`?useWebSocket=false`を付けて開くとfetchストリーミングに戻ります。
+- **WebSocket RPCトランスポート**: すべてのRPCをfetchストリーミングではなく、バンドルに元から含まれる`/connect-websocket`の単一接続でやり取りします。iOS Safariではfetchストリームの応答が途中で止まることが多く、会話一覧が空のままになったり会話のスピナーが回り続けたりしていました。自動でfetchに戻ることはありません。すべてのクライアントで無効にするには、サーバーを`--disable-patch websocket-transport-default`で起動するか`AGY_DISABLE_PATCHES=websocket-transport-default`を設定します。一度だけfetchで開くには`?useWebSocket=false`を付けます。
 
 ---
 
@@ -165,7 +165,7 @@ Antigravity ServerはPWA（Progressive Web App）規格をサポートしてい�
 
 ## 本番リバースプロキシ設定（Caddy / Nginx）
 
-エージェントのリアルタイムストリーミング応答（SSE）およびWebSocket通信、大容量アップロードのため、プロキシの**バッファリング無効化**と**WebSocketアップグレード**設定が必要です。すべてのRPCが`/connect-websocket`を通るため、アップグレードを通さないとUIが読み込まれません：
+エージェントのリアルタイムストリーミング応答（SSE）およびWebSocket通信、大容量アップロードのため、プロキシの**バッファリング無効化**と**WebSocketアップグレード**設定が必要です。すべてのRPCが`/connect-websocket`を通るため、アップグレードを通さないとUIが読み込まれません。`agy-server`は`Origin`が転送された`Host`または`X-Forwarded-Host`と一致しないWebSocketハンドシェイクを拒否するので、このヘッダーはそのまま渡してください。アップグレードを有効にできない環境では、サーバーを`--disable-patch websocket-transport-default`で起動します：
 
 ### Caddy
 ```caddyfile

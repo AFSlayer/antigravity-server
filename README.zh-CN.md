@@ -151,7 +151,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - **gRPC-Web 协议转换**：在后端暂时不可用期间返回标准 `grpc-status: 14`（Unavailable）而非 HTTP 502 HTML，保障前端原生状态流在服务就绪后数秒内自动恢复，无需手动刷新网页。
 - **重连后断开警告横幅自动关闭**：服务器重新连接成功后，自动检测并关闭输入框下方残留的“Lost connection”警告横幅。
 - **加载转圈卡死自动恢复**：针对移动端 WebKit 在 HTTP/2 复用流上的挂起现象，若 fetch 与 WebSocket 均无流量且加载超过 30 秒，客户端看门狗将自动安全刷新恢复连接。
-- **WebSocket RPC 传输**：所有 RPC 不再走 fetch 流式传输，而是通过资源包自带的 `/connect-websocket` 单一连接收发。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。打开页面时加上 `?useWebSocket=false` 即可退回 fetch 流式传输。
+- **WebSocket RPC 传输**：所有 RPC 不再走 fetch 流式传输，而是通过资源包自带的 `/connect-websocket` 单一连接收发。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。不会自动退回 fetch。如需对所有客户端关闭，请以 `--disable-patch websocket-transport-default` 启动服务器，或设置 `AGY_DISABLE_PATCHES=websocket-transport-default`。只想单次使用 fetch 时，打开页面加上 `?useWebSocket=false`。
 
 ---
 
@@ -165,7 +165,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 
 ## 生产环境反向代理配置（Caddy / Nginx）
 
-为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**。所有 RPC 都经由 `/connect-websocket`，未放行升级请求时界面无法加载：
+为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**。所有 RPC 都经由 `/connect-websocket`，未放行升级请求时界面无法加载。`agy-server` 会拒绝 `Origin` 与转发的 `Host` 或 `X-Forwarded-Host` 不一致的 WebSocket 握手，请原样转发该请求头。若无法启用升级，请以 `--disable-patch websocket-transport-default` 启动服务器：
 
 ### Caddy
 ```caddyfile

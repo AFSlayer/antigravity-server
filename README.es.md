@@ -151,7 +151,7 @@ Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de s
 - **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
 - **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
 - **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión tras 30 segundos sin tráfico fetch ni WebSocket, evitando spinners infinitos sin interrumpir descargas pesadas.
-- **Transporte RPC por WebSocket**: Envía todas las RPC por la única conexión `/connect-websocket` que el paquete ya incluye, en lugar de usar streaming con fetch. iOS Safari detiene a menudo los flujos fetch a mitad de respuesta, lo que dejaba vacía la lista de conversaciones o un spinner girando sin fin. Abre la página con `?useWebSocket=false` para volver al streaming con fetch.
+- **Transporte RPC por WebSocket**: Envía todas las RPC por la única conexión `/connect-websocket` que el paquete ya incluye, en lugar de usar streaming con fetch. iOS Safari detiene a menudo los flujos fetch a mitad de respuesta, lo que dejaba vacía la lista de conversaciones o un spinner girando sin fin. No hay vuelta automática a fetch. Para desactivarlo en todos los clientes, inicia el servidor con `--disable-patch websocket-transport-default` o define `AGY_DISABLE_PATCHES=websocket-transport-default`. Para una sola carga, abre la página con `?useWebSocket=false`.
 
 ---
 
@@ -165,7 +165,7 @@ Gestione las instrucciones de su agente (`~/.gemini/GEMINI.md`, `~/.gemini/confi
 
 ## Configuración de Proxy Inverso (Caddy / Nginx)
 
-Para permitir streaming en tiempo real (SSE), WebSockets y subidas pesadas, desactiva el almacenamiento en búfer y deja pasar las actualizaciones a WebSocket. Todas las RPC viajan por `/connect-websocket`, así que sin ellas la interfaz no carga:
+Para permitir streaming en tiempo real (SSE), WebSockets y subidas pesadas, desactiva el almacenamiento en búfer y deja pasar las actualizaciones a WebSocket. Todas las RPC viajan por `/connect-websocket`, así que sin ellas la interfaz no carga. `agy-server` rechaza los handshakes WebSocket cuyo `Origin` no coincide con el `Host` o `X-Forwarded-Host` reenviado, así que conserva esa cabecera. Si no puedes habilitar las actualizaciones, inicia el servidor con `--disable-patch websocket-transport-default`:
 
 ### Caddy
 ```caddyfile
