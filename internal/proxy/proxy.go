@@ -9,9 +9,12 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -44,6 +47,7 @@ type Proxy struct {
 	lastActivityNs atomic.Int64
 	mainJSMu       sync.RWMutex
 	cachedMainJS   []byte
+	cachedMainTag  string
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -87,6 +91,10 @@ func New(opts Options) (*Proxy, error) {
 
 		if wantsPatch(req) {
 			req.Header.Del("Accept-Encoding")
+			// The browser's validators describe the patched bytes, not the
+			// upstream ones, so always fetch a full body to patch.
+			req.Header.Del("If-None-Match")
+			req.Header.Del("If-Modified-Since")
 		}
 	}
 
@@ -107,15 +115,22 @@ func (p *Proxy) Handler() http.Handler {
 			p.touchActivity()
 		}()
 
+		if isWebSocketUpgrade(r) && !sameOriginUpgrade(r) {
+			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
+			return
+		}
+
 		// Fast-path: Serve pre-warmed / cached main.js immediately from memory (0ms latency)
 		if r.URL.Path == "/main.js" && r.Method == http.MethodGet {
-			p.mainJSMu.RLock()
-			cached := p.cachedMainJS
-			p.mainJSMu.RUnlock()
+			cached, tag := p.cachedBundle()
 			if cached != nil {
+				setBundleValidators(w.Header(), tag)
+				if etagMatches(r.Header.Get("If-None-Match"), tag) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
 				w.Header().Set("Content-Type", "application/javascript")
 				w.Header().Set("Content-Length", strconv.Itoa(len(cached)))
-				w.Header().Set("Cache-Control", p.mainJSCacheControl(r))
 				_, _ = w.Write(cached)
 				return
 			}
@@ -212,16 +227,14 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 
 	if target == patches.MainJS {
-		p.mainJSMu.RLock()
-		cached := p.cachedMainJS
-		p.mainJSMu.RUnlock()
+		cached, tag := p.cachedBundle()
 		if cached != nil {
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(cached))
 			resp.ContentLength = int64(len(cached))
 			resp.Header.Set("Content-Length", strconv.Itoa(len(cached)))
 			resp.Header.Set("Content-Type", "application/javascript")
-			resp.Header.Set("Cache-Control", p.mainJSCacheControl(resp.Request))
+			setBundleValidators(resp.Header, tag)
 			return nil
 		}
 	}
@@ -235,9 +248,12 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	patched, report := patches.Apply(target, body, p.opts.Patch)
 	p.report(target, report)
 
+	var tag string
 	if target == patches.MainJS {
+		tag = bundleETag(patched)
 		p.mainJSMu.Lock()
 		p.cachedMainJS = patched
+		p.cachedMainTag = tag
 		p.mainJSMu.Unlock()
 	}
 
@@ -247,21 +263,115 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
+		resp.Header.Del("ETag")
+		resp.Header.Del("Last-Modified")
 	} else {
-		resp.Header.Set("Cache-Control", p.mainJSCacheControl(resp.Request))
+		setBundleValidators(resp.Header, tag)
 	}
 
 	return nil
 }
 
-// mainJSCacheControl lets browsers keep the multi-megabyte bundle only when the
-// URL carries the current patch-set fingerprint. The fingerprint changes with
-// the version and every patch replacement, so a stale copy is never reused.
-func (p *Proxy) mainJSCacheControl(r *http.Request) string {
-	if key := r.URL.Query().Get("agy"); key != "" && key == p.opts.Patch.CacheKey {
-		return "public, max-age=31536000, immutable"
+func (p *Proxy) cachedBundle() ([]byte, string) {
+	p.mainJSMu.RLock()
+	defer p.mainJSMu.RUnlock()
+	return p.cachedMainJS, p.cachedMainTag
+}
+
+// bundleCacheControl makes browsers revalidate the patched bundle on every
+// load. A matching ETag costs a 304 instead of the multi-megabyte body, and
+// because the tag is derived from the patched bytes, a language server update
+// or a patch change is picked up immediately. private keeps shared caches and
+// CDNs from storing a bundle that is only served behind authentication.
+const bundleCacheControl = "private, no-cache"
+
+func bundleETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+func setBundleValidators(h http.Header, tag string) {
+	h.Set("Cache-Control", bundleCacheControl)
+	h.Set("ETag", tag)
+	h.Del("Last-Modified")
+}
+
+// etagMatches compares If-None-Match against the bundle tag. Weak tags are
+// accepted because compressing proxies such as nginx and Cloudflare weaken
+// the ETag they pass on.
+func etagMatches(header, tag string) bool {
+	if header == "" || tag == "" {
+		return false
 	}
-	return "no-store"
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimPrefix(strings.TrimSpace(part), "W/")
+		if part == "*" || part == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// sameOriginUpgrade rejects cross-origin WebSocket handshakes. The Director
+// rewrites Origin to the loopback target, which disables the language
+// server's own Origin check, and browsers apply no CORS to WebSockets, so a
+// page on another subdomain of the same site could otherwise open an
+// authenticated RPC socket with the session cookie.
+//
+// When the reverse proxy forwards neither Host nor X-Forwarded-Host, only
+// loopback names are left to compare against; the check is skipped then
+// rather than breaking every handshake.
+func sameOriginUpgrade(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	want := u.Hostname()
+
+	verifiable := false
+	for _, h := range []string{r.Host, firstValue(r.Header.Get("X-Forwarded-Host"))} {
+		host := hostname(h)
+		if host == "" {
+			continue
+		}
+		if strings.EqualFold(host, want) {
+			return true
+		}
+		if !isLoopbackName(host) {
+			verifiable = true
+		}
+	}
+	return !verifiable
+}
+
+func firstValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func hostname(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+func isLoopbackName(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {

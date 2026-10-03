@@ -112,6 +112,23 @@ func get(t *testing.T, base, path, accept string) *http.Response {
 	return resp
 }
 
+func getWithHeader(t *testing.T, base, path, key, value string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, base+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(key, value)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 func body(t *testing.T, resp *http.Response) string {
 	t.Helper()
 
@@ -190,29 +207,38 @@ func TestProxySkipsEncodedBodies(t *testing.T) {
 	}
 }
 
-func TestProxyCachesKeyedBundleAndNotHTML(t *testing.T) {
+func TestProxyRevalidatesBundleWithETagAndNeverCachesHTML(t *testing.T) {
 	front, _ := newTestProxy(t, upstream(t))
 
-	keyed := get(t, front.URL, "/main.js?agy=k1", "")
-	if !strings.Contains(keyed.Header.Get("Cache-Control"), "immutable") {
-		t.Errorf("keyed bundle should be cacheable, got %q", keyed.Header.Get("Cache-Control"))
+	first := get(t, front.URL, "/main.js?agy=k1", "")
+	tag := first.Header.Get("ETag")
+	if tag == "" {
+		t.Fatal("bundle response must carry an ETag")
+	}
+	if got := first.Header.Get("Cache-Control"); got != "private, no-cache" {
+		t.Errorf("bundle must be revalidated and kept out of shared caches, got %q", got)
 	}
 
 	// The second request is served from the in-memory copy and must keep the
-	// same caching policy, otherwise every page load re-downloads the bundle.
+	// same tag and policy.
 	again := get(t, front.URL, "/main.js?agy=k1", "")
-	if !strings.Contains(again.Header.Get("Cache-Control"), "immutable") {
-		t.Errorf("cached keyed bundle should stay cacheable, got %q", again.Header.Get("Cache-Control"))
+	if again.Header.Get("ETag") != tag || again.Header.Get("Cache-Control") != "private, no-cache" {
+		t.Errorf("cached bundle changed validators: etag %q, cache-control %q", again.Header.Get("ETag"), again.Header.Get("Cache-Control"))
 	}
 
-	stale := get(t, front.URL, "/main.js?agy=old", "")
-	if stale.Header.Get("Cache-Control") != "no-store" {
-		t.Errorf("bundle with a stale key must not be cached, got %q", stale.Header.Get("Cache-Control"))
+	for _, inm := range []string{tag, "W/" + tag, `"other", ` + tag} {
+		resp := getWithHeader(t, front.URL, "/main.js?agy=k1", "If-None-Match", inm)
+		if resp.StatusCode != http.StatusNotModified {
+			t.Errorf("If-None-Match %s: want 304, got %d", inm, resp.StatusCode)
+		}
+		if n := len(body(t, resp)); n != 0 {
+			t.Errorf("If-None-Match %s: 304 must not carry a body, got %d bytes", inm, n)
+		}
 	}
 
-	unkeyed := get(t, front.URL, "/main.js", "")
-	if unkeyed.Header.Get("Cache-Control") != "no-store" {
-		t.Errorf("unkeyed bundle must not be cached, got %q", unkeyed.Header.Get("Cache-Control"))
+	stale := getWithHeader(t, front.URL, "/main.js?agy=k1", "If-None-Match", `"stale"`)
+	if stale.StatusCode != http.StatusOK || len(body(t, stale)) == 0 {
+		t.Errorf("stale ETag must get the full patched bundle, got %d", stale.StatusCode)
 	}
 
 	html := get(t, front.URL, "/", "text/html")
@@ -221,10 +247,46 @@ func TestProxyCachesKeyedBundleAndNotHTML(t *testing.T) {
 	}
 }
 
-// The bundle's WebSocket RPC transport connects to /connect-websocket, and the
-// language server rejects the upgrade unless Origin is its own loopback
-// address. The proxy must pass the upgrade through with Origin rewritten.
-func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
+// Browsers send the bundle's ETag back, but upstream never saw those bytes.
+// Forwarding the validator could earn a 304 with nothing to patch.
+func TestProxyStripsValidatorsBeforeFetchingBundle(t *testing.T) {
+	var sawINM, sawIMS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		sawINM = r.Header.Get("If-None-Match")
+		sawIMS = r.Header.Get("If-Modified-Since")
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("ETag", `"upstream"`)
+		w.Header().Set("Last-Modified", "Mon, 01 Jan 2024 00:00:00 GMT")
+		_, _ = w.Write([]byte(stubBundle))
+	})
+	ls := httptest.NewTLSServer(mux)
+	t.Cleanup(ls.Close)
+	front, _ := newTestProxy(t, ls)
+
+	req, _ := http.NewRequest(http.MethodGet, front.URL+"/main.js?agy=k1", nil)
+	req.Header.Set("If-None-Match", `"from-browser"`)
+	req.Header.Set("If-Modified-Since", "Mon, 01 Jan 2024 00:00:00 GMT")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if sawINM != "" || sawIMS != "" {
+		t.Errorf("validators reached upstream: If-None-Match %q, If-Modified-Since %q", sawINM, sawIMS)
+	}
+	if resp.Header.Get("ETag") == `"upstream"` || resp.Header.Get("Last-Modified") != "" {
+		t.Errorf("upstream validators leaked onto the patched bundle: etag %q, last-modified %q", resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"))
+	}
+}
+
+// wsUpstream mimics the language server's /connect-websocket endpoint: it
+// refuses the upgrade unless Origin is its own loopback address, then echoes
+// one line back over the hijacked connection.
+func wsUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+
 	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/connect-websocket" || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			http.NotFound(w, r)
@@ -250,29 +312,48 @@ func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
 		_ = rw.Flush()
 	}))
 	t.Cleanup(ls.Close)
+	return ls
+}
 
-	front, _ := newTestProxy(t, ls)
+// wsHandshake sends a raw upgrade request so the test controls Host and
+// Origin exactly as a browser behind a reverse proxy would send them.
+func wsHandshake(t *testing.T, front *httptest.Server, host, origin string, extra ...string) (*http.Response, net.Conn, *bufio.Reader) {
+	t.Helper()
 
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	_, _ = io.WriteString(conn, "GET /connect-websocket HTTP/1.1\r\n"+
-		"Host: agy.example.com\r\n"+
-		"Origin: https://agy.example.com\r\n"+
-		"Upgrade: websocket\r\n"+
-		"Connection: Upgrade\r\n"+
-		"Sec-WebSocket-Version: 13\r\n"+
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+	req := "GET /connect-websocket HTTP/1.1\r\n" +
+		"Host: " + host + "\r\n" +
+		"Origin: " + origin + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+	for _, h := range extra {
+		req += h + "\r\n"
+	}
+	_, _ = io.WriteString(conn, req+"\r\n")
 
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return resp, conn, br
+}
+
+// The bundle's WebSocket RPC transport connects to /connect-websocket, and the
+// language server rejects the upgrade unless Origin is its own loopback
+// address. The proxy must pass the upgrade through with Origin rewritten.
+func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+
+	resp, conn, br := wsHandshake(t, front, "agy.example.com", "https://agy.example.com")
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("want 101 Switching Protocols, got %d", resp.StatusCode)
 	}
@@ -284,6 +365,34 @@ func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
 	}
 	if line != "echo:ping\n" {
 		t.Errorf("upgraded connection did not relay data, got %q", line)
+	}
+}
+
+func TestProxyWebSocketOriginCheck(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+
+	cases := []struct {
+		name   string
+		host   string
+		origin string
+		extra  []string
+		want   int
+	}{
+		{"same host", "agy.example.com", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
+		{"same host on another port", "agy.example.com", "https://agy.example.com:8443", nil, http.StatusSwitchingProtocols},
+		{"forwarded host", "127.0.0.1:8765", "https://agy.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusSwitchingProtocols},
+		{"proxy forwards no host", "127.0.0.1:8765", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
+		{"sibling subdomain", "agy.example.com", "https://evil.example.com", nil, http.StatusForbidden},
+		{"sibling behind proxy", "127.0.0.1:8765", "https://evil.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusForbidden},
+		{"opaque origin", "agy.example.com", "null", nil, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, _, _ := wsHandshake(t, front, tc.host, tc.origin, tc.extra...)
+			if resp.StatusCode != tc.want {
+				t.Errorf("want %d, got %d", tc.want, resp.StatusCode)
+			}
+		})
 	}
 }
 
