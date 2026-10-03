@@ -115,6 +115,7 @@ func (r *runner) start() error {
 	p, err := proxy.New(proxy.Options{
 		TargetPort:      instance.Port,
 		TargetCSRFToken: instance.CSRFToken,
+		PublicURL:       r.cfg.PublicURL,
 		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)

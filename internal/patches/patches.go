@@ -227,8 +227,9 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 }
 
 // CacheKey derives a short, stable fingerprint of the applied patch set. It is
-// appended to the /main.js URL so browsers may cache the 9 MB bundle
-// aggressively, yet re-fetch it the moment the patches or version change.
+// appended to the /main.js URL so the bundle URL changes the moment the patches
+// or version change. It does not cover language server updates; the proxy's
+// ETag revalidation is what keeps browsers from running a stale bundle.
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()
 	if version != "" {

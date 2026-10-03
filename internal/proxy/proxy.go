@@ -9,9 +9,13 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -31,6 +35,7 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
+	PublicURL       string
 	Patch           patches.Options
 	OnReport        ReportFunc
 }
@@ -44,6 +49,7 @@ type Proxy struct {
 	lastActivityNs atomic.Int64
 	mainJSMu       sync.RWMutex
 	cachedMainJS   []byte
+	cachedMainTag  string
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -87,6 +93,10 @@ func New(opts Options) (*Proxy, error) {
 
 		if wantsPatch(req) {
 			req.Header.Del("Accept-Encoding")
+			// The browser's validators describe the patched bytes, not the
+			// upstream ones, so always fetch a full body to patch.
+			req.Header.Del("If-None-Match")
+			req.Header.Del("If-Modified-Since")
 		}
 	}
 
@@ -107,20 +117,25 @@ func (p *Proxy) Handler() http.Handler {
 			p.touchActivity()
 		}()
 
+		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
+			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
+			return
+		}
+
 		// Fast-path: Serve pre-warmed / cached main.js immediately from memory (0ms latency)
-		if r.URL.Path == "/main.js" && r.Method == http.MethodGet {
-			p.mainJSMu.RLock()
-			cached := p.cachedMainJS
-			p.mainJSMu.RUnlock()
+		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			cached, tag := p.cachedBundle()
 			if cached != nil {
+				setBundleValidators(w.Header(), tag)
+				if etagMatches(r.Header.Get("If-None-Match"), tag) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
 				w.Header().Set("Content-Type", "application/javascript")
 				w.Header().Set("Content-Length", strconv.Itoa(len(cached)))
-				if r.URL.Query().Get("agy") != "" {
-					w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-				} else {
-					w.Header().Set("Cache-Control", "no-store")
+				if r.Method == http.MethodGet {
+					_, _ = w.Write(cached)
 				}
-				_, _ = w.Write(cached)
 				return
 			}
 		}
@@ -216,20 +231,14 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 
 	if target == patches.MainJS {
-		p.mainJSMu.RLock()
-		cached := p.cachedMainJS
-		p.mainJSMu.RUnlock()
+		cached, tag := p.cachedBundle()
 		if cached != nil {
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(cached))
 			resp.ContentLength = int64(len(cached))
 			resp.Header.Set("Content-Length", strconv.Itoa(len(cached)))
 			resp.Header.Set("Content-Type", "application/javascript")
-			if resp.Request.URL.Query().Get("agy") != "" {
-				resp.Header.Set("Cache-Control", "no-cache, must-revalidate")
-			} else {
-				resp.Header.Set("Cache-Control", "no-store")
-			}
+			setBundleValidators(resp.Header, tag)
 			return nil
 		}
 	}
@@ -243,10 +252,15 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	patched, report := patches.Apply(target, body, p.opts.Patch)
 	p.report(target, report)
 
+	var tag string
 	if target == patches.MainJS {
-		p.mainJSMu.Lock()
-		p.cachedMainJS = patched
-		p.mainJSMu.Unlock()
+		tag = bundleETag(patched)
+		if resp.Request != nil && resp.Request.Method == http.MethodGet && len(body) > 0 {
+			p.mainJSMu.Lock()
+			p.cachedMainJS = patched
+			p.cachedMainTag = tag
+			p.mainJSMu.Unlock()
+		}
 	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(patched))
@@ -255,13 +269,144 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
-	} else if resp.Request.URL.Query().Get("agy") != "" {
-		resp.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
+		resp.Header.Del("ETag")
+		resp.Header.Del("Last-Modified")
 	} else {
-		resp.Header.Set("Cache-Control", "no-store")
+		setBundleValidators(resp.Header, tag)
 	}
 
 	return nil
+}
+
+func (p *Proxy) cachedBundle() ([]byte, string) {
+	p.mainJSMu.RLock()
+	defer p.mainJSMu.RUnlock()
+	return p.cachedMainJS, p.cachedMainTag
+}
+
+// bundleCacheControl makes browsers revalidate the patched bundle on every
+// load. A matching ETag costs a 304 instead of the multi-megabyte body. Because
+// the tag is derived from the patched bytes, when language_server updates or
+// patches change, browsers pick up the new bundle on revalidation.
+// private keeps shared caches and CDNs from storing a bundle that is only
+// served behind authentication and embeds workspace paths.
+const bundleCacheControl = "private, no-cache"
+
+func bundleETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+func setBundleValidators(h http.Header, tag string) {
+	h.Set("Cache-Control", bundleCacheControl)
+	h.Set("ETag", tag)
+	h.Del("Last-Modified")
+}
+
+// etagMatches compares If-None-Match against the bundle tag. Weak tags are
+// accepted because compressing proxies such as nginx and Cloudflare weaken
+// the ETag they pass on.
+func etagMatches(header, tag string) bool {
+	if header == "" || tag == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimPrefix(strings.TrimSpace(part), "W/")
+		if part == "*" || part == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// sameOriginUpgrade rejects cross-origin WebSocket handshakes. The Director
+// rewrites Origin to the loopback target, which disables the language
+// server's own Origin check, and browsers apply no CORS to WebSockets, so a
+// page on another subdomain or another port of the same host could otherwise
+// open an authenticated RPC socket with the session cookie.
+//
+// When the reverse proxy forwards neither Host nor X-Forwarded-Host, only
+// loopback names are left to compare against; the check is skipped with a
+// warning rather than breaking every handshake.
+func (p *Proxy) sameOriginUpgrade(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		log.Printf("[proxy] rejecting WebSocket upgrade: malformed Origin %q", origin)
+		return false
+	}
+	originHost := u.Hostname()
+	originPort := u.Port()
+	if originPort == "" {
+		if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+			originPort = "443"
+		} else if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "ws") {
+			originPort = "80"
+		}
+	}
+
+	candidates := []string{
+		r.Host,
+		firstValue(r.Header.Get("X-Forwarded-Host")),
+	}
+	if p.opts.PublicURL != "" {
+		if pu, err := url.Parse(p.opts.PublicURL); err == nil && pu.Host != "" {
+			candidates = append(candidates, pu.Host)
+		}
+	}
+
+	verifiable := false
+	for _, h := range candidates {
+		candHost, candPort := splitHostMaybePort(h)
+		if candHost == "" {
+			continue
+		}
+		if strings.EqualFold(candHost, originHost) {
+			if candPort == "" || candPort == originPort {
+				return true
+			}
+		}
+		if !isLoopbackName(candHost) {
+			verifiable = true
+		}
+	}
+
+	if !verifiable {
+		log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
+		return true
+	}
+
+	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q does not match Host=%q or X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Host, r.Header.Get("X-Forwarded-Host"))
+	return false
+}
+
+func splitHostMaybePort(hostport string) (string, string) {
+	if h, port, err := net.SplitHostPort(hostport); err == nil {
+		return h, port
+	}
+	return strings.Trim(hostport, "[]"), ""
+}
+
+func firstValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func isLoopbackName(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {

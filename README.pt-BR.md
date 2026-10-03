@@ -150,7 +150,8 @@ Quando o servidor de linguagem reinicia (durante atualizações ou reinícios de
 - **Token CSRF Persistente**: Mantém o mesmo token de autenticação após reinícios, evitando rejeições de sessões ativas.
 - **Tradução de Protocolo gRPC-Web**: Converte falhas transitórias em `grpc-status: 14` (Unavailable) em vez de erro HTTP 502 HTML, permitindo que o fluxo de estado nativo do Antigravity se reconecte automaticamente em segundos sem recarregar a aba do navegador.
 - **Fechamento Automático de Banners de Desconexão**: Oculta automaticamente o aviso "Lost connection" assim que a comunicação ativa com o servidor for restabelecida.
-- **Guardião contra Travamento do Spinner**: Detecta se o WebKit mobile trava em streams HTTP/2 multiplexados e recupera a conexão após 30 segundos com rede inativa, evitando spinners infinitos sem interromper downloads pesados.
+- **Guardião contra Travamento do Spinner**: Detecta se o WebKit mobile trava em streams HTTP/2 multiplexados e recupera a conexão após 30 segundos sem tráfego fetch nem WebSocket, evitando spinners infinitos sem interromper downloads pesados.
+- **Transporte RPC por WebSocket**: Envia as RPCs de conversa e Cascade pela conexão `/connect-websocket` que o pacote já traz, em vez de usar streaming com fetch. O iOS Safari costuma parar streams fetch no meio da resposta, o que deixava a lista de conversas vazia ou um spinner girando sem fim. Não há retorno automático ao fetch. Para desativar em todos os clientes, inicie o servidor com `--disable-patch websocket-transport-default` ou defina `AGY_DISABLE_PATCHES=websocket-transport-default`. Para um único carregamento, abra a página com `?useWebSocket=false`.
 
 ---
 
@@ -164,7 +165,7 @@ Gerencie as instruções do seu agente (`~/.gemini/GEMINI.md`, `~/.gemini/config
 
 ## Configuração de Proxy Reverso (Caddy / Nginx)
 
-Para habilitar streaming em tempo real (SSE), WebSockets e uploads grandes, desative o buffer do proxy:
+Para habilitar streaming em tempo real (SSE), WebSockets e uploads grandes, desative o buffer do proxy e repasse os upgrades de WebSocket. As RPCs principais de conversa da interface web passam por `/connect-websocket`, portanto o proxy reverso deve permitir os upgrades de WebSocket. O `agy-server` rejeita handshakes WebSocket cujo `Origin` não corresponde ao `Host` ou `X-Forwarded-Host` repassado, então mantenha esse cabeçalho. Se não for possível habilitar os upgrades, inicie o servidor com `--disable-patch websocket-transport-default`:
 
 ### Caddy
 ```caddyfile
@@ -211,7 +212,7 @@ server {
 
 ## Patches de Experiência Mobile (UX)
 
-O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 45 patches, sendo 25 dedicados a dispositivos móveis/toque e os demais responsáveis por uploads, navegação, autenticação e invalidação de cache. Amostra de patches:
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 51 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
 
 | Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
 | :--- | :--- | :--- |
@@ -221,7 +222,7 @@ O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo
 | **Teclado Virtual e Rolagem** | Viewport oscila e deixa vãos no iOS Safari; rolagem para o topo em conversas longas gera tempestade de requisições | Rastreamento de visualViewport, redução de Safe Area para 0px, layout travado, ancoragem de rolagem CSS e guardião contra requisições em cascata |
 | **Envio de Arquivos** | Limite RPC de 1MB falha com logs ou datasets grandes | Envia arquivos de forma assíncrona para o disco via endpoint de streaming fragmentado |
 | **Resposta ao Toque** | Atraso de toque de 300ms e zoom de toque duplo | Aplica `touch-action: manipulation` para resposta imediata ao toque |
-| **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; WebKit mobile trava em streams HTTP/2 | Oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>30s com rede inativa) via guardião cliente |
+| **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; iOS Safari para streams fetch no meio da resposta e deixa listas vazias ou spinners girando | Usa por padrão o transporte RPC por WebSocket embutido no pacote, oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>30s sem tráfego de rede) via guardião cliente |
 | **Comportamento de Entrada** | Enter mobile envia mensagem ou corrompe composição IME; navegação falha na presença de comandos slash | Preserva quebra de linha nativa, protege composição IME, restaura navegação para o início da linha (Cmd+Esquerda / Home) e por palavras (Ctrl+Esquerda), envia com Cmd/Ctrl+Enter |
 | **Seleção de Modelo** | Tocar em um modelo fecha o menu imediatamente | Abre corretamente o submenu de esforço de raciocínio (reasoning effort) |
 
