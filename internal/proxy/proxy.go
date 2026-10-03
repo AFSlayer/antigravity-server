@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -34,6 +35,7 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
+	PublicURL       string
 	Patch           patches.Options
 	OnReport        ReportFunc
 }
@@ -115,7 +117,7 @@ func (p *Proxy) Handler() http.Handler {
 			p.touchActivity()
 		}()
 
-		if isWebSocketUpgrade(r) && !sameOriginUpgrade(r) {
+		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
 			return
 		}
@@ -251,10 +253,12 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	var tag string
 	if target == patches.MainJS {
 		tag = bundleETag(patched)
-		p.mainJSMu.Lock()
-		p.cachedMainJS = patched
-		p.cachedMainTag = tag
-		p.mainJSMu.Unlock()
+		if resp.Request != nil && resp.Request.Method == http.MethodGet && len(body) > 0 {
+			p.mainJSMu.Lock()
+			p.cachedMainJS = patched
+			p.cachedMainTag = tag
+			p.mainJSMu.Unlock()
+		}
 	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(patched))
@@ -279,10 +283,11 @@ func (p *Proxy) cachedBundle() ([]byte, string) {
 }
 
 // bundleCacheControl makes browsers revalidate the patched bundle on every
-// load. A matching ETag costs a 304 instead of the multi-megabyte body, and
-// because the tag is derived from the patched bytes, a language server update
-// or a patch change is picked up immediately. private keeps shared caches and
-// CDNs from storing a bundle that is only served behind authentication.
+// load. A matching ETag costs a 304 instead of the multi-megabyte body. Because
+// the tag is derived from the patched bytes, when language_server updates or
+// patches change, browsers pick up the new bundle on revalidation.
+// private keeps shared caches and CDNs from storing a bundle that is only
+// served behind authentication and embeds workspace paths.
 const bundleCacheControl = "private, no-cache"
 
 func bundleETag(body []byte) string {
@@ -319,37 +324,72 @@ func isWebSocketUpgrade(r *http.Request) bool {
 // sameOriginUpgrade rejects cross-origin WebSocket handshakes. The Director
 // rewrites Origin to the loopback target, which disables the language
 // server's own Origin check, and browsers apply no CORS to WebSockets, so a
-// page on another subdomain of the same site could otherwise open an
-// authenticated RPC socket with the session cookie.
+// page on another subdomain or another port of the same host could otherwise
+// open an authenticated RPC socket with the session cookie.
 //
 // When the reverse proxy forwards neither Host nor X-Forwarded-Host, only
-// loopback names are left to compare against; the check is skipped then
-// rather than breaking every handshake.
-func sameOriginUpgrade(r *http.Request) bool {
+// loopback names are left to compare against; the check is skipped with a
+// warning rather than breaking every handshake.
+func (p *Proxy) sameOriginUpgrade(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
 	}
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
+		log.Printf("[proxy] rejecting WebSocket upgrade: malformed Origin %q", origin)
 		return false
 	}
-	want := u.Hostname()
+	originHost := u.Hostname()
+	originPort := u.Port()
+	if originPort == "" {
+		if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+			originPort = "443"
+		} else if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "ws") {
+			originPort = "80"
+		}
+	}
+
+	candidates := []string{
+		r.Host,
+		firstValue(r.Header.Get("X-Forwarded-Host")),
+	}
+	if p.opts.PublicURL != "" {
+		if pu, err := url.Parse(p.opts.PublicURL); err == nil && pu.Host != "" {
+			candidates = append(candidates, pu.Host)
+		}
+	}
 
 	verifiable := false
-	for _, h := range []string{r.Host, firstValue(r.Header.Get("X-Forwarded-Host"))} {
-		host := hostname(h)
-		if host == "" {
+	for _, h := range candidates {
+		candHost, candPort := splitHostMaybePort(h)
+		if candHost == "" {
 			continue
 		}
-		if strings.EqualFold(host, want) {
-			return true
+		if strings.EqualFold(candHost, originHost) {
+			if candPort == "" || candPort == originPort {
+				return true
+			}
 		}
-		if !isLoopbackName(host) {
+		if !isLoopbackName(candHost) {
 			verifiable = true
 		}
 	}
-	return !verifiable
+
+	if !verifiable {
+		log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
+		return true
+	}
+
+	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q does not match Host=%q or X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Host, r.Header.Get("X-Forwarded-Host"))
+	return false
+}
+
+func splitHostMaybePort(hostport string) (string, string) {
+	if h, port, err := net.SplitHostPort(hostport); err == nil {
+		return h, port
+	}
+	return strings.Trim(hostport, "[]"), ""
 }
 
 func firstValue(v string) string {

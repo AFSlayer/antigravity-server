@@ -379,8 +379,13 @@ func TestProxyWebSocketOriginCheck(t *testing.T) {
 		want   int
 	}{
 		{"same host", "agy.example.com", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
-		{"same host on another port", "agy.example.com", "https://agy.example.com:8443", nil, http.StatusSwitchingProtocols},
+		{"same host on another port when host omits port", "agy.example.com", "https://agy.example.com:8443", nil, http.StatusSwitchingProtocols},
+		{"same host with matching port", "192.168.1.50:8765", "http://192.168.1.50:8765", nil, http.StatusSwitchingProtocols},
+		{"same host with mismatching port", "192.168.1.50:8765", "http://192.168.1.50:9000", nil, http.StatusForbidden},
+		{"host with port vs origin on default port", "agy.example.com:8443", "https://agy.example.com", nil, http.StatusForbidden},
 		{"forwarded host", "127.0.0.1:8765", "https://agy.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusSwitchingProtocols},
+		{"forwarded host with matching port", "127.0.0.1:8765", "http://192.168.1.50:8765", []string{"X-Forwarded-Host: 192.168.1.50:8765"}, http.StatusSwitchingProtocols},
+		{"forwarded host with mismatching port", "127.0.0.1:8765", "http://192.168.1.50:9000", []string{"X-Forwarded-Host: 192.168.1.50:8765"}, http.StatusForbidden},
 		{"proxy forwards no host", "127.0.0.1:8765", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
 		{"sibling subdomain", "agy.example.com", "https://evil.example.com", nil, http.StatusForbidden},
 		{"sibling behind proxy", "127.0.0.1:8765", "https://evil.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusForbidden},
@@ -393,6 +398,57 @@ func TestProxyWebSocketOriginCheck(t *testing.T) {
 				t.Errorf("want %d, got %d", tc.want, resp.StatusCode)
 			}
 		})
+	}
+}
+
+func TestProxyWebSocketOriginCheckWithPublicURL(t *testing.T) {
+	ls := wsUpstream(t)
+	p, err := New(Options{
+		TargetPort: upstreamPort(t, ls),
+		PublicURL:  "https://custom-public-domain.com",
+		Patch:      patches.Options{MobileUX: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// Even if reverse proxy forwarded an internal host, Origin matching PublicURL is accepted
+	resp, _, _ := wsHandshake(t, front, "internal-docker:8765", "https://custom-public-domain.com")
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("want 101 Switching Protocols with matching PublicURL, got %d", resp.StatusCode)
+	}
+
+	// Mismatched Origin is still rejected
+	resp, _, _ = wsHandshake(t, front, "internal-docker:8765", "https://evil.com")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("want 403 Forbidden with mismatched Origin, got %d", resp.StatusCode)
+	}
+}
+
+func TestProxyHeadDoesNotPolluteMainJSCache(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+
+	// Send a HEAD request first
+	req, _ := http.NewRequest(http.MethodHead, front.URL+"/main.js?agy=k1", nil)
+	headResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headResp.Body.Close()
+
+	// Subsequent GET request must return the full, valid patched bundle
+	getResp := get(t, front.URL, "/main.js?agy=k1", "")
+	data := body(t, getResp)
+	if len(data) == 0 {
+		t.Fatal("GET returned empty body after HEAD request")
+	}
+	if !strings.Contains(data, "window.location") {
+		t.Error("GET did not return expected patched bundle content")
+	}
+	if getResp.Header.Get("ETag") == `""` || getResp.Header.Get("ETag") == "" {
+		t.Error("GET returned empty ETag")
 	}
 }
 
