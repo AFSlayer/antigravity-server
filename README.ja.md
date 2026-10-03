@@ -151,7 +151,7 @@ Antigravity ServerはPWA（Progressive Web App）規格をサポートしてい�
 - **gRPC-Webプロトコル変換**: アップストリーム一時切断時に502 HTMLではなく標準`grpc-status: 14` (Unavailable)を返却し、フロントエンドの状態購読ストリームがブラウザのリロードなしで即座に自動復帰。
 - **再接続後の切断警告バナー自動解除**: サーバー再接続完了後、コンポーザー下部に残存する「Lost connection」警告バナーを即座に検知して自動消去。
 - **読み込みスピナー停止自動復帰**: モバイルWebKitのHTTP/2ストリーム遅延により、fetchとWebSocketの通信がどちらも止まったままスピナーが30秒以上継続した場合、クライアントウォッチドッグが自動的に接続を再読み込みして復帰。
-- **WebSocket RPCトランスポート**: すべてのRPCをfetchストリーミングではなく、バンドルに元から含まれる`/connect-websocket`の単一接続でやり取りします。iOS Safariではfetchストリームの応答が途中で止まることが多く、会話一覧が空のままになったり会話のスピナーが回り続けたりしていました。自動でfetchに戻ることはありません。すべてのクライアントで無効にするには、サーバーを`--disable-patch websocket-transport-default`で起動するか`AGY_DISABLE_PATCHES=websocket-transport-default`を設定します。一度だけfetchで開くには`?useWebSocket=false`を付けます。
+- **WebSocket RPCトランスポート**: 会話およびCascade RPCをfetchストリーミングではなく、バンドルに内蔵された`/connect-websocket`接続で通信します。iOS Safariではfetchストリームの応答が途中で止まることが多く、会話一覧が空のままになったり会話のスピナーが回り続けたりしていました。自動でfetchに戻ることはありません。すべてのクライアントで無効にするには、サーバーを`--disable-patch websocket-transport-default`で起動するか`AGY_DISABLE_PATCHES=websocket-transport-default`を設定します。一度だけfetchで開くには`?useWebSocket=false`を付けます。
 
 ---
 
@@ -165,7 +165,7 @@ Antigravity ServerはPWA（Progressive Web App）規格をサポートしてい�
 
 ## 本番リバースプロキシ設定（Caddy / Nginx）
 
-エージェントのリアルタイムストリーミング応答（SSE）およびWebSocket通信、大容量アップロードのため、プロキシの**バッファリング無効化**と**WebSocketアップグレード**設定が必要です。すべてのRPCが`/connect-websocket`を通るため、アップグレードを通さないとUIが読み込まれません。`agy-server`は`Origin`が転送された`Host`または`X-Forwarded-Host`と一致しないWebSocketハンドシェイクを拒否するので、このヘッダーはそのまま渡してください。アップグレードを有効にできない環境では、サーバーを`--disable-patch websocket-transport-default`で起動します：
+エージェントのリアルタイムストリーミング応答（SSE）およびWebSocket通信、大容量アップロードのため、プロキシの**バッファリング無効化**と**WebSocketアップグレード**設定が必要です。Web UIの主要な会話RPCが`/connect-websocket`を経由するため、プロキシでWebSocketアップグレードを通過させる必要があります。`agy-server`は`Origin`が転送された`Host`または`X-Forwarded-Host`と一致しないWebSocketハンドシェイクを拒否するので、このヘッダーはそのまま渡してください。アップグレードを有効にできない環境では、サーバーを`--disable-patch websocket-transport-default`で起動します：
 
 ### Caddy
 ```caddyfile
@@ -219,6 +219,10 @@ server {
 Antigravity内部には`language_server`という独立バイナリが含まれています。`--standalone`フラグで起動すると、ローカル`127.0.0.1`にWebインターフェースを提供します。
 
 `agy-server`はこのバイナリの前段でリバースプロキシとして動作します：
+- 認証処理（PBKDF2、Cookieセッション、レート制限）。
+- タッチデバイス向けの動的JS/CSSパッチ適用。
+- パッチ適用済みバンドルにETagを付与し、再ダウンロードせずにブラウザで効率的に再検証。
+- 1MB制限を回避する大容量ファイルチャンクストリーミングアップロード。
 
 ```
   スマートフォン / タブレット / PC ブラウザ
@@ -246,7 +250,7 @@ Antigravity内部には`language_server`という独立バイナリが含まれ�
 
 ## モバイルUXパッチ詳細
 
-公式リモートブリッジや`agy-server`経由で提供されるWebバンドルは本来デスクトップ向けです。`agy-server`は[`internal/patches/registry.go`](internal/patches/registry.go)に定義されたパッチにより、通信経路上で動的にバンドルを書き換えて最適化します。レジストリには51件のパッチが登録されており、そのうち25件がタッチ・モバイル専用、残りはアップロード、ナビゲーション、サインイン、接続安定性、キャッシュ無効化などを担当しています。代表的なパッチ一覧：
+公式リモートブリッジや`agy-server`経由で提供されるWebバンドルは本来デスクトップ向けです。`agy-server`は[`internal/patches/registry.go`](internal/patches/registry.go)に定義されたパッチにより、通信経路上で動的にバンドルを書き換えて最適化します。レジストリには51件のパッチが登録されており、タッチUX、アップロード、ナビゲーション、サインイン、接続安定性、キャッシュ無効化などを担当しています。代表的なパッチ一覧：
 
 | 分類 | デスクトップバンドルのデフォルト動作 | agy-server パッチ適用後の動作 |
 | :--- | :--- | :--- |

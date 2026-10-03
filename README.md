@@ -151,7 +151,7 @@ When the language server restarts (such as during updates or service reloads) or
 - **gRPC-Web Protocol Translation**: Translates transient connection drops to standard `grpc-status: 14` (Unavailable) rather than broken HTTP 502 HTML, enabling Antigravity's native state stream to automatically reconnect within seconds without refreshing the browser tab.
 - **Auto-Dismiss Stale Disconnect Banners**: Automatically hides the "Lost connection" warning banner as soon as active communication with the server is verified alive, preventing persistent warning banners after successful reconnection.
 - **Stuck Loading Spinner Watchdog**: Detects when mobile WebKit stalls on stale multiplexed HTTP/2 streams and automatically recovers after 30 seconds without fetch or WebSocket traffic, eliminating indefinite loading spinners without interrupting large conversation downloads.
-- **WebSocket RPC Transport**: Sends every RPC over the single `/connect-websocket` connection that the bundle already ships with, instead of fetch streaming. iOS Safari regularly stalls fetch streams mid-response, which left the conversation list empty or a conversation spinner running forever. There is no automatic fallback. To turn it off for every client, start the server with `--disable-patch websocket-transport-default` or set `AGY_DISABLE_PATCHES=websocket-transport-default`. For a single page load, open it with `?useWebSocket=false`.
+- **WebSocket RPC Transport**: Routes Cascade and conversation RPCs over the `/connect-websocket` connection that the bundle already ships with, instead of fetch streaming. iOS Safari regularly stalls fetch streams mid-response, which left the conversation list empty or a conversation spinner running forever. There is no automatic fallback. To turn it off for every client, start the server with `--disable-patch websocket-transport-default` or set `AGY_DISABLE_PATCHES=websocket-transport-default`. For a single page load, open it with `?useWebSocket=false`.
 
 ---
 
@@ -165,7 +165,7 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 ## Production & Reverse Proxy Setup
 
-Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and pass WebSocket upgrades through. All RPC traffic runs over `/connect-websocket`, so the UI cannot load without them. `agy-server` rejects WebSocket handshakes whose `Origin` does not match the forwarded `Host` or `X-Forwarded-Host`, so keep that header intact. If upgrades cannot be enabled, start the server with `--disable-patch websocket-transport-default`:
+Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and pass WebSocket upgrades through. The web UI routes its primary conversation RPCs over `/connect-websocket`, so WebSocket upgrades must be passed through. `agy-server` rejects WebSocket handshakes whose `Origin` does not match the forwarded `Host` or `X-Forwarded-Host`, so keep that header intact. If upgrades cannot be enabled, start the server with `--disable-patch websocket-transport-default`:
 
 ### Caddy
 ```caddyfile
@@ -250,7 +250,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 51 patches, 25 of them touch-specific and the rest covering uploads, navigation, sign-in, connection health and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 51 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |

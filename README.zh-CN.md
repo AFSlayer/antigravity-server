@@ -151,7 +151,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - **gRPC-Web 协议转换**：在后端暂时不可用期间返回标准 `grpc-status: 14`（Unavailable）而非 HTTP 502 HTML，保障前端原生状态流在服务就绪后数秒内自动恢复，无需手动刷新网页。
 - **重连后断开警告横幅自动关闭**：服务器重新连接成功后，自动检测并关闭输入框下方残留的“Lost connection”警告横幅。
 - **加载转圈卡死自动恢复**：针对移动端 WebKit 在 HTTP/2 复用流上的挂起现象，若 fetch 与 WebSocket 均无流量且加载超过 30 秒，客户端看门狗将自动安全刷新恢复连接。
-- **WebSocket RPC 传输**：所有 RPC 不再走 fetch 流式传输，而是通过资源包自带的 `/connect-websocket` 单一连接收发。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。不会自动退回 fetch。如需对所有客户端关闭，请以 `--disable-patch websocket-transport-default` 启动服务器，或设置 `AGY_DISABLE_PATCHES=websocket-transport-default`。只想单次使用 fetch 时，打开页面加上 `?useWebSocket=false`。
+- **WebSocket RPC 传输**：将主要对话与 Cascade RPC 切换至资源包自带的 `/connect-websocket` 连接，而非 fetch 流式传输。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。不会自动退回 fetch。如需对所有客户端关闭，请以 `--disable-patch websocket-transport-default` 启动服务器，或设置 `AGY_DISABLE_PATCHES=websocket-transport-default`。只想单次使用 fetch 时，打开页面加上 `?useWebSocket=false`。
 
 ---
 
@@ -165,7 +165,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 
 ## 生产环境反向代理配置（Caddy / Nginx）
 
-为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**。所有 RPC 都经由 `/connect-websocket`，未放行升级请求时界面无法加载。`agy-server` 会拒绝 `Origin` 与转发的 `Host` 或 `X-Forwarded-Host` 不一致的 WebSocket 握手，请原样转发该请求头。若无法启用升级，请以 `--disable-patch websocket-transport-default` 启动服务器：
+为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**。Web 界面主要对话 RPC 经由 `/connect-websocket` 通信，反向代理必须放行 WebSocket 升级请求。`agy-server` 会拒绝 `Origin` 与转发的 `Host` 或 `X-Forwarded-Host` 不一致的 WebSocket 握手，请原样转发该请求头。若无法启用升级，请以 `--disable-patch websocket-transport-default` 启动服务器：
 
 ### Caddy
 ```caddyfile
@@ -218,13 +218,17 @@ server {
 
 Antigravity 内部包含名为 `language_server` 的独立二进制程序。使用 `--standalone` 运行时，它在本地 `127.0.0.1` 提供 Web 界面。
 
-`agy-server` 作为其前端反向代理，负责身份认证、动态运行时补丁注入及流式文件上传。
+`agy-server` 作为其前端反向代理：
+- 身份认证与安全控制（PBKDF2 哈希、Cookie 会话、防暴力破解）。
+- 针对触控设备的动态 JS/CSS 运行时补丁。
+- 为资源包注入 ETag，支持高效再验证而无需重复下载。
+- 突破 1MB 限制的分块流式大文件上传。
 
 ---
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 51 项补丁，其中 25 项专为触控移动端优化，其余涵盖文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 51 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |

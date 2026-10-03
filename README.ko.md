@@ -151,7 +151,7 @@ Antigravity Server는 PWA(Progressive Web App) 규격을 완벽 지원합니다.
 - **gRPC-Web 프로토콜 변환**: 일시적인 업스트림 끊김 시 502 HTML 대신 표준 `grpc-status: 14` (Unavailable)를 반환하여, 안티그래비티 번들 내장 상태 구독 스트림이 브라우저 새로고침 없이 수 초 내에 자동으로 다시 연결됩니다.
 - **재연결 후 끊김 경고 배너 자동 해제**: 서버 재연결이 성공하여 통신이 정상화되면 컴포저 하단에 남아있는 'Lost connection' 경고 배너를 즉시 감지하여 자동으로 닫습니다.
 - **로딩 스피너 스턱(Stuck) 자동 탈출 가드**: 모바일 WebKit의 HTTP/2 다중화 스트림 지연으로 fetch와 WebSocket 트래픽이 모두 끊긴 채 스피너가 30초 이상 지속될 경우 클라이언트 워치독이 즉시 연결을 갱신하여 무한 로딩을 방지합니다.
-- **WebSocket RPC 전송**: 모든 RPC를 fetch 스트리밍 대신 번들에 이미 들어 있는 `/connect-websocket` 단일 연결로 주고받습니다. iOS Safari는 fetch 스트림 응답을 중간에 자주 멈추는데, 이 때문에 대화 목록이 비어 있거나 대화 스피너가 끝없이 돌던 문제를 막습니다. 자동으로 fetch로 돌아가지는 않습니다. 모든 클라이언트에서 끄려면 서버를 `--disable-patch websocket-transport-default`로 실행하거나 `AGY_DISABLE_PATCHES=websocket-transport-default`를 설정합니다. 한 번만 fetch로 열려면 `?useWebSocket=false`를 붙입니다.
+- **WebSocket RPC 전송**: 대화 및 Cascade RPC를 fetch 스트리밍 대신 번들에 내장된 `/connect-websocket` 연결로 전송합니다. iOS Safari는 fetch 스트림 응답을 중간에 자주 멈추는데, 이 때문에 대화 목록이 비어 있거나 대화 스피너가 끝없이 돌던 문제를 막습니다. 자동으로 fetch로 돌아가지는 않습니다. 모든 클라이언트에서 끄려면 서버를 `--disable-patch websocket-transport-default`로 실행하거나 `AGY_DISABLE_PATCHES=websocket-transport-default`를 설정합니다. 한 번만 fetch로 열려면 `?useWebSocket=false`를 붙입니다.
 
 ---
 
@@ -165,7 +165,7 @@ Antigravity Server는 PWA(Progressive Web App) 규격을 완벽 지원합니다.
 
 ## 프로덕션 리버스 프록시 연동 (Caddy / Nginx)
 
-에이전트의 실시간 스트리밍 응답(SSE) 및 WebSocket 통신, 대용량 파일 업로드를 위해 프록시의 **버퍼링 비활성화**와 **WebSocket 업그레이드** 설정이 필요합니다. 모든 RPC가 `/connect-websocket`으로 오가므로 업그레이드를 통과시키지 않으면 UI가 로드되지 않습니다. `agy-server`는 `Origin`이 전달된 `Host`나 `X-Forwarded-Host`와 다른 WebSocket 핸드셰이크를 거부하므로 이 헤더를 그대로 넘겨야 합니다. 업그레이드를 켤 수 없는 환경이라면 서버를 `--disable-patch websocket-transport-default`로 실행합니다:
+에이전트의 실시간 스트리밍 응답(SSE) 및 WebSocket 통신, 대용량 파일 업로드를 위해 프록시의 **버퍼링 비활성화**와 **WebSocket 업그레이드** 설정이 필요합니다. 웹 UI의 주요 대화 RPC가 `/connect-websocket`을 통해 통신하므로 프록시에서 WebSocket 업그레이드를 통과시켜야 합니다. `agy-server`는 `Origin`이 전달된 `Host`나 `X-Forwarded-Host`와 다른 WebSocket 핸드셰이크를 거부하므로 이 헤더를 그대로 넘겨야 합니다. 업그레이드를 켤 수 없는 환경이라면 서버를 `--disable-patch websocket-transport-default`로 실행합니다:
 
 ### Caddy
 ```caddyfile
@@ -250,7 +250,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 51개가 있고 그중 25개가 터치 전용이며, 나머지는 업로드·네비게이션·로그인·연결 안정성·캐시 무효화를 담당합니다. 그중 일부:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 51개가 등록되어 있으며, 터치 UX 개선, 대용량 업로드, 내비게이션, 로그인, 연결 안정성 및 캐시 무효화를 담당합니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |
