@@ -150,7 +150,8 @@ When the language server restarts (such as during updates or service reloads) or
 - **Persistent CSRF Token**: Retains the same authentication token across restarts, preventing stale-session rejections.
 - **gRPC-Web Protocol Translation**: Translates transient connection drops to standard `grpc-status: 14` (Unavailable) rather than broken HTTP 502 HTML, enabling Antigravity's native state stream to automatically reconnect within seconds without refreshing the browser tab.
 - **Auto-Dismiss Stale Disconnect Banners**: Automatically hides the "Lost connection" warning banner as soon as active communication with the server is verified alive, preventing persistent warning banners after successful reconnection.
-- **Stuck Loading Spinner Watchdog**: Detects when mobile WebKit stalls on stale multiplexed HTTP/2 streams and automatically recovers after 30 seconds of idle network, eliminating indefinite loading spinners without interrupting large conversation downloads.
+- **Stuck Loading Spinner Watchdog**: Detects when mobile WebKit stalls on stale multiplexed HTTP/2 streams and automatically recovers after 30 seconds without fetch or WebSocket traffic, eliminating indefinite loading spinners without interrupting large conversation downloads.
+- **WebSocket RPC Transport**: Sends every RPC over the single `/connect-websocket` connection that the bundle already ships with, instead of fetch streaming. iOS Safari regularly stalls fetch streams mid-response, which left the conversation list empty or a conversation spinner running forever. Open the page with `?useWebSocket=false` to fall back to fetch streaming.
 
 ---
 
@@ -164,7 +165,7 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 ## Production & Reverse Proxy Setup
 
-Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
+Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and pass WebSocket upgrades through. All RPC traffic runs over `/connect-websocket`, so the UI cannot load without them:
 
 ### Caddy
 ```caddyfile
@@ -248,7 +249,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 45 patches, 25 of them touch-specific and the rest covering uploads, navigation, sign-in and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 51 patches, 25 of them touch-specific and the rest covering uploads, navigation, sign-in, connection health and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
@@ -258,7 +259,7 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll; upward scroll in long chats triggers cascading fetch storms | Dynamic visualViewport offset tracking, 0px safe-area collapse, pinned conversation layout, CSS scroll anchoring, and top-scroll guard against cascading fetch storms |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
-| **Connection Health** | "Lost connection" banner remains visible even after successful auto-reconnect; mobile WebKit hangs on stale HTTP/2 streams | Automatically dismisses stale disconnect banners upon verified server heartbeat and recovers from stuck loading spinners (>30s on idle network) via client watchdog |
+| **Connection Health** | "Lost connection" banner remains visible even after successful auto-reconnect; iOS Safari stalls fetch streams mid-response, leaving lists empty or spinners running | Uses the bundled WebSocket RPC transport by default, dismisses stale disconnect banners upon verified server heartbeat, and recovers from stuck loading spinners (>30s without network traffic) via client watchdog |
 | **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition; line navigation jumps to text start when slash commands exist | Preserves native newline, prevents IME corruption, and restores visual line start navigation on Cmd+Left (macOS) / Home (all OS) with slash commands while preserving Ctrl+Left word navigation; Cmd/Ctrl+Enter submits |
 | **Model Selection** | Tapping a model closes the menu immediately | Opens the reasoning effort submenu on tap |
 

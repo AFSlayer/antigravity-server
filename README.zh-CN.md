@@ -150,7 +150,8 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - **CSRF Token 持久化**：重启后继续复用相同的认证 Token，彻底防止因会话失效导致的拒绝连接。
 - **gRPC-Web 协议转换**：在后端暂时不可用期间返回标准 `grpc-status: 14`（Unavailable）而非 HTTP 502 HTML，保障前端原生状态流在服务就绪后数秒内自动恢复，无需手动刷新网页。
 - **重连后断开警告横幅自动关闭**：服务器重新连接成功后，自动检测并关闭输入框下方残留的“Lost connection”警告横幅。
-- **加载转圈卡死自动恢复**：针对移动端 WebKit 在 HTTP/2 复用流上的挂起现象，若网络空闲且加载超过 30 秒，客户端看门狗将自动安全刷新恢复连接。
+- **加载转圈卡死自动恢复**：针对移动端 WebKit 在 HTTP/2 复用流上的挂起现象，若 fetch 与 WebSocket 均无流量且加载超过 30 秒，客户端看门狗将自动安全刷新恢复连接。
+- **WebSocket RPC 传输**：所有 RPC 不再走 fetch 流式传输，而是通过资源包自带的 `/connect-websocket` 单一连接收发。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。打开页面时加上 `?useWebSocket=false` 即可退回 fetch 流式传输。
 
 ---
 
@@ -164,7 +165,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 
 ## 生产环境反向代理配置（Caddy / Nginx）
 
-为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**：
+为了支持智能体的实时流式输出（SSE）、WebSocket 通信及大文件上传，反向代理需**禁用缓冲**并配置 **WebSocket 升级**。所有 RPC 都经由 `/connect-websocket`，未放行升级请求时界面无法加载：
 
 ### Caddy
 ```caddyfile
@@ -223,7 +224,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 45 项补丁，其中 25 项专为触控移动端优化，其余涵盖文件上传、导航、登录及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 51 项补丁，其中 25 项专为触控移动端优化，其余涵盖文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |
@@ -233,7 +234,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 | **虚拟键盘与滚动** | iOS Safari 视口抖动、底部留白，长对话向上滚动时触发雪崩式重复请求 | 实时跟踪 visualViewport 偏移，折叠 Safe Area 为 0px，锁定对话布局，启用 CSS 滚动锚定并添加顶部滚动守卫阻断级联请求 |
 | **文件上传** | 1MB RPC 负载上限导致日志与数据集上传失败 | 通过分块流式上传端点直接异步写入磁盘 |
 | **触控响应** | 存在 300ms 点击延迟与双击缩放 | 设置 `touch-action: manipulation` 实现零延迟触控响应 |
-| **连接稳定性与横幅** | 重连成功后“Lost connection”横幅仍持续显示，或移动端 WebKit 在 HTTP/2 复用流上挂起 | 检测到服务器心跳正常后自动清除断联横幅，若在网络空闲状态下加载转圈卡死超过 30 秒则由看门狗自动安全重连 |
+| **连接稳定性与横幅** | 重连成功后“Lost connection”横幅仍持续显示，或 iOS Safari 的 fetch 流响应中途停住，导致列表为空或转圈不停 | 默认使用资源包内置的 WebSocket RPC 传输，检测到服务器心跳正常后自动清除断联横幅，若无网络流量且加载转圈卡死超过 30 秒则由看门狗自动安全重连 |
 | **输入行为** | 移动端回车直接发送或破坏输入法未上屏状态；存在斜杠命令/标签时跳行异常 | 保持原生换行，保护输入法组合状态，修复含斜杠命令时的 Cmd+Left(macOS)/Home(全平台) 行首导航与 Ctrl+Left 逐词导航，通过 Cmd/Ctrl+Enter 发送 |
 | **模型选择** | 点击模型选项时下拉菜单立即自动关闭 | 点击时正常展开 reasoning effort 推理深度子菜单 |
 
