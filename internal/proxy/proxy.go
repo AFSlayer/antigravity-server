@@ -115,11 +115,7 @@ func (p *Proxy) Handler() http.Handler {
 			if cached != nil {
 				w.Header().Set("Content-Type", "application/javascript")
 				w.Header().Set("Content-Length", strconv.Itoa(len(cached)))
-				if r.URL.Query().Get("agy") != "" {
-					w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-				} else {
-					w.Header().Set("Cache-Control", "no-store")
-				}
+				w.Header().Set("Cache-Control", p.mainJSCacheControl(r))
 				_, _ = w.Write(cached)
 				return
 			}
@@ -225,11 +221,7 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 			resp.ContentLength = int64(len(cached))
 			resp.Header.Set("Content-Length", strconv.Itoa(len(cached)))
 			resp.Header.Set("Content-Type", "application/javascript")
-			if resp.Request.URL.Query().Get("agy") != "" {
-				resp.Header.Set("Cache-Control", "no-cache, must-revalidate")
-			} else {
-				resp.Header.Set("Cache-Control", "no-store")
-			}
+			resp.Header.Set("Cache-Control", p.mainJSCacheControl(resp.Request))
 			return nil
 		}
 	}
@@ -255,13 +247,21 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
-	} else if resp.Request.URL.Query().Get("agy") != "" {
-		resp.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
-		resp.Header.Set("Cache-Control", "no-store")
+		resp.Header.Set("Cache-Control", p.mainJSCacheControl(resp.Request))
 	}
 
 	return nil
+}
+
+// mainJSCacheControl lets browsers keep the multi-megabyte bundle only when the
+// URL carries the current patch-set fingerprint. The fingerprint changes with
+// the version and every patch replacement, so a stale copy is never reused.
+func (p *Proxy) mainJSCacheControl(r *http.Request) string {
+	if key := r.URL.Query().Get("agy"); key != "" && key == p.opts.Patch.CacheKey {
+		return "public, max-age=31536000, immutable"
+	}
+	return "no-store"
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {

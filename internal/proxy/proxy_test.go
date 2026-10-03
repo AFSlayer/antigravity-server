@@ -198,6 +198,18 @@ func TestProxyCachesKeyedBundleAndNotHTML(t *testing.T) {
 		t.Errorf("keyed bundle should be cacheable, got %q", keyed.Header.Get("Cache-Control"))
 	}
 
+	// The second request is served from the in-memory copy and must keep the
+	// same caching policy, otherwise every page load re-downloads the bundle.
+	again := get(t, front.URL, "/main.js?agy=k1", "")
+	if !strings.Contains(again.Header.Get("Cache-Control"), "immutable") {
+		t.Errorf("cached keyed bundle should stay cacheable, got %q", again.Header.Get("Cache-Control"))
+	}
+
+	stale := get(t, front.URL, "/main.js?agy=old", "")
+	if stale.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("bundle with a stale key must not be cached, got %q", stale.Header.Get("Cache-Control"))
+	}
+
 	unkeyed := get(t, front.URL, "/main.js", "")
 	if unkeyed.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("unkeyed bundle must not be cached, got %q", unkeyed.Header.Get("Cache-Control"))
