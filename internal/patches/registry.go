@@ -64,6 +64,7 @@ var (
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true":[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2"\}`)
+	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -511,6 +512,46 @@ func All() []Patch {
 			Replace: `${1}!=="1"}`,
 		},
 
+		// The bundle's WebSocket client closes the socket when no frame arrives
+		// for 2s and a ping goes unanswered for another 2s. On a slow phone link
+		// the large initial frames arrive further apart than that, and the ping
+		// reply queues behind them, so the socket is dropped mid-transfer and the
+		// page reconnects and downloads everything again, which never finishes.
+		// Give the ping reply 10s instead of 2s so a slow but alive link survives.
+		// Not optional: when the anchor moves the drops come back silently, so
+		// doctor and the startup report must flag it as missing.
+		{
+			ID:      "websocket-liveness-probe-relax",
+			Desc:    "Give the WebSocket liveness ping 10s instead of 2s so slow links are not dropped mid-transfer",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  websocketLivenessProbeRe,
+			Replace: `${1}1E4${2}`,
+		},
+
+		// Opening the RPC socket costs several round trips, and the bundle only
+		// starts it after main.js has been fetched, revalidated and run. On a
+		// phone that is seconds of waiting before the first byte of data. This
+		// starts the same connection from the document head, in parallel with the
+		// bundle, and hands it over when the bundle asks for it.
+		{
+			ID:     "connection-prewarm",
+			Desc:   "Open the RPC WebSocket while the bundle loads instead of after it runs",
+			Target: HTML,
+			Kind:   InjectHead,
+			// Without the WebSocket transport the bundle never claims the socket,
+			// so opening one would only add load. That covers both the operator
+			// turning the transport patch off and the patch failing to match,
+			// which the proxy reports through WebSocketTransportMissing once it
+			// has seen the bundle. It must also stay after connection-watchdog,
+			// which wraps WebSocket first, so the early socket is created
+			// through that wrapper; TestConnectionPrewarmFollowsWatchdog pins
+			// that order.
+			Enabled: func(o Options) bool {
+				return !o.Disabled["websocket-transport-default"] && !o.WebSocketTransportMissing
+			},
+			Replace: connectionPrewarmScript,
+		},
 		{
 			ID:      "app-icons",
 			Desc:    "Serve the official Antigravity favicon and home-screen icon",
@@ -2456,5 +2497,137 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   } else {
     initWatchdog();
   }
+})();
+</script>`
+
+// connectionPrewarmScript starts the RPC socket and its warm-up request from the
+// document head and hands both to the bundle when it asks for them.
+//
+// The bundle opens its socket as: fetch(https URL, no-cors), then new WebSocket.
+// Both are replayed here. The warm-up request is shared rather than repeated, and
+// the socket is returned from the WebSocket constructor in place of a new one.
+// A socket the bundle never claims is closed after 20 seconds, and one that
+// receives a frame before it is claimed is dropped so no message can be missed.
+// Any failure falls back to the bundle opening its own connection.
+//
+// The bundle ignores the result of its warm-up request and catches a failure of
+// it, so sharing a promise that resolves to undefined on error is safe. The
+// replacement WebSocket is a plain function rather than a Proxy. It keeps
+// instanceof and the static constants, but a subclass of WebSocket would not
+// receive the early socket.
+const connectionPrewarmScript = `<script id="agy-connection-prewarm">
+(function () {
+  try {
+    if (window.__agyPrewarm || !window.WebSocket || !window.fetch) return;
+    window.__agyPrewarm = 1;
+
+    // The bundle reads the same parameters to pick its transport. When it will
+    // use fetch it never asks for the socket, so do not open one.
+    var query = new URLSearchParams(location.search);
+    var useWS = query.get("useWebSocket");
+    if (useWS !== null ? useWS !== "true" : query.get("wsTransport") === "1") return;
+
+    var PATH = "/connect-websocket";
+    var secure = location.protocol === "https:";
+    var wsUrl = (secure ? "wss:" : "ws:") + "//" + location.host + PATH;
+    var NativeWS = window.WebSocket;
+    var nativeFetch = window.fetch;
+    var warm = null;
+    var pre = null;
+    var claimed = false;
+    var expiry = null;
+
+    if (secure) {
+      warm = nativeFetch.call(window, location.origin + PATH, { credentials: "include", mode: "no-cors" }).catch(function () {});
+    }
+
+    try {
+      pre = new NativeWS(wsUrl);
+      var drop = function () {
+        if (claimed || !pre) return;
+        var s = pre;
+        pre = null;
+        try { s.close(); } catch (e) {}
+      };
+      pre.addEventListener("close", function () { if (!claimed) pre = null; });
+      pre.addEventListener("error", function () { if (!claimed) pre = null; });
+      pre.addEventListener("message", drop);
+      expiry = setTimeout(drop, 20000);
+    } catch (e) {
+      pre = null;
+    }
+
+    window.fetch = function (input, init) {
+      if (warm && init && init.mode === "no-cors" && init.credentials === "include") {
+        var url = typeof input === "string" ? input : (input && input.url) || "";
+        if (url.indexOf(location.host + PATH) !== -1) {
+          var shared = warm;
+          warm = null;
+          return shared;
+        }
+      }
+      return nativeFetch.apply(this || window, arguments);
+    };
+
+    function sameUrl(url) {
+      try {
+        return new URL(String(url), location.href).href === new URL(wsUrl).href;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // The bundle assigns onopen right after construction. A socket that is
+    // already open never fires it again, so replay the event once.
+    function adopt(ws) {
+      var handler = null;
+      var fired = false;
+      function fire(ev) {
+        if (fired || !handler) return;
+        fired = true;
+        try { handler.call(ws, ev); } catch (e) { setTimeout(function () { throw e; }); }
+      }
+      ws.addEventListener("open", fire);
+      var nativeAdd = ws.addEventListener;
+      ws.addEventListener = function (type, listener) {
+        nativeAdd.apply(this, arguments);
+        var call = typeof listener === "function" ? listener
+          : listener && typeof listener.handleEvent === "function" ? function (ev) { listener.handleEvent(ev); }
+          : null;
+        if (type === "open" && ws.readyState === 1 && call) {
+          setTimeout(function () { try { call.call(ws, new Event("open")); } catch (e) { setTimeout(function () { throw e; }); } }, 0);
+        }
+      };
+      Object.defineProperty(ws, "onopen", {
+        configurable: true,
+        enumerable: true,
+        get: function () { return handler; },
+        set: function (fn) {
+          handler = typeof fn === "function" ? fn : null;
+          if (handler && ws.readyState === 1 && !fired) {
+            setTimeout(function () { fire(new Event("open")); }, 0);
+          }
+        }
+      });
+    }
+
+    function WS(url, protocols) {
+      if (!claimed && pre && protocols === undefined && pre.readyState <= 1 && sameUrl(url)) {
+        claimed = true;
+        clearTimeout(expiry);
+        var ws = pre;
+        pre = null;
+        adopt(ws);
+        return ws;
+      }
+      return protocols === undefined ? new NativeWS(url) : new NativeWS(url, protocols);
+    }
+    WS.prototype = NativeWS.prototype;
+    WS.CONNECTING = 0;
+    WS.OPEN = 1;
+    WS.CLOSING = 2;
+    WS.CLOSED = 3;
+    window.WebSocket = WS;
+  } catch (e) {}
 })();
 </script>`

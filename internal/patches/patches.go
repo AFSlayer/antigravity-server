@@ -58,6 +58,10 @@ type Options struct {
 	Disabled map[string]bool
 	// Debug injects the mobile geometry tracer, which reports to the server.
 	Debug bool
+	// WebSocketTransportMissing is set by the proxy once the bundle has been
+	// served without the websocket-transport-default patch matching. The bundle
+	// then uses fetch streaming and never claims an early socket.
+	WebSocketTransportMissing bool
 }
 
 // Patch is a single declarative rewrite of the served bundle.

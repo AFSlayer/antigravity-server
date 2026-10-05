@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"regexp"
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 )
+
+// socketConstructionRe matches how the bundle opens its RPC socket.
+var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url\);\s*[a-zA-Z0-9_$]+\.binaryType="arraybuffer";\s*var [a-zA-Z0-9_$]+=!1;\s*[a-zA-Z0-9_$]+\.onopen=`)
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
@@ -44,6 +48,13 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 				t.Errorf("%s: regexp matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		}
+	}
+
+	// connection-prewarm hands the bundle a socket it opened early. That only
+	// works while the bundle builds the socket this way and assigns onopen
+	// straight after, so check the shape it relies on.
+	if n := len(socketConstructionRe.FindAll(mainJS, -1)); n != 1 {
+		t.Errorf("the bundle builds its RPC socket in an unexpected way (%d matches); connection-prewarm may stop working", n)
 	}
 
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
