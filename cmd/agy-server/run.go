@@ -116,6 +116,7 @@ func (r *runner) start() error {
 		TargetPort:      instance.Port,
 		TargetCSRFToken: instance.CSRFToken,
 		PublicURL:       r.cfg.PublicURL,
+		DisableWSRelay:  r.cfg.DisableWSRelay,
 		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)
@@ -125,6 +126,12 @@ func (r *runner) start() error {
 	if err != nil {
 		return err
 	}
+
+	go func() {
+		if err := p.Prewarm(); err != nil {
+			warn("could not pre-patch the web bundle, the first page load will be slower: %v", err)
+		}
+	}()
 
 	publicListener, err := listen(r.cfg.BindAddr, r.cfg.Port)
 	if err != nil {

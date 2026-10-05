@@ -3,6 +3,9 @@ package proxy
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -10,10 +13,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/patches"
+	"github.com/coder/websocket"
 )
 
 // These tests cover the proxy plumbing — reading, rewriting and re-framing
@@ -73,16 +79,27 @@ func upstreamPort(t *testing.T, server *httptest.Server) int {
 
 func newTestProxy(t *testing.T, server *httptest.Server) (*httptest.Server, map[patches.Target]patches.Report) {
 	t.Helper()
+	return newTestProxyWith(t, server, nil)
+}
+
+// newTestProxyWith lets a test adjust the proxy options before it is built.
+func newTestProxyWith(t *testing.T, server *httptest.Server, adjust func(*Options)) (*httptest.Server, map[patches.Target]patches.Report) {
+	t.Helper()
 
 	reports := map[patches.Target]patches.Report{}
 
-	p, err := New(Options{
+	opts := Options{
 		TargetPort: upstreamPort(t, server),
 		Patch:      patches.Options{MobileUX: true, CacheKey: "k1"},
 		OnReport: func(target patches.Target, report patches.Report) {
 			reports[target] = report
 		},
-	})
+	}
+	if adjust != nil {
+		adjust(&opts)
+	}
+
+	p, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,8 +299,9 @@ func TestProxyStripsValidatorsBeforeFetchingBundle(t *testing.T) {
 }
 
 // wsUpstream mimics the language server's /connect-websocket endpoint: it
-// refuses the upgrade unless Origin is its own loopback address, then echoes
-// one line back over the hijacked connection.
+// refuses the upgrade unless Origin is its own loopback address, never
+// negotiates compression, and answers each message with an echo. A message
+// reading "big" is answered with a large repetitive one instead.
 func wsUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -297,22 +315,50 @@ func wsUpstream(t *testing.T) *httptest.Server {
 			http.Error(w, "bad origin", http.StatusForbidden)
 			return
 		}
-		conn, rw, err := w.(http.Hijacker).Hijack()
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+			CompressionMode:    websocket.CompressionDisabled,
+			Subprotocols:       []string{"agy.v1"},
+		})
 		if err != nil {
 			return
 		}
-		defer conn.Close()
-		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
-		_ = rw.Flush()
-		line, err := rw.ReadString('\n')
+		defer c.CloseNow()
+		c.SetReadLimit(1 << 20)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		typ, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
-		_, _ = rw.WriteString("echo:" + line)
-		_ = rw.Flush()
+		switch string(data) {
+		case "big":
+			_ = c.Write(ctx, websocket.MessageText, bigMessage())
+			return
+		case "headers":
+			seen, _ := json.Marshal(map[string]string{
+				"csrf":      r.Header.Get("x-codeium-csrf-token"),
+				"cookie":    r.Header.Get("Cookie"),
+				"origin":    r.Header.Get("X-Original-Origin"),
+				"subproto":  c.Subprotocol(),
+				"forwarded": r.Header.Get("X-Test-Forward"),
+			})
+			_ = c.Write(ctx, websocket.MessageText, seen)
+			return
+		case "close":
+			_ = c.Close(websocket.StatusCode(4001), "language server says bye")
+			return
+		}
+		_ = c.Write(ctx, typ, append([]byte("echo:"), data...))
 	}))
 	t.Cleanup(ls.Close)
 	return ls
+}
+
+func bigMessage() []byte {
+	return []byte(`{"type":"data","payload":"` + strings.Repeat("conversation summary ", 20000) + `"}`)
 }
 
 // wsHandshake sends a raw upgrade request so the test controls Host and
@@ -347,24 +393,109 @@ func wsHandshake(t *testing.T, front *httptest.Server, host, origin string, extr
 	return resp, conn, br
 }
 
-// The bundle's WebSocket RPC transport connects to /connect-websocket, and the
-// language server rejects the upgrade unless Origin is its own loopback
-// address. The proxy must pass the upgrade through with Origin rewritten.
-func TestProxyPassesWebSocketUpgradeWithLoopbackOrigin(t *testing.T) {
-	front, _ := newTestProxy(t, wsUpstream(t))
+// dialRelay opens a WebSocket to the proxy the way a browser behind a reverse
+// proxy would, with the public name carried in X-Forwarded-Host and Origin.
+func dialRelay(t *testing.T, front *httptest.Server, opts *websocket.DialOptions) (*websocket.Conn, *http.Response) {
+	t.Helper()
 
-	resp, conn, br := wsHandshake(t, front, "agy.example.com", "https://agy.example.com")
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("want 101 Switching Protocols, got %d", resp.StatusCode)
+	if opts == nil {
+		opts = &websocket.DialOptions{}
 	}
+	if opts.HTTPHeader == nil {
+		opts.HTTPHeader = http.Header{}
+	}
+	opts.HTTPHeader.Set("Origin", "https://agy.example.com")
+	opts.HTTPHeader.Set("X-Forwarded-Host", "agy.example.com")
 
-	_, _ = io.WriteString(conn, "ping\n")
-	line, err := br.ReadString('\n')
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(front.URL, "http")+"/connect-websocket", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line != "echo:ping\n" {
-		t.Errorf("upgraded connection did not relay data, got %q", line)
+	t.Cleanup(func() { c.CloseNow() })
+	c.SetReadLimit(1 << 20)
+	return c, resp
+}
+
+func readMessage(t *testing.T, c *websocket.Conn) []byte {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// The bundle's WebSocket RPC transport connects to /connect-websocket, and the
+// language server rejects the upgrade unless Origin is its own loopback
+// address. The proxy must relay messages with Origin rewritten.
+func TestProxyRelaysWebSocketMessagesWithLoopbackOrigin(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+
+	c, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readMessage(t, c)); got != "echo:ping" {
+		t.Errorf("relay did not carry the message, got %q", got)
+	}
+}
+
+// The language server never compresses, so the proxy has to: a browser that
+// offers permessage-deflate must get it, and large messages must arrive intact.
+func TestProxyCompressesWebSocketTowardBrowser(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+
+	c, resp := dialRelay(t, front, &websocket.DialOptions{CompressionMode: websocket.CompressionNoContextTakeover})
+	if ext := resp.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(ext, "permessage-deflate") {
+		t.Fatalf("permessage-deflate was not negotiated, got %q", ext)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, []byte("big")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readMessage(t, c); string(got) != string(bigMessage()) {
+		t.Errorf("large message was altered by the relay, got %d bytes want %d", len(got), len(bigMessage()))
+	}
+}
+
+func TestProxyWebSocketCompressionCanBeDisabled(t *testing.T) {
+	front, _ := newTestProxyWith(t, wsUpstream(t), func(o *Options) { o.DisableWSRelay = true })
+
+	c, resp := dialRelay(t, front, &websocket.DialOptions{CompressionMode: websocket.CompressionNoContextTakeover})
+	if ext := resp.Header.Get("Sec-WebSocket-Extensions"); ext != "" {
+		t.Errorf("pass-through must leave negotiation to the language server, got %q", ext)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readMessage(t, c)); got != "echo:ping" {
+		t.Errorf("pass-through did not carry the message, got %q", got)
+	}
+}
+
+func TestProxyWebSocketRelayReportsUnavailableUpstream(t *testing.T) {
+	ls := wsUpstream(t)
+	front, _ := newTestProxy(t, ls)
+	ls.Close()
+
+	resp, _, _ := wsHandshake(t, front, "agy.example.com", "https://agy.example.com")
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502 when the language server is down, got %d", resp.StatusCode)
 	}
 }
 
@@ -714,5 +845,340 @@ func TestProxyIdleTracking(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if !p.IsIdle(20 * time.Millisecond) {
 		t.Errorf("expected IsIdle(20ms) to be true after 30ms elapsed")
+	}
+}
+
+// The first visitor after a restart must not pay for fetching and patching the
+// bundle: Prewarm does that ahead of time, after which the bundle is served from
+// memory without another upstream round trip.
+func TestPrewarmServesFirstRequestFromMemory(t *testing.T) {
+	var hits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte(stubBundle))
+	})
+	ls := httptest.NewTLSServer(mux)
+	t.Cleanup(ls.Close)
+
+	p, err := New(Options{
+		TargetPort: upstreamPort(t, ls),
+		Patch:      patches.Options{MobileUX: true, CacheKey: "k1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	if err := p.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("prewarm should fetch the bundle once, got %d fetches", got)
+	}
+
+	resp := get(t, front.URL, "/main.js?agy=k1", "*/*")
+	got := body(t, resp)
+	if hits.Load() != 1 {
+		t.Errorf("the first request after prewarm went back to the language server")
+	}
+	if !strings.Contains(got, "window.location.origin") {
+		t.Errorf("prewarmed bundle was not patched: %q", got)
+	}
+	if resp.Header.Get("ETag") == "" {
+		t.Error("prewarmed bundle is missing its validator")
+	}
+}
+
+func TestPrewarmReportsLanguageServerFailure(t *testing.T) {
+	ls := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(ls.Close)
+
+	p, err := New(Options{TargetPort: upstreamPort(t, ls)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Prewarm(); err == nil {
+		t.Error("a 404 from the language server should surface as an error")
+	}
+}
+
+func TestProxyRelayKeepsBinaryMessagesBinary(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+	c, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageBinary, []byte{0, 1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	typ, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ != websocket.MessageBinary || string(data) != "echo:\x00\x01\x02" {
+		t.Errorf("binary message came back as type %v %q", typ, data)
+	}
+}
+
+func TestProxyRelayForwardsHeadersAndSubprotocol(t *testing.T) {
+	front, _ := newTestProxyWith(t, wsUpstream(t), func(o *Options) { o.TargetCSRFToken = "csrf-123" })
+	c, resp := dialRelay(t, front, &websocket.DialOptions{
+		Subprotocols: []string{"agy.v1", "other"},
+		HTTPHeader:   http.Header{"Cookie": {"agy_session=abc"}, "X-Test-Forward": {"yes"}},
+	})
+	if got := c.Subprotocol(); got != "agy.v1" {
+		t.Errorf("sub-protocol was not negotiated end to end, got %q", got)
+	}
+	_ = resp
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, []byte("headers")); err != nil {
+		t.Fatal(err)
+	}
+	var seen map[string]string
+	if err := json.Unmarshal(readMessage(t, c), &seen); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"csrf":      "csrf-123",
+		"cookie":    "agy_session=abc",
+		"origin":    "https://agy.example.com",
+		"subproto":  "agy.v1",
+		"forwarded": "yes",
+	}
+	for k, v := range want {
+		if seen[k] != v {
+			t.Errorf("language server saw %s=%q, want %q", k, seen[k], v)
+		}
+	}
+}
+
+func TestProxyRelayPassesCloseCodeToBrowser(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+	c, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, []byte("close")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := c.Read(ctx)
+	if got := websocket.CloseStatus(err); got != 4001 {
+		t.Fatalf("browser saw close status %d (%v), want 4001", got, err)
+	}
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Reason != "language server says bye" {
+		t.Errorf("close reason was not passed on: %v", err)
+	}
+}
+
+func TestProxyRelayRejectsOversizedBrowserMessage(t *testing.T) {
+	front, _ := newTestProxy(t, wsUpstream(t))
+	c, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_ = c.Write(ctx, websocket.MessageBinary, make([]byte, clientReadLimit+1))
+	_, _, err := c.Read(ctx)
+	if got := websocket.CloseStatus(err); got != websocket.StatusMessageTooBig {
+		t.Errorf("oversized message ended with status %d (%v), want %d", got, err, websocket.StatusMessageTooBig)
+	}
+}
+
+func TestCloseStatusFor(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantCode   websocket.StatusCode
+		wantReason string
+	}{
+		{"application code is passed on", websocket.CloseError{Code: 4001, Reason: "bye"}, 4001, "bye"},
+		{"going away is passed on", websocket.CloseError{Code: websocket.StatusGoingAway}, websocket.StatusGoingAway, ""},
+		{"no status received becomes a normal closure", websocket.CloseError{Code: websocket.StatusNoStatusRcvd}, websocket.StatusNormalClosure, ""},
+		{"abnormal closure cannot be sent", websocket.CloseError{Code: websocket.StatusAbnormalClosure}, websocket.StatusNormalClosure, ""},
+		{"end of stream is going away", io.EOF, websocket.StatusGoingAway, ""},
+		{"canceled is going away", context.Canceled, websocket.StatusGoingAway, ""},
+		{"any other failure is an internal error", errors.New("boom"), websocket.StatusInternalError, "relay error"},
+		{"long reasons are cut on a character boundary", websocket.CloseError{Code: 4000, Reason: strings.Repeat("\u00e9", 100)}, 4000, strings.Repeat("\u00e9", 61)},
+	}
+	for _, tc := range cases {
+		code, reason := closeStatusFor(tc.err)
+		if code != tc.wantCode || reason != tc.wantReason {
+			t.Errorf("%s: got %d %q, want %d %q", tc.name, code, reason, tc.wantCode, tc.wantReason)
+		}
+	}
+}
+
+// recordingUpstream accepts one socket and reports how it ended.
+func recordingUpstream(t *testing.T) (*httptest.Server, <-chan error) {
+	t.Helper()
+
+	ended := make(chan error, 1)
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _, err = c.Read(ctx)
+		ended <- err
+	}))
+	t.Cleanup(ls.Close)
+	return ls, ended
+}
+
+func TestProxyRelayPassesBrowserCloseCodeToLanguageServer(t *testing.T) {
+	ls, ended := recordingUpstream(t)
+	front, _ := newTestProxy(t, ls)
+	c, _ := dialRelay(t, front, nil)
+
+	if err := c.Close(websocket.StatusCode(4002), "browser says bye"); err != nil {
+		t.Logf("close handshake: %v", err)
+	}
+	select {
+	case err := <-ended:
+		var ce websocket.CloseError
+		if !errors.As(err, &ce) || ce.Code != 4002 || ce.Reason != "browser says bye" {
+			t.Errorf("language server saw %v, want close 4002 with the browser's reason", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("language server never learned that the browser closed")
+	}
+}
+
+// A browser that stops answering pings, such as a phone that went to sleep,
+// must not hold the relay and the idle accounting forever.
+func TestProxyRelayDropsBrowserThatStopsAnsweringPings(t *testing.T) {
+	oldInterval, oldTimeout := pingInterval, pingTimeout
+	pingInterval, pingTimeout = 50*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { pingInterval, pingTimeout = oldInterval, oldTimeout })
+
+	ls, ended := recordingUpstream(t)
+	front, _ := newTestProxy(t, ls)
+
+	// The client never reads, so it never answers the ping.
+	dialRelay(t, front, nil)
+
+	select {
+	case err := <-ended:
+		if got := websocket.CloseStatus(err); got != websocket.StatusInternalError {
+			t.Errorf("language server saw %v, want an internal error close", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay kept an unresponsive browser alive")
+	}
+}
+
+// wsPair returns the two ends of one WebSocket connection.
+func wsPair(t *testing.T) (client, server *websocket.Conn) {
+	t.Helper()
+
+	accepted := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		accepted <- c
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.CloseNow() })
+	server = <-accepted
+	t.Cleanup(func() { server.CloseNow() })
+	return client, server
+}
+
+func TestPumpTellsWhichSideFailed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The destination is gone, so the failure is on the write side.
+	srcClient, srcServer := wsPair(t)
+	dstClient, dstServer := wsPair(t)
+	dstServer.CloseNow()
+	dstClient.CloseNow()
+	if err := srcClient.Write(ctx, websocket.MessageText, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if writeFailed, err := pump(ctx, dstClient, srcServer); !writeFailed || err == nil {
+		t.Errorf("a dead destination should be a write failure, got writeFailed=%v err=%v", writeFailed, err)
+	}
+
+	// The source closes, so the failure is on the read side.
+	srcClient2, srcServer2 := wsPair(t)
+	dstClient2, _ := wsPair(t)
+	go func() { _ = srcClient2.Close(websocket.StatusNormalClosure, "") }()
+	if writeFailed, err := pump(ctx, dstClient2, srcServer2); writeFailed || err == nil {
+		t.Errorf("a closing source should be a read failure, got writeFailed=%v err=%v", writeFailed, err)
+	}
+}
+
+func TestCloseStatusForTreatsDisconnectsAsRoutine(t *testing.T) {
+	for _, err := range []error{
+		io.ErrUnexpectedEOF,
+		net.ErrClosed,
+		syscall.ECONNRESET,
+		syscall.EPIPE,
+		&net.OpError{Op: "read", Err: syscall.ECONNRESET},
+	} {
+		if code, _ := closeStatusFor(err); code != websocket.StatusGoingAway {
+			t.Errorf("%v became %d, want going away so no log line is written", err, code)
+		}
+	}
+}
+
+const transportAnchor = `function Xa(){var a=new URLSearchParams(location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`
+
+func upstreamServing(t *testing.T, bundle string) *httptest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte(bundle))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	server := httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// The early socket only helps when the bundle will use the WebSocket transport.
+// If that patch stopped matching, the proxy must stop injecting the early socket.
+func TestProxyDropsPrewarmWhenTransportPatchDoesNotMatch(t *testing.T) {
+	cases := []struct {
+		name   string
+		bundle string
+		want   bool
+	}{
+		{"transport patch matched", transportAnchor, true},
+		{"transport patch missed", stubBundle, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			front, _ := newTestProxy(t, upstreamServing(t, tc.bundle))
+			get(t, front.URL, "/main.js", "*/*")
+			page := body(t, get(t, front.URL, "/", "text/html"))
+			if got := strings.Contains(page, `id="agy-connection-prewarm"`); got != tc.want {
+				t.Errorf("prewarm injected = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

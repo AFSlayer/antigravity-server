@@ -32,11 +32,13 @@ Flags:
   --trusted-proxies CIDRS   Comma-separated proxy CIDRs, e.g. 127.0.0.1/32
   --session-days N          How long a signed-in device stays signed in (default 30)
   --no-mobile-patches       Serve the UI unmodified
+  --no-ws-relay             Pass WebSocket upgrades through uncompressed
   --disable-patch ID        Turn off one patch, repeatable (see agy-server doctor)
 
 Environment:
   AGY_PASSWORD, AGY_PORT, AGY_BIND, AGY_PUBLIC_URL, AGY_WORKSPACE_ROOT,
-  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME
+  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME,
+  AGY_WS_RELAY
 
 Docs: https://github.com/AFSlayer/antigravity-server
 `
@@ -108,6 +110,7 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	trustedProxies := fs.String("trusted-proxies", strings.Join(cfg.TrustedProxies, ","), "")
 	sessionDays := fs.Int("session-days", cfg.SessionDays, "")
 	noMobile := fs.Bool("no-mobile-patches", !cfg.MobileUX, "")
+	noWSRelay := fs.Bool("no-ws-relay", cfg.DisableWSRelay, "")
 	disabled := &repeatedFlag{values: cfg.DisabledPatches}
 	fs.Var(disabled, "disable-patch", "")
 
@@ -122,6 +125,7 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	cfg.LanguageServer = *languageServer
 	cfg.SessionDays = *sessionDays
 	cfg.MobileUX = !*noMobile
+	cfg.DisableWSRelay = *noWSRelay
 	cfg.TrustedProxies = splitCSV(*trustedProxies)
 	cfg.DisabledPatches = disabled.values
 
