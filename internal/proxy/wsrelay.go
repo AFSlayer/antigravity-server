@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -86,6 +87,12 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	recordActivity := func() {
+		lastActivity.Store(time.Now().UnixNano())
+	}
+
 	// result names the end that outlived the failure, so it can be told how the
 	// connection ended.
 	type result struct {
@@ -94,7 +101,7 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	done := make(chan result, 3)
 	go func() {
-		writeFailed, err := pump(ctx, upstream, client)
+		writeFailed, err := pump(ctx, upstream, client, recordActivity)
 		if writeFailed {
 			done <- result{err, client}
 			return
@@ -102,7 +109,7 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 		done <- result{err, upstream}
 	}()
 	go func() {
-		writeFailed, err := pump(ctx, client, upstream)
+		writeFailed, err := pump(ctx, client, upstream, recordActivity)
 		if writeFailed {
 			done <- result{err, upstream}
 			return
@@ -110,7 +117,7 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 		done <- result{err, client}
 	}()
 	go func() {
-		if err := keepAlive(ctx, client); err != nil {
+		if err := keepAlive(ctx, client, &lastActivity); err != nil {
 			done <- result{err, upstream}
 		}
 	}()
@@ -132,15 +139,22 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 // close frame, such as a phone that went to sleep, keeps the relay and the idle
 // accounting alive.
 var (
-	pingInterval = 30 * time.Second
-	pingTimeout  = 15 * time.Second
+	pingInterval atomic.Int64
+	pingTimeout  atomic.Int64
 )
 
-// keepAlive pings the browser until ctx ends and returns the error of the first
-// ping that goes unanswered. A concurrent reader must be running on c, which
-// the relay's pump provides.
-func keepAlive(ctx context.Context, c *websocket.Conn) error {
-	t := time.NewTicker(pingInterval)
+func init() {
+	pingInterval.Store(int64(30 * time.Second))
+	pingTimeout.Store(int64(15 * time.Second))
+}
+
+// keepAlive pings the browser when the connection has been idle for pingInterval.
+// If any message was read or written recently, the ping is skipped because the
+// connection is actively in use. A phone that went to sleep or a link that
+// died silently produces no activity, so it gets probed and dropped when unresponsive.
+func keepAlive(ctx context.Context, c *websocket.Conn, lastActivity *atomic.Int64) error {
+	interval := time.Duration(pingInterval.Load())
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
@@ -148,14 +162,29 @@ func keepAlive(ctx context.Context, c *websocket.Conn) error {
 			return nil
 		case <-t.C:
 		}
-		pctx, cancel := context.WithTimeout(ctx, pingTimeout)
+		interval = time.Duration(pingInterval.Load())
+		if lastActivity != nil {
+			idle := time.Since(time.Unix(0, lastActivity.Load()))
+			if idle < interval {
+				continue
+			}
+		}
+		timeout := time.Duration(pingTimeout.Load())
+		pctx, cancel := context.WithTimeout(ctx, timeout)
 		err := c.Ping(pctx)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
+			// If activity occurred while waiting for ping (e.g. concurrent read/write completed), ignore the timeout.
+			if lastActivity != nil && time.Since(time.Unix(0, lastActivity.Load())) < interval {
+				continue
+			}
 			return err
+		}
+		if lastActivity != nil {
+			lastActivity.Store(time.Now().UnixNano())
 		}
 	}
 }
@@ -217,17 +246,28 @@ func truncateReason(s string) string {
 // pump copies whole messages from src to dst, preserving their text or binary
 // type, until either side fails or ctx is canceled. writeFailed tells whether
 // the failure was on dst, in which case src is still healthy.
-func pump(ctx context.Context, dst, src *websocket.Conn) (writeFailed bool, err error) {
+// onActivity callbacks, if provided, are invoked whenever a message is transferred.
+func pump(ctx context.Context, dst, src *websocket.Conn, onActivity ...func()) (writeFailed bool, err error) {
 	for {
 		typ, data, err := src.Read(ctx)
 		if err != nil {
 			return false, err
+		}
+		for _, fn := range onActivity {
+			if fn != nil {
+				fn()
+			}
 		}
 		wctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
 		err = dst.Write(wctx, typ, data)
 		cancel()
 		if err != nil {
 			return true, err
+		}
+		for _, fn := range onActivity {
+			if fn != nil {
+				fn()
+			}
 		}
 	}
 }

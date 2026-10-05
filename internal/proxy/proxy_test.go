@@ -1055,9 +1055,13 @@ func TestProxyRelayPassesBrowserCloseCodeToLanguageServer(t *testing.T) {
 // A browser that stops answering pings, such as a phone that went to sleep,
 // must not hold the relay and the idle accounting forever.
 func TestProxyRelayDropsBrowserThatStopsAnsweringPings(t *testing.T) {
-	oldInterval, oldTimeout := pingInterval, pingTimeout
-	pingInterval, pingTimeout = 50*time.Millisecond, 100*time.Millisecond
-	t.Cleanup(func() { pingInterval, pingTimeout = oldInterval, oldTimeout })
+	oldInterval, oldTimeout := pingInterval.Load(), pingTimeout.Load()
+	pingInterval.Store(int64(50 * time.Millisecond))
+	pingTimeout.Store(int64(100 * time.Millisecond))
+	t.Cleanup(func() {
+		pingInterval.Store(oldInterval)
+		pingTimeout.Store(oldTimeout)
+	})
 
 	ls, ended := recordingUpstream(t)
 	front, _ := newTestProxy(t, ls)
@@ -1073,6 +1077,68 @@ func TestProxyRelayDropsBrowserThatStopsAnsweringPings(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the relay kept an unresponsive browser alive")
 	}
+}
+
+// readingUpstream accepts one socket and continuously reads messages until it closes.
+func readingUpstream(t *testing.T) (*httptest.Server, <-chan error) {
+	t.Helper()
+
+	ended := make(chan error, 1)
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			_, _, err := c.Read(ctx)
+			if err != nil {
+				ended <- err
+				return
+			}
+		}
+	}))
+	t.Cleanup(ls.Close)
+	return ls, ended
+}
+
+// A connection actively transferring messages must not be dropped by keepalive pings
+// even if ping timeouts occur while the transfer is in progress.
+func TestProxyRelayKeepsActiveConnectionAliveDuringTransfer(t *testing.T) {
+	oldInterval, oldTimeout := pingInterval.Load(), pingTimeout.Load()
+	pingInterval.Store(int64(40 * time.Millisecond))
+	pingTimeout.Store(int64(40 * time.Millisecond))
+	t.Cleanup(func() {
+		pingInterval.Store(oldInterval)
+		pingTimeout.Store(oldTimeout)
+	})
+
+	ls, ended := readingUpstream(t)
+	front, _ := newTestProxy(t, ls)
+
+	client, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Keep sending messages so activity is continuously refreshed beyond pingInterval.
+	// Transfer lasts 250ms, while pingInterval+pingTimeout is only 80ms.
+	// Without activity tracking, this would drop after 80ms.
+	for i := 0; i < 10; i++ {
+		time.Sleep(25 * time.Millisecond)
+		select {
+		case err := <-ended:
+			t.Fatalf("connection was prematurely dropped during active transfer at iteration %d: %v", i, err)
+		default:
+		}
+		if err := client.Write(ctx, websocket.MessageText, []byte("active-payload")); err != nil {
+			t.Fatalf("failed to write message %d: %v", i, err)
+		}
+	}
+
+	_ = client.Close(websocket.StatusNormalClosure, "done")
 }
 
 // wsPair returns the two ends of one WebSocket connection.
