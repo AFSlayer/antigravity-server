@@ -87,10 +87,12 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var lastActivity atomic.Int64
-	lastActivity.Store(time.Now().UnixNano())
+	var lastActivity atomic.Pointer[time.Time]
+	now := time.Now()
+	lastActivity.Store(&now)
 	recordActivity := func() {
-		lastActivity.Store(time.Now().UnixNano())
+		t := time.Now()
+		lastActivity.Store(&t)
 	}
 
 	// result names the end that outlived the failure, so it can be told how the
@@ -152,7 +154,7 @@ func init() {
 // If any message was read or written recently, the ping is skipped because the
 // connection is actively in use. A phone that went to sleep or a link that
 // died silently produces no activity, so it gets probed and dropped when unresponsive.
-func keepAlive(ctx context.Context, c *websocket.Conn, lastActivity *atomic.Int64) error {
+func keepAlive(ctx context.Context, c *websocket.Conn, lastActivity *atomic.Pointer[time.Time]) error {
 	interval := time.Duration(pingInterval.Load())
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -162,10 +164,13 @@ func keepAlive(ctx context.Context, c *websocket.Conn, lastActivity *atomic.Int6
 			return nil
 		case <-t.C:
 		}
-		interval = time.Duration(pingInterval.Load())
+		newInterval := time.Duration(pingInterval.Load())
+		if newInterval != interval && newInterval > 0 {
+			interval = newInterval
+			t.Reset(interval)
+		}
 		if lastActivity != nil {
-			idle := time.Since(time.Unix(0, lastActivity.Load()))
-			if idle < interval {
+			if act := lastActivity.Load(); act != nil && time.Since(*act) < interval {
 				continue
 			}
 		}
@@ -178,13 +183,16 @@ func keepAlive(ctx context.Context, c *websocket.Conn, lastActivity *atomic.Int6
 				return nil
 			}
 			// If activity occurred while waiting for ping (e.g. concurrent read/write completed), ignore the timeout.
-			if lastActivity != nil && time.Since(time.Unix(0, lastActivity.Load())) < interval {
-				continue
+			if lastActivity != nil {
+				if act := lastActivity.Load(); act != nil && time.Since(*act) < interval {
+					continue
+				}
 			}
 			return err
 		}
 		if lastActivity != nil {
-			lastActivity.Store(time.Now().UnixNano())
+			now := time.Now()
+			lastActivity.Store(&now)
 		}
 	}
 }
@@ -246,17 +254,15 @@ func truncateReason(s string) string {
 // pump copies whole messages from src to dst, preserving their text or binary
 // type, until either side fails or ctx is canceled. writeFailed tells whether
 // the failure was on dst, in which case src is still healthy.
-// onActivity callbacks, if provided, are invoked whenever a message is transferred.
-func pump(ctx context.Context, dst, src *websocket.Conn, onActivity ...func()) (writeFailed bool, err error) {
+// onActivity is invoked whenever a message is read or written.
+func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func()) (writeFailed bool, err error) {
 	for {
 		typ, data, err := src.Read(ctx)
 		if err != nil {
 			return false, err
 		}
-		for _, fn := range onActivity {
-			if fn != nil {
-				fn()
-			}
+		if onActivity != nil {
+			onActivity()
 		}
 		wctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
 		err = dst.Write(wctx, typ, data)
@@ -264,10 +270,8 @@ func pump(ctx context.Context, dst, src *websocket.Conn, onActivity ...func()) (
 		if err != nil {
 			return true, err
 		}
-		for _, fn := range onActivity {
-			if fn != nil {
-				fn()
-			}
+		if onActivity != nil {
+			onActivity()
 		}
 	}
 }

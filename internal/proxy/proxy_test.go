@@ -1139,6 +1139,84 @@ func TestProxyRelayKeepsActiveConnectionAliveDuringTransfer(t *testing.T) {
 	}
 
 	_ = client.Close(websocket.StatusNormalClosure, "done")
+	select {
+	case err := <-ended:
+		if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure {
+			t.Errorf("upstream ended with %v, want StatusNormalClosure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream never saw clean close")
+	}
+}
+
+// A connection where the language server is streaming messages downstream to the browser
+// must not be dropped by keepalive pings even under long streaming durations.
+func TestProxyRelayKeepsActiveConnectionAliveDuringDownstreamStreaming(t *testing.T) {
+	oldInterval, oldTimeout := pingInterval.Load(), pingTimeout.Load()
+	pingInterval.Store(int64(40 * time.Millisecond))
+	pingTimeout.Store(int64(40 * time.Millisecond))
+	t.Cleanup(func() {
+		pingInterval.Store(oldInterval)
+		pingTimeout.Store(oldTimeout)
+	})
+
+	streamDone := make(chan struct{})
+	ended := make(chan error, 1)
+
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Stream downstream messages every 25ms for 250ms (exceeding 80ms keepalive window)
+		for i := 0; i < 10; i++ {
+			time.Sleep(25 * time.Millisecond)
+			if err := c.Write(ctx, websocket.MessageText, []byte("downstream-chunk")); err != nil {
+				ended <- err
+				return
+			}
+		}
+		close(streamDone)
+
+		// Wait for client to close cleanly after receiving all chunks
+		_, _, err = c.Read(ctx)
+		ended <- err
+	}))
+	t.Cleanup(ls.Close)
+
+	front, _ := newTestProxy(t, ls)
+	client, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	received := 0
+	for {
+		_, _, err := client.Read(ctx)
+		if err != nil {
+			t.Fatalf("client read failed after %d messages: %v", received, err)
+		}
+		received++
+		if received == 10 {
+			break
+		}
+	}
+
+	<-streamDone
+	_ = client.Close(websocket.StatusNormalClosure, "done")
+
+	select {
+	case err := <-ended:
+		if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure {
+			t.Errorf("upstream ended with %v, want StatusNormalClosure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream never saw clean close")
+	}
 }
 
 // wsPair returns the two ends of one WebSocket connection.
@@ -1180,7 +1258,7 @@ func TestPumpTellsWhichSideFailed(t *testing.T) {
 	if err := srcClient.Write(ctx, websocket.MessageText, []byte("x")); err != nil {
 		t.Fatal(err)
 	}
-	if writeFailed, err := pump(ctx, dstClient, srcServer); !writeFailed || err == nil {
+	if writeFailed, err := pump(ctx, dstClient, srcServer, nil); !writeFailed || err == nil {
 		t.Errorf("a dead destination should be a write failure, got writeFailed=%v err=%v", writeFailed, err)
 	}
 
@@ -1188,7 +1266,7 @@ func TestPumpTellsWhichSideFailed(t *testing.T) {
 	srcClient2, srcServer2 := wsPair(t)
 	dstClient2, _ := wsPair(t)
 	go func() { _ = srcClient2.Close(websocket.StatusNormalClosure, "") }()
-	if writeFailed, err := pump(ctx, dstClient2, srcServer2); writeFailed || err == nil {
+	if writeFailed, err := pump(ctx, dstClient2, srcServer2, nil); writeFailed || err == nil {
 		t.Errorf("a closing source should be a read failure, got writeFailed=%v err=%v", writeFailed, err)
 	}
 }
