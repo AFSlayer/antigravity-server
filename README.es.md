@@ -152,6 +152,7 @@ Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de s
 - **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
 - **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión tras 30 segundos sin tráfico fetch ni WebSocket, evitando spinners infinitos sin interrumpir descargas pesadas.
 - **Transporte RPC por WebSocket**: Envía las RPC de conversación y Cascade por la conexión `/connect-websocket` que el paquete ya incluye, en lugar de usar streaming con fetch. iOS Safari detiene a menudo los flujos fetch a mitad de respuesta, lo que dejaba vacía la lista de conversaciones o un spinner girando sin fin. No hay vuelta automática a fetch. Para desactivarlo en todos los clientes, inicia el servidor con `--disable-patch websocket-transport-default` o define `AGY_DISABLE_PATCHES=websocket-transport-default`. Para una sola carga, abre la página con `?useWebSocket=false`.
+- **Conexión WebSocket más rápida**: `agy-server` termina por sí mismo la conexión `/connect-websocket` y comprime lo que envía al navegador, porque el servidor de lenguaje manda la lista inicial de conversaciones como JSON sin comprimir, varias veces más grande que los mismos datos por fetch. La página también abre esa conexión desde la cabecera del documento mientras el paquete aún carga, y la comprobación de vida del paquete espera 10 segundos la respuesta al ping en lugar de 2, de modo que un enlace móvil lento ya no se corta a mitad de la transferencia ni obliga a descargar todo de nuevo. El paquete parcheado se prepara en segundo plano al arrancar para que la primera carga no tenga que esperarlo. Para volver al paso directo del upgrade, inicia el servidor con `AGY_WS_RELAY=off` (también acepta `0`, `false`, `no`) o pasa `--no-ws-relay`. (La conexión anticipada y la relajación de liveness siguen activas; para desactivar el transporte WebSocket por completo, usa `--disable-patch websocket-transport-default`.)
 
 ---
 
@@ -212,7 +213,7 @@ server {
 
 ## Parches de Experiencia Móvil (UX)
 
-El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 51 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
+El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 53 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
 
 | Categoría | Comportamiento del Paquete de Escritorio | Parche de agy-server |
 | :--- | :--- | :--- |

@@ -79,6 +79,8 @@ var regexpFixtures = map[string]string{
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,
+	"websocket-liveness-probe-relax": `function QJ(a,b){var c=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{if(b.readyState!==WebSocket.OPEN)OJ(a,b);else if(lZa(a,b))if(a.inboundFrameSeq!==c)QJ(a,b);else{b.send(JSON.stringify({streamId:Ke(),type:"ping"}));var e=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{b.readyState!==WebSocket.OPEN?OJ(a,b):a.inboundFrameSeq!==e?QJ(a,b):(PJ(a),a.options.recordError?.("websocket_liveness_probe_failed",Error("no frames for 4000ms and ping unanswered; closing socket")),b.close(),OJ(a,b))},2E3)}else PJ(a)},
+2E3)}`,
 }
 
 func fullOptions() Options {
@@ -159,6 +161,8 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 		`return b!==null?b==="true":a.get("wsTransport")!=="1"}`,
+		`OJ(a,b))},1E4)}else PJ(a)},
+2E3)}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {
@@ -263,6 +267,9 @@ func TestHTMLInjection(t *testing.T) {
 	}
 
 	want := []string{
+		`id="agy-connection-prewarm"`,
+		`init.mode === "no-cors" && init.credentials === "include"`,
+		`window.WebSocket = WS`,
 		`id="agy-touch-action"`,
 		`id="agy-safe-area"`,
 		`id="agy-keyboard-detect"`,

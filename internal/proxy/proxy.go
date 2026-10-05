@@ -9,6 +9,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -36,13 +37,18 @@ type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
 	PublicURL       string
-	Patch           patches.Options
-	OnReport        ReportFunc
+	// DisableWSRelay passes the RPC WebSocket through untouched instead of
+	// terminating and compressing it in the proxy.
+	DisableWSRelay bool
+	Patch          patches.Options
+	OnReport       ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
 	handler        *httputil.ReverseProxy
+	transport      *http.Transport
+	target         *url.URL
 	opts           Options
 	reported       sync.Map
 	activeConns    atomic.Int64
@@ -50,6 +56,9 @@ type Proxy struct {
 	mainJSMu       sync.RWMutex
 	cachedMainJS   []byte
 	cachedMainTag  string
+
+	// wsTransportMissing remembers the last main.js outcome for the HTML patches.
+	wsTransportMissing atomic.Bool
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -59,18 +68,19 @@ func New(opts Options) (*Proxy, error) {
 		return nil, err
 	}
 
-	p := &Proxy{opts: opts}
+	p := &Proxy{opts: opts, target: target}
 	p.touchActivity()
 
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.FlushInterval = -1
-	rp.Transport = &http.Transport{
+	p.transport = &http.Transport{
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		DisableCompression:  true,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 	}
+	rp.Transport = p.transport
 
 	host := target.Host
 	base := rp.Director
@@ -119,6 +129,11 @@ func (p *Proxy) Handler() http.Handler {
 
 		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
+			return
+		}
+
+		if isWebSocketUpgrade(r) && r.URL.Path == relayPath && !p.opts.DisableWSRelay {
+			p.relayWebSocket(w, r)
 			return
 		}
 
@@ -249,7 +264,14 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		return err
 	}
 
-	patched, report := patches.Apply(target, body, p.opts.Patch)
+	opts := p.opts.Patch
+	if target == patches.HTML {
+		opts.WebSocketTransportMissing = p.wsTransportMissing.Load()
+	}
+	patched, report := patches.Apply(target, body, opts)
+	if target == patches.MainJS {
+		p.wsTransportMissing.Store(transportPatchMissing(report))
+	}
 	p.report(target, report)
 
 	var tag string
@@ -276,6 +298,49 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 
 	return nil
+}
+
+// prewarmTimeout bounds the startup fetch so a language server that accepts the
+// connection but never answers cannot hold the goroutine forever.
+const prewarmTimeout = 30 * time.Second
+
+// Prewarm fetches and patches the bundle once so the first browser to ask is
+// served from memory. Without it that visitor waits for the language server to
+// hand over the roughly 9 MB bundle and for the regexp patches to run over it,
+// which takes several seconds on top of the download itself.
+func (p *Proxy) Prewarm() error {
+	ctx, cancel := context.WithTimeout(context.Background(), prewarmTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.target.String()+"/main.js", nil)
+	if err != nil {
+		return err
+	}
+	if p.opts.TargetCSRFToken != "" {
+		req.Header.Set("x-codeium-csrf-token", p.opts.TargetCSRFToken)
+	}
+
+	resp, err := p.transport.RoundTrip(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("language server answered %s for /main.js", resp.Status)
+	}
+	return p.modifyResponse(resp)
+}
+
+// transportPatchMissing reports whether the WebSocket transport patch was
+// enabled but did not match, so the bundle keeps using fetch streaming.
+func transportPatchMissing(report patches.Report) bool {
+	for _, res := range report {
+		if res.ID == "websocket-transport-default" {
+			return res.Status == patches.StatusMissing
+		}
+	}
+	return false
 }
 
 func (p *Proxy) cachedBundle() ([]byte, string) {

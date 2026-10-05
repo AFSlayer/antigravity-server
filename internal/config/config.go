@@ -38,6 +38,11 @@ type Config struct {
 	// on the mobile geometry tracer, which is meant for one session at a time.
 	Debug bool `json:"-"`
 
+	// DisableWSRelay comes from AGY_WS_RELAY=off only. It returns the RPC
+	// WebSocket to a plain pass-through, as an escape hatch for a network in front
+	// of the proxy that mishandles compressed frames.
+	DisableWSRelay bool `json:"-"`
+
 	dir string
 }
 
@@ -171,6 +176,10 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("AGY_DEBUG"); v != "" && v != "0" {
 		c.Debug = true
+	}
+	switch strings.ToLower(os.Getenv("AGY_WS_RELAY")) {
+	case "off", "0", "false", "no":
+		c.DisableWSRelay = true
 	}
 	if v := os.Getenv("AGY_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = splitList(v)
