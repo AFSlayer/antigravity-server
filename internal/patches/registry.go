@@ -1400,6 +1400,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   var suppressComposerUntil = 0;
   var lastComposerTouchTime = 0;
+  var lastDialogBlurAt = -Infinity;
+  var DIALOG_CONTAINER_SELECTOR = '[role="dialog"], [role="menu"], [data-radix-popper-content-wrapper], .aux-drawer-popup';
 
   document.addEventListener("touchstart", function (e) {
     var t = e.target;
@@ -1475,7 +1477,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       // is skipped there. If the keyboard does open, the viewport resize still
       // moves the shell, just without the speculative jump.
       var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500) &&
-        !(t.closest && t.closest('[role="dialog"]'));
+        !(t.closest && t.closest(DIALOG_CONTAINER_SELECTOR));
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
       if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && !returnedFromDialog) {
@@ -1489,12 +1491,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  var lastDialogBlurAt = -Infinity;
-
   document.addEventListener("pointerdown", function (e) {
     var t = e.target;
-    if (document.querySelector('[role="dialog"], [data-radix-popper-content-wrapper], .aux-drawer-popup, [data-state="open"]')) {
-      if (t && (!t.closest || !t.closest('[role="dialog"]') || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
+    if (document.querySelector(DIALOG_CONTAINER_SELECTOR)) {
+      if (t && (!t.closest || !t.closest(DIALOG_CONTAINER_SELECTOR) || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
         lastDialogBlurAt = performance.now();
       }
     }
@@ -1502,13 +1502,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   window.addEventListener("focusout", function (e) {
     var t = e.target;
-    if (t && t.closest && (
-      t.closest('[role="dialog"]') ||
-      t.closest('[role="menu"]') ||
-      t.closest('[data-radix-popper-content-wrapper]') ||
-      t.closest('.aux-drawer-popup') ||
-      t.closest('[data-state="open"]')
-    )) {
+    if (t && t.closest && t.closest(DIALOG_CONTAINER_SELECTOR)) {
       lastDialogBlurAt = performance.now();
     }
     if (hasActiveQuestion) return;
