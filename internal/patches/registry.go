@@ -2274,7 +2274,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 (function () {
   var lastPingSuccess = 0;
   var activePingPromise = null;
-  var MAX_RELOAD_ATTEMPTS = 3;
+  var MAX_RELOAD_ATTEMPTS = 2;
   var lastNetworkActivity = Date.now();
 
   // Track fetch activity, including chunks read through response.body.getReader()
@@ -2449,9 +2449,11 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 
         // Circuit breaker: stop reloading if maximum attempts reached
         var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
+        var isConvoRoute = window.location.pathname.startsWith("/c/");
+
         if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
           console.warn("[agy-watchdog] Conversation spinner stuck > 30s, but max reload attempts reached (circuit breaker triggered)");
-          if (window.location.pathname.indexOf("/c/") !== -1) {
+          if (isConvoRoute) {
             sessionStorage.removeItem("agy_stuck_reload_count");
             sessionStorage.removeItem("agy_stuck_reload");
             window.location.href = "/";
@@ -2465,8 +2467,10 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
           pingServer(function () {
             sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
             sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
-            if (reloadCount >= 1 && window.location.pathname.indexOf("/c/") !== -1) {
+            if (reloadCount >= 1 && isConvoRoute) {
               console.warn("[agy-watchdog] Conversation spinner stuck after reload, redirecting to home view");
+              sessionStorage.removeItem("agy_stuck_reload_count");
+              sessionStorage.removeItem("agy_stuck_reload");
               window.location.href = "/";
               return;
             }

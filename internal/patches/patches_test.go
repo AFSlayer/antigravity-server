@@ -535,10 +535,13 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 
 	requiredGuards := []string{
 		"activePingPromise",
-		"MAX_RELOAD_ATTEMPTS = 3",
+		"MAX_RELOAD_ATTEMPTS = 2",
 		`sessionStorage.getItem("agy_stuck_reload_count")`,
 		`sessionStorage.removeItem("agy_stuck_reload_count")`,
 		`sessionStorage.removeItem("agy_stuck_reload")`,
+		`window.location.href = "/"`,
+		`isConvoRoute`,
+		`window.location.pathname.startsWith("/c/")`,
 		`document.querySelector('[contenteditable="true"]')`,
 		`data.available === false`,
 		`now - lastPingSuccess < 3000`,

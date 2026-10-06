@@ -25,6 +25,9 @@ function run(search) {
     addEventListener(type, fn) {
       (this.listeners[type] = this.listeners[type] || []).push(fn);
     }
+    removeEventListener(type, fn) {
+      this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn);
+    }
     close() {
       this.readyState = 3;
       this.emit("close", {});
@@ -124,6 +127,13 @@ const flush = (r) => r.timers.filter((t) => t[1] === 0).forEach((t) => t[0]());
   ws = new r.win.WebSocket(WS_URL);
   expect("a socket that already received a frame is not reused", ws !== r.socks[0] && r.socks.length === 2);
 
+  // A frame that arrives after the bundle claims the socket does not drop it.
+  r = run();
+  r.socks[0].readyState = 1;
+  ws = new r.win.WebSocket(WS_URL);
+  r.socks[0].emit("message", { data: "test" });
+  expect("adopted socket survives message event", r.socks[0].readyState === 1 && ws === r.socks[0]);
+
   // Other URLs and protocol arguments are not touched.
   r = run();
   ws = new r.win.WebSocket("wss://other.example.com/x");
@@ -137,6 +147,12 @@ const flush = (r) => r.timers.filter((t) => t[1] === 0).forEach((t) => t[0]());
   r.socks[0].close();
   ws = new r.win.WebSocket(WS_URL);
   expect("a closed early socket is not reused", ws !== r.socks[0]);
+
+  // A closing early socket is cleaned up and replaced with a new socket.
+  r = run();
+  r.socks[0].readyState = 2; // CLOSING
+  ws = new r.win.WebSocket(WS_URL);
+  expect("closing early socket is cleaned up and replaced", ws !== r.socks[0] && r.socks[0].readyState === 3 && r.socks.length === 2);
 
   // Only the first construction is served from the early socket.
   r = run();
