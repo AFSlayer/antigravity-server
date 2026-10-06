@@ -70,7 +70,7 @@ func TestLivenessProbePatchToleratesLineBreaks(t *testing.T) {
 		body := base[:i+1] + "\n" + base[i+1:]
 		out, _ := Apply(MainJS, []byte(body), Options{})
 		compact := strings.Join(strings.Fields(string(out)), "")
-		if !strings.Contains(compact, "OJ(a,b))},1E4)") {
+		if !strings.Contains(compact, "OJ(a,b))},3E4)") {
 			t.Fatalf("patch did not apply with a line break after offset %d: %q", i, base[max(0, i-20):min(len(base), i+20)])
 		}
 		breaks++

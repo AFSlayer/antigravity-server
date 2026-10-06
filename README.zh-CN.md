@@ -152,7 +152,7 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - **重连后断开警告横幅自动关闭**：服务器重新连接成功后，自动检测并关闭输入框下方残留的“Lost connection”警告横幅。
 - **加载转圈卡死自动恢复**：针对移动端 WebKit 在 HTTP/2 复用流上的挂起现象，若 fetch 与 WebSocket 均无流量且加载超过 30 秒，客户端看门狗将自动安全刷新恢复连接。
 - **WebSocket RPC 传输**：将主要对话与 Cascade RPC 切换至资源包自带的 `/connect-websocket` 连接，而非 fetch 流式传输。iOS Safari 经常在 fetch 流响应中途停住，导致会话列表为空或会话转圈一直不停。不会自动退回 fetch。如需对所有客户端关闭，请以 `--disable-patch websocket-transport-default` 启动服务器，或设置 `AGY_DISABLE_PATCHES=websocket-transport-default`。只想单次使用 fetch 时，打开页面加上 `?useWebSocket=false`。
-- **更快的 WebSocket 连接**：`agy-server` 自行终止 `/connect-websocket` 连接，并压缩发往浏览器的数据。语言服务器以未压缩的 JSON 发送最初的会话列表，体积比通过 fetch 获取同样数据大数倍。页面在资源包加载期间就从文档头部提前建立该连接，资源包的存活检测也将 ping 应答的等待时间从 2 秒放宽到 10 秒，避免缓慢的移动网络在传输中途被断开并从头重新下载。补丁后的资源包会在服务器启动时于后台提前准备好，首次访问不必等待它。如需恢复为原样转发升级请求，请以 `AGY_WS_RELAY=off`（亦支持 `0`、`false`、`no`）启动服务器或添加 `--no-ws-relay` 参数。（提前连接与存活探测放宽仍然有效；若需彻底停用 WebSocket 传输，请使用 `--disable-patch websocket-transport-default`。）
+- **更快的 WebSocket 连接**：`agy-server` 自行终止 `/connect-websocket` 连接，并压缩发往浏览器的数据。语言服务器以未压缩的 JSON 发送最初的会话列表，体积比通过 fetch 获取同样数据大数倍。页面在资源包加载期间就从文档头部提前建立该连接，资源包的存活检测也将 ping 应答的等待时间从 2 秒放宽到 30 秒，避免缓慢的移动网络在传输中途被断开并从头重新下载。补丁后的资源包会在服务器启动时于后台提前准备好，首次访问不必等待它。如需恢复为原样转发升级请求，请以 `AGY_WS_RELAY=off`（亦支持 `0`、`false`、`no`）启动服务器或添加 `--no-ws-relay` 参数。（提前连接与存活探测放宽仍然有效；若需彻底停用 WebSocket 传输，请使用 `--disable-patch websocket-transport-default`。）
 
 ---
 
