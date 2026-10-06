@@ -517,16 +517,16 @@ func All() []Patch {
 		// the large initial frames arrive further apart than that, and the ping
 		// reply queues behind them, so the socket is dropped mid-transfer and the
 		// page reconnects and downloads everything again, which never finishes.
-		// Give the ping reply 10s instead of 2s so a slow but alive link survives.
+		// Give the ping reply 30s instead of 2s so a slow but alive link survives.
 		// Not optional: when the anchor moves the drops come back silently, so
 		// doctor and the startup report must flag it as missing.
 		{
 			ID:      "websocket-liveness-probe-relax",
-			Desc:    "Give the WebSocket liveness ping 10s instead of 2s so slow links are not dropped mid-transfer",
+			Desc:    "Give the WebSocket liveness ping 30s instead of 2s so slow links are not dropped mid-transfer",
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  websocketLivenessProbeRe,
-			Replace: `${1}1E4${2}`,
+			Replace: `${1}3E4${2}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -2451,6 +2451,11 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
         var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
         if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
           console.warn("[agy-watchdog] Conversation spinner stuck > 30s, but max reload attempts reached (circuit breaker triggered)");
+          if (window.location.pathname.indexOf("/c/") !== -1) {
+            sessionStorage.removeItem("agy_stuck_reload_count");
+            sessionStorage.removeItem("agy_stuck_reload");
+            window.location.href = "/";
+          }
           return;
         }
 
@@ -2460,6 +2465,11 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
           pingServer(function () {
             sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
             sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
+            if (reloadCount >= 1 && window.location.pathname.indexOf("/c/") !== -1) {
+              console.warn("[agy-watchdog] Conversation spinner stuck after reload, redirecting to home view");
+              window.location.href = "/";
+              return;
+            }
             console.warn("[agy-watchdog] Conversation spinner stuck > 30s with idle network and live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
             window.location.reload();
           });
@@ -2574,7 +2584,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
       pre.addEventListener("close", function () { if (!claimed) pre = null; });
       pre.addEventListener("error", function () { if (!claimed) pre = null; });
       pre.addEventListener("message", drop);
-      expiry = setTimeout(drop, 20000);
+      expiry = setTimeout(drop, 60000);
     } catch (e) {
       pre = null;
     }
@@ -2602,6 +2612,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
     // The bundle assigns onopen right after construction. A socket that is
     // already open never fires it again, so replay the event once.
     function adopt(ws) {
+      try { ws.removeEventListener("message", drop); } catch (e) {}
       var handler = null;
       var fired = false;
       function fire(ev) {
@@ -2637,10 +2648,15 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
       if (!claimed && pre && protocols === undefined && pre.readyState <= 1 && sameUrl(url)) {
         claimed = true;
         clearTimeout(expiry);
+        expiry = null;
         var ws = pre;
         pre = null;
         adopt(ws);
         return ws;
+      }
+      if (pre && pre.readyState > 1) {
+        try { pre.close(); } catch (e) {}
+        pre = null;
       }
       return protocols === undefined ? new NativeWS(url) : new NativeWS(url, protocols);
     }

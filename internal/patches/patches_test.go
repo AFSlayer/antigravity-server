@@ -161,7 +161,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 		`return b!==null?b==="true":a.get("wsTransport")!=="1"}`,
-		`OJ(a,b))},1E4)}else PJ(a)},
+		`OJ(a,b))},3E4)}else PJ(a)},
 2E3)}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}

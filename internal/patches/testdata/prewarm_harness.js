@@ -156,7 +156,7 @@ const flush = (r) => r.timers.filter((t) => t[1] === 0).forEach((t) => t[0]());
 
   // An unclaimed socket is closed after the expiry timer.
   r = run();
-  const expiry = r.timers.find((t) => t[1] === 20000);
+  const expiry = r.timers.find((t) => t[1] === 60000);
   expect("an expiry timer is armed for an unclaimed socket", !!expiry);
   expiry[0]();
   expect("the unclaimed socket is closed on expiry", r.socks[0].readyState === 3);
