@@ -273,6 +273,8 @@ func TestHTMLInjection(t *testing.T) {
 		`id="agy-touch-action"`,
 		`id="agy-safe-area"`,
 		`id="agy-keyboard-detect"`,
+		`var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500)`,
+		`isPortrait() && !returnedFromDialog`,
 		`matchMedia("(pointer:coarse)")`,
 		`id="agy-signin-banner"`,
 		`/__agy/api/signin/status`,

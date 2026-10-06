@@ -1469,9 +1469,16 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
       checkNearBottom();
       predicted = loadPredicted();
+      // Closing a dialog, popover, or bottom sheet (for example the model picker) hands focus
+      // back to the composer without opening the keyboard. Shrinking for a keyboard
+      // that never arrives makes the chat jump up and settle back, so the prediction
+      // is skipped there. If the keyboard does open, the viewport resize still
+      // moves the shell, just without the speculative jump.
+      var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500) &&
+        !(t.closest && t.closest('[role="dialog"]'));
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
-      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait()) {
+      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && !returnedFromDialog) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         goalTop = fromTop = 0;
@@ -1482,7 +1489,28 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  window.addEventListener("focusout", function () {
+  var lastDialogBlurAt = -Infinity;
+
+  document.addEventListener("pointerdown", function (e) {
+    var t = e.target;
+    if (document.querySelector('[role="dialog"], [data-radix-popper-content-wrapper], .aux-drawer-popup, [data-state="open"]')) {
+      if (t && (!t.closest || !t.closest('[role="dialog"]') || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
+        lastDialogBlurAt = performance.now();
+      }
+    }
+  }, true);
+
+  window.addEventListener("focusout", function (e) {
+    var t = e.target;
+    if (t && t.closest && (
+      t.closest('[role="dialog"]') ||
+      t.closest('[role="menu"]') ||
+      t.closest('[data-radix-popper-content-wrapper]') ||
+      t.closest('.aux-drawer-popup') ||
+      t.closest('[data-state="open"]')
+    )) {
+      lastDialogBlurAt = performance.now();
+    }
     if (hasActiveQuestion) return;
     track(500);
   });
