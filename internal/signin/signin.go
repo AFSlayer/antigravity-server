@@ -36,7 +36,7 @@ const (
 	// loginTimeout bounds the Login RPC, which blocks until the callback arrives.
 	loginTimeout = 15 * time.Minute
 	// sessionTTL is how long a captured URL stays usable before we start over.
-	sessionTTL = 14 * time.Minute
+	sessionTTL = 2 * time.Minute
 )
 
 var (
@@ -205,6 +205,7 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	}
 
 	if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
+		c.finish()
 		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
 	}
 
