@@ -638,8 +638,7 @@ func TestAuthServiceLoginRedirectPatch(t *testing.T) {
 		t.Fatalf("authServiceStubLoginRedirectRe failed to match stub input")
 	}
 	stubReplaced := authServiceStubLoginRedirectRe.ReplaceAllString(stubInput, `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`)
-	expected := `const auth={loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}};<`
-	expected = expected[:len(expected)-1]
+	expected := `const auth={loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}};`
 	if stubReplaced != expected {
 		t.Fatalf("unexpected stub replacement output: %s", stubReplaced)
 	}
