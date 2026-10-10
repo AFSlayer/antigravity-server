@@ -213,7 +213,7 @@ server {
 
 ## Patches de Experiência Mobile (UX)
 
-O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 53 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 56 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
 
 | Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
 | :--- | :--- | :--- |

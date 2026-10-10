@@ -251,7 +251,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 53개가 등록되어 있으며, 터치 UX 개선, 대용량 업로드, 내비게이션, 로그인, 연결 안정성 및 캐시 무효화를 담당합니다. 그중 일부:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 56개가 등록되어 있으며, 터치 UX 개선, 대용량 업로드, 내비게이션, 로그인, 연결 안정성 및 캐시 무효화를 담당합니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |

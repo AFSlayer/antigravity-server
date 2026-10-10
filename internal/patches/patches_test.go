@@ -45,6 +45,9 @@ var regexpFixtures = map[string]string{
 	"hide-mic-button":                           `uz.displayName="GutterHoverCommentButton";var vz=(`,
 	"hide-user-profile-button":                  `function wmb({className:a=""}={}){return x.createElement("a",{href:"#",onClick:b=>{b.preventDefault()},className:` + "`w-6 h-6 rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-transparent text-muted-foreground ${a}`" + `,"aria-label":"User Profile (Placeholder)"`,
 	"sign-in-button":                            `rightElement:x.createElement(tz,{variant:"primary",onClick:()=>` + "\n" + `b.showLoginFlow()},"Sign In")`,
+	"auth-service-login-redirect":               `async loginWithRedirect(a){var b=d;`,
+	"auth-service-show-login-flow":              `async showLoginFlow(){this._onDidRequestLoginFlow.fire()}`,
+	"auth-service-stub-login-redirect":          `loginWithRedirect:async()=>{console.log("[AuthService] loginWithRedirect")},showLoginFlow:async()=>{console.log("[AuthService] showLoginFlow")}`,
 	"mobile-skip-notification-prompt":           `var e=!!this.storageService.get("didAskForNotificationPermission");`,
 	"mobile-new-convo-view":                     `const tub=()=>{var a=yM(),b=IT();return(0,x.useCallback)((c,e)=>{b(HT.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var uub=()=>{var a=tub(),{q:b}=dM({strict:!1});return x.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},x.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},x.createElement(sub,{surface:"background"})),`,
 	"mobile-new-convo-header":                   `CM=()=>QL({select:a=>a.location.pathname==="/"})`,
@@ -173,6 +176,18 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 
 	if !strings.Contains(body, `onClick:()=>{window.location.href="/__agy/signin"}`) {
 		t.Error("sign-in button was not redirected")
+	}
+
+	if !strings.Contains(body, `async loginWithRedirect(a){window.location.href="/__agy/signin";return;`) {
+		t.Error("authService class loginWithRedirect was not redirected")
+	}
+
+	if !strings.Contains(body, `async showLoginFlow(){window.location.href="/__agy/signin";return;`) {
+		t.Error("authService class showLoginFlow was not redirected")
+	}
+
+	if !strings.Contains(body, `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`) {
+		t.Error("authService stub login was not redirected")
 	}
 }
 
@@ -596,5 +611,36 @@ func TestTopSentinelGuardAndFetchInterceptor(t *testing.T) {
 		if !strings.Contains(body, guard) {
 			t.Errorf("missing top scroll prepend anchoring element %q in injected HTML", guard)
 		}
+	}
+}
+
+func TestAuthServiceLoginRedirectPatch(t *testing.T) {
+	classInput := `async loginWithRedirect(a){var b=d,c=d;try{`
+	if !authServiceLoginRedirectRe.MatchString(classInput) {
+		t.Fatalf("authServiceLoginRedirectRe failed to match class method")
+	}
+	classReplaced := authServiceLoginRedirectRe.ReplaceAllString(classInput, `async loginWithRedirect($1){window.location.href="/__agy/signin";return;`)
+	if classReplaced != `async loginWithRedirect(a){window.location.href="/__agy/signin";return;var b=d,c=d;try{` {
+		t.Fatalf("unexpected class replacement: %s", classReplaced)
+	}
+
+	flowInput := `async showLoginFlow(){this._onDidRequestLoginFlow.fire()}`
+	if !authServiceShowLoginFlowRe.MatchString(flowInput) {
+		t.Fatalf("authServiceShowLoginFlowRe failed to match showLoginFlow method")
+	}
+	flowReplaced := authServiceShowLoginFlowRe.ReplaceAllString(flowInput, `async showLoginFlow(){window.location.href="/__agy/signin";return;`)
+	if flowReplaced != `async showLoginFlow(){window.location.href="/__agy/signin";return;this._onDidRequestLoginFlow.fire()}` {
+		t.Fatalf("unexpected showLoginFlow replacement: %s", flowReplaced)
+	}
+
+	stubInput := `const auth={loginWithRedirect:async()=>{console.log("[AuthService] loginWithRedirect")},showLoginFlow:async()=>{console.log("[AuthService] showLoginFlow")}};`
+	if !authServiceStubLoginRedirectRe.MatchString(stubInput) {
+		t.Fatalf("authServiceStubLoginRedirectRe failed to match stub input")
+	}
+	stubReplaced := authServiceStubLoginRedirectRe.ReplaceAllString(stubInput, `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`)
+	expected := `const auth={loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}};<`
+	expected = expected[:len(expected)-1]
+	if stubReplaced != expected {
+		t.Fatalf("unexpected stub replacement output: %s", stubReplaced)
 	}
 }

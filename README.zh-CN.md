@@ -229,7 +229,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 53 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 56 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |

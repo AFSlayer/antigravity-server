@@ -11,6 +11,10 @@ var (
 
 	signInButtonRe = regexp.MustCompile(`onClick:\(\)=>[\r\n\s]*(?:\{[\r\n\s]*(?:\w+\(\);[\r\n\s]*)?\w+\.showLoginFlow\(\)[\r\n\s]*\}|\w+\.showLoginFlow\(\))`)
 
+	authServiceLoginRedirectRe     = regexp.MustCompile(`async loginWithRedirect\(([a-zA-Z0-9_$]+)\)\{`)
+	authServiceShowLoginFlowRe     = regexp.MustCompile(`async showLoginFlow\(\)\{`)
+	authServiceStubLoginRedirectRe = regexp.MustCompile(`loginWithRedirect:async\(\)=>\{console\.log\("\[AuthService\] loginWithRedirect"\)\},showLoginFlow:async\(\)=>\{console\.log\("\[AuthService\] showLoginFlow"\)\}`)
+
 	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",replace:!0,throw:!0\}\)`)
 
 	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;[a-zA-Z0-9_$]+\.preventDefault\(\);`)
@@ -158,6 +162,30 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  signInButtonRe,
 			Replace: `onClick:()=>{window.location.href="/__agy/signin"}`,
+		},
+		{
+			ID:      "auth-service-login-redirect",
+			Desc:    "Redirect web auth service login calls to the network sign-in page",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  authServiceLoginRedirectRe,
+			Replace: `async loginWithRedirect($1){window.location.href="/__agy/signin";return;`,
+		},
+		{
+			ID:      "auth-service-show-login-flow",
+			Desc:    "Redirect web auth service showLoginFlow to the network sign-in page",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  authServiceShowLoginFlowRe,
+			Replace: `async showLoginFlow(){window.location.href="/__agy/signin";return;`,
+		},
+		{
+			ID:      "auth-service-stub-login-redirect",
+			Desc:    "Redirect stub web auth service calls to the network sign-in page",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  authServiceStubLoginRedirectRe,
+			Replace: `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`,
 		},
 
 		// The prompt is an in-app banner shown once when notificationPermission is
