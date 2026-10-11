@@ -9,7 +9,7 @@ function expect(name, ok) {
   if (!ok) failures.push(name);
 }
 
-function run(search) {
+function run(search, pathname) {
   const log = [];
   const socks = [];
   const timers = [];
@@ -49,7 +49,8 @@ function run(search) {
       protocol: "https:",
       host: "agy.example.com",
       origin: "https://agy.example.com",
-      href: "https://agy.example.com/",
+      href: "https://agy.example.com" + (pathname || "/"),
+      pathname: pathname || "/",
       search: search || "",
     },
     URL,
@@ -172,10 +173,16 @@ const flush = (r) => r.timers.filter((t) => t[1] === 0).forEach((t) => t[0]());
 
   // An unclaimed socket is closed after the expiry timer.
   r = run();
-  const expiry = r.timers.find((t) => t[1] === 60000);
+  const expiry = r.timers.find((t) => t[1] === 120000);
   expect("an expiry timer is armed for an unclaimed socket", !!expiry);
   expiry[0]();
   expect("the unclaimed socket is closed on expiry", r.socks[0].readyState === 3);
+
+  // Onboarding and sign-in routes skip prewarming entirely.
+  r = run("", "/onboarding");
+  expect("onboarding route opens nothing early", nativeNews(r) === 0 && nativeFetches(r) === 0);
+  r = run("", "/__agy/signin");
+  expect("signin route opens nothing early", nativeNews(r) === 0 && nativeFetches(r) === 0);
 
   // The page opts out of the WebSocket transport: nothing is opened early.
   r = run("?useWebSocket=false");

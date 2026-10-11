@@ -1,12 +1,16 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
+	"github.com/AFSlayer/antigravity-server/internal/signin"
+	"github.com/AFSlayer/antigravity-server/internal/ui"
 )
 
 func TestCSRFTokenPersistence(t *testing.T) {
@@ -92,5 +96,67 @@ func TestSyncInstanceCSRFToken(t *testing.T) {
 	r.syncInstanceCSRFToken(inst3)
 	if inst3.CSRFToken != "token-inst-2-updated" {
 		t.Errorf("want %q, got %q", "token-inst-2-updated", inst3.CSRFToken)
+	}
+}
+
+func TestWrapRootWithSignInRedirect(t *testing.T) {
+	fallback := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fallback-body"))
+	})
+
+	// Case 1: Coordinator is nil -> fallback is returned as is
+	h1 := wrapRootWithSignInRedirect(fallback, nil)
+	rec1 := httptest.NewRecorder()
+	h1.ServeHTTP(rec1, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec1.Code != http.StatusOK || rec1.Body.String() != "fallback-body" {
+		t.Errorf("expected fallback when coordinator is nil, got code %d body %s", rec1.Code, rec1.Body.String())
+	}
+
+	// Case 2: Coordinator is unavailable (empty urlFile) -> fallback is returned
+	cUnavailable := signin.New(&lsproc.Instance{Port: 1234}, "")
+	h2 := wrapRootWithSignInRedirect(fallback, cUnavailable)
+	rec2 := httptest.NewRecorder()
+	h2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec2.Code != http.StatusOK || rec2.Body.String() != "fallback-body" {
+		t.Errorf("expected fallback when coordinator is unavailable, got code %d body %s", rec2.Code, rec2.Body.String())
+	}
+
+	// Case 3: Coordinator is available but not signed in -> redirect GET / and GET /onboarding
+	cUnsigned := signin.New(&lsproc.Instance{Port: 99999}, "/tmp/urlfile")
+	h3 := wrapRootWithSignInRedirect(fallback, cUnsigned)
+
+	// 3a. GET / -> 302 redirect to /__agy/signin
+	rec3a := httptest.NewRecorder()
+	h3.ServeHTTP(rec3a, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec3a.Code != http.StatusFound {
+		t.Errorf("expected 302 redirect for GET /, got %d", rec3a.Code)
+	}
+	if loc := rec3a.Header().Get("Location"); loc != ui.SignInPath {
+		t.Errorf("expected redirect location %q, got %q", ui.SignInPath, loc)
+	}
+
+	// 3b. GET /onboarding -> 302 redirect to /__agy/signin
+	rec3b := httptest.NewRecorder()
+	h3.ServeHTTP(rec3b, httptest.NewRequest(http.MethodGet, "/onboarding", nil))
+	if rec3b.Code != http.StatusFound {
+		t.Errorf("expected 302 redirect for GET /onboarding, got %d", rec3b.Code)
+	}
+	if loc := rec3b.Header().Get("Location"); loc != ui.SignInPath {
+		t.Errorf("expected redirect location %q, got %q", ui.SignInPath, loc)
+	}
+
+	// 3c. GET /main.js -> not redirected, serves fallback
+	rec3c := httptest.NewRecorder()
+	h3.ServeHTTP(rec3c, httptest.NewRequest(http.MethodGet, "/main.js", nil))
+	if rec3c.Code != http.StatusOK || rec3c.Body.String() != "fallback-body" {
+		t.Errorf("expected fallback for /main.js, got code %d", rec3c.Code)
+	}
+
+	// 3d. POST / -> not redirected, serves fallback
+	rec3d := httptest.NewRecorder()
+	h3.ServeHTTP(rec3d, httptest.NewRequest(http.MethodPost, "/", nil))
+	if rec3d.Code != http.StatusOK || rec3d.Body.String() != "fallback-body" {
+		t.Errorf("expected fallback for POST /, got code %d", rec3d.Code)
 	}
 }

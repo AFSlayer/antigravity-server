@@ -2570,7 +2570,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 // The bundle opens its socket as: fetch(https URL, no-cors), then new WebSocket.
 // Both are replayed here. The warm-up request is shared rather than repeated, and
 // the socket is returned from the WebSocket constructor in place of a new one.
-// A socket the bundle never claims is closed after 20 seconds, and one that
+// A socket the bundle never claims is closed after 120 seconds, and one that
 // receives a frame before it is claimed is dropped so no message can be missed.
 // Any failure falls back to the bundle opening its own connection.
 //
@@ -2587,6 +2587,10 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
 
     // The bundle reads the same parameters to pick its transport. When it will
     // use fetch it never asks for the socket, so do not open one.
+    // Skip prewarming on onboarding or sign-in routes where RPC sockets are never opened.
+    var path = location.pathname || "/";
+    if (path === "/onboarding" || path.indexOf("/__agy/") === 0) return;
+
     var query = new URLSearchParams(location.search);
     var useWS = query.get("useWebSocket");
     if (useWS !== null ? useWS !== "true" : query.get("wsTransport") === "1") return;
@@ -2616,7 +2620,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
       pre.addEventListener("close", function () { if (!claimed) pre = null; });
       pre.addEventListener("error", function () { if (!claimed) pre = null; });
       pre.addEventListener("message", drop);
-      expiry = setTimeout(drop, 60000);
+      expiry = setTimeout(drop, 120000);
     } catch (e) {
       pre = null;
     }
