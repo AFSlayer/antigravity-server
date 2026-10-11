@@ -63,6 +63,10 @@ type Coordinator struct {
 
 	mu      sync.Mutex
 	pending *session
+
+	authMu         sync.Mutex
+	cachedSignedIn bool
+	cachedSignedAt time.Time
 }
 
 // New returns a Coordinator. urlFile is where the browser shim records URLs; it
@@ -78,12 +82,34 @@ func (c *Coordinator) Available() bool {
 	return c.instance != nil && c.urlFile != ""
 }
 
-// SignedIn reports whether Antigravity already holds valid credentials.
+// SignedIn reports whether Antigravity already holds valid credentials,
+// caching positive results for 30 seconds and negative results for 3 seconds
+// to avoid querying the language server on every HTTP request.
 func (c *Coordinator) SignedIn(ctx context.Context) bool {
 	if c.instance == nil {
 		return false
 	}
-	return c.instance.SignedIn(ctx)
+
+	c.authMu.Lock()
+	now := time.Now()
+	if c.cachedSignedIn && now.Sub(c.cachedSignedAt) < 30*time.Second {
+		c.authMu.Unlock()
+		return true
+	}
+	if !c.cachedSignedIn && !c.cachedSignedAt.IsZero() && now.Sub(c.cachedSignedAt) < 3*time.Second {
+		c.authMu.Unlock()
+		return false
+	}
+	c.authMu.Unlock()
+
+	signedIn := c.instance.SignedIn(ctx)
+
+	c.authMu.Lock()
+	c.cachedSignedIn = signedIn
+	c.cachedSignedAt = time.Now()
+	c.authMu.Unlock()
+
+	return signedIn
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open. If
@@ -212,6 +238,10 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	// The Login RPC needs a moment to exchange the code for a token.
 	for i := 0; i < 20; i++ {
 		if c.instance.SignedIn(ctx) {
+			c.authMu.Lock()
+			c.cachedSignedIn = true
+			c.cachedSignedAt = time.Now()
+			c.authMu.Unlock()
 			c.finish()
 			return nil
 		}

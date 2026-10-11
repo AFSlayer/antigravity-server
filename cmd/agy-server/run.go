@@ -204,7 +204,8 @@ func (r *runner) start() error {
 		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS, isIdle)
 	}
 
-	ui.NewSignIn(signin.New(instance, r.shimURLFile)).Register(publicMux)
+	coordinator := signin.New(instance, r.shimURLFile)
+	ui.NewSignIn(coordinator).Register(publicMux)
 	if r.cfg.Debug {
 		if debug, err := ui.NewDebug(r.cfg.Path("mobile-debug.log")); err != nil {
 			warn("could not open the mobile debug log: %v", err)
@@ -213,7 +214,9 @@ func (r *runner) start() error {
 			info("Mobile debug tracing on, writing to %s", dim(debug.Path()))
 		}
 	}
-	publicMux.Handle("/", p.Handler())
+
+	var rootHandler http.Handler = wrapRootWithSignInRedirect(p.Handler(), coordinator)
+	publicMux.Handle("/", rootHandler)
 
 	localUI := ui.NewLocal(ui.LocalOptions{
 		Version:       version,
@@ -238,7 +241,7 @@ func (r *runner) start() error {
 	controlURL := fmt.Sprintf("http://127.0.0.1:%d/", localPort)
 
 	statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	signedIn := instance.SignedIn(statusCtx)
+	signedIn := coordinator.SignedIn(statusCtx)
 	statusCancel()
 
 	r.printReady(publicPort, controlURL, generated, signedIn)
@@ -570,4 +573,21 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coordinator) http.Handler {
+	if coordinator == nil || !coordinator.Available() {
+		return fallback
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/") {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			if !coordinator.SignedIn(ctx) {
+				http.Redirect(w, r, ui.SignInPath, http.StatusFound)
+				return
+			}
+		}
+		fallback.ServeHTTP(w, r)
+	})
 }
