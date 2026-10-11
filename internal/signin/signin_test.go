@@ -2,7 +2,6 @@ package signin
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -63,11 +62,6 @@ func TestCoordinatorSignedInCaching(t *testing.T) {
 		Port:      port,
 		CSRFToken: "test-token",
 	}
-
-	// Override default transport for testing self-signed cert if needed, but lsproc.Call
-	// uses custom HTTP client skipping verify:
-	// http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	c := New(inst, "/tmp/dummy-url")
 	ctx := context.Background()

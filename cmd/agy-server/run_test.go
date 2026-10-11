@@ -146,7 +146,17 @@ func TestWrapRootWithSignInRedirect(t *testing.T) {
 		t.Errorf("expected redirect location %q, got %q", ui.SignInPath, loc)
 	}
 
-	// 3c. GET /main.js -> not redirected, serves fallback
+	// 3c. GET /onboarding/ (trailing slash) -> 302 redirect to /__agy/signin
+	rec3cSlash := httptest.NewRecorder()
+	h3.ServeHTTP(rec3cSlash, httptest.NewRequest(http.MethodGet, "/onboarding/", nil))
+	if rec3cSlash.Code != http.StatusFound {
+		t.Errorf("expected 302 redirect for GET /onboarding/, got %d", rec3cSlash.Code)
+	}
+	if loc := rec3cSlash.Header().Get("Location"); loc != ui.SignInPath {
+		t.Errorf("expected redirect location %q, got %q", ui.SignInPath, loc)
+	}
+
+	// 3d. GET /main.js -> not redirected, serves fallback
 	rec3c := httptest.NewRecorder()
 	h3.ServeHTTP(rec3c, httptest.NewRequest(http.MethodGet, "/main.js", nil))
 	if rec3c.Code != http.StatusOK || rec3c.Body.String() != "fallback-body" {

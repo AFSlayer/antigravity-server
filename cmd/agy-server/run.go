@@ -580,7 +580,7 @@ func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coord
 		return fallback
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/onboarding") {
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/") {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			if !coordinator.SignedIn(ctx) {
