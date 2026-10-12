@@ -213,11 +213,12 @@ server {
 
 ## Patches de Experiência Mobile (UX)
 
-O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 56 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 57 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
 
 | Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
 | :--- | :--- | :--- |
 | **Navegação** | Botão de nova conversa `(+)` omitido em telas móveis | Restaura o botão `(+)` de Nova Conversa ao lado de cada projeto |
+| **Configurações e Customizações** | Aba Customizations removida do modal Settings no pacote web; inacessível no mobile sem barra lateral | Preserva a aba Customizations dentro do modal Settings no mobile e desktop |
 | **Ações de Conversa** | Sem suporte para excluir, fixar ou arquivar no toque | Adiciona Excluir, Fixar e Arquivar ao menu kebab `⋮` e à barra de título |
 | **Ações de Mensagem** | Botões desfazer e copiar ocultos sob estado hover | Exibe botões Desfazer (`↶`) e Copiar (`📋`) permanentemente no toque |
 | **Teclado Virtual e Rolagem** | Viewport oscila e deixa vãos no iOS Safari; rolagem para o topo em conversas longas gera tempestade de requisições | Rastreamento de visualViewport, redução de Safe Area para 0px, layout travado, ancoragem de rolagem CSS e guardião contra requisições em cascata |
