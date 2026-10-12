@@ -229,11 +229,12 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 56 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 57 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |
 | **导航栏** | 移动端屏幕隐藏项目旁的新建 `(+)` 按钮 | 在每个项目行右侧恢复 `(+)` 新建对话按钮 |
+| **设置与自定义** | Web 资源包设置模态框中移除 Customizations 选项卡，无侧边栏的移动端无法访问 | 在移动端和桌面端设置模态框中均保留 Customizations 选项卡 |
 | **对话管理** | 触控设备无法删除、置顶或归档对话 | 在 `⋮` 菜单和标题栏中补全删除、置顶 (Pin) 与归档 (Archive) 功能 |
 | **消息操作** | 撤销与复制按钮仅在鼠标悬停时显示 | 在触控设备上常驻显示撤销（`↶`）和复制（`📋`）按钮 |
 | **虚拟键盘与滚动** | iOS Safari 视口抖动、底部留白，长对话向上滚动时触发雪崩式重复请求 | 实时跟踪 visualViewport 偏移，折叠 Safe Area 为 0px，锁定对话布局，启用 CSS 滚动锚定并添加顶部滚动守卫阻断级联请求 |

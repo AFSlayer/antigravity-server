@@ -213,11 +213,12 @@ server {
 
 ## Parches de Experiencia Móvil (UX)
 
-El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 56 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
+El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 57 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
 
 | Categoría | Comportamiento del Paquete de Escritorio | Parche de agy-server |
 | :--- | :--- | :--- |
 | **Navegación** | Botón de nuevo proyecto `(+)` omitido en pantallas móviles | Restaura el botón `(+)` Nueva Conversación junto a cada proyecto |
+| **Ajustes y Personalización** | Pestaña Customizations eliminada del modal Settings en el paquete web; inaccesible en móvil sin barra lateral | Conserva la pestaña Customizations dentro del modal Settings en móvil y escritorio |
 | **Gestión de Conversaciones** | Sin opciones de eliminar, fijar o archivar en táctil | Añade Eliminar, Fijar y Archivar al menú kebab `⋮` y a la barra de título |
 | **Acciones de Mensaje** | Botones de deshacer y copiar ocultos tras estados hover | Muestra permanentemente los botones Deshacer (`↶`) 및 Copiar (`📋`) en táctil |
 | **Teclado Virtual y Desplazamiento** | Rebote de viewport y espacios en blanco en iOS Safari; desplazamiento superior en chats largos dispara tormentas de peticiones | Seguimiento dinámico de visualViewport, colapso de Safe Area a 0px, fijación de layout, anclaje de desplazamiento CSS y guardián contra tormentas de peticiones |

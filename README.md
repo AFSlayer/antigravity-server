@@ -251,11 +251,12 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 56 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 57 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
 | **Navigation** | Project `(+)` button omitted on mobile screens | Restores the `(+)` New Conversation button next to each project row |
+| **Settings & Customizations** | Customizations tab removed from Settings modal in web bundle; inaccessible on mobile without sidebar | Preserves the Customizations tab inside the Settings modal on mobile and desktop |
 | **Conversation Actions** | No delete, pin, or archive on touch | Adds Delete, Pin, and Archive to the `⋮` kebab menu and titlebar |
 | **Message Actions** | Undo and Copy buttons hidden behind hover states | Displays Undo (`↶`) and Copy (`📋`) buttons on touch devices |
 | **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll; upward scroll in long chats triggers cascading fetch storms | Dynamic visualViewport offset tracking, 0px safe-area collapse, pinned conversation layout, CSS scroll anchoring, and top-scroll guard against cascading fetch storms |

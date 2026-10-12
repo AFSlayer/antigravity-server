@@ -68,6 +68,7 @@ var regexpFixtures = map[string]string{
 	"mobile-hide-aux-sidebar":                   `G.createElement(bZ,{iconName:"dock_to_bottom",onClick:m,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"})`,
 	"settings-rules-editor":                     `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var w=k||m||p,[y,z]=(0,G.useState)(!1),`,
 	"settings-customizations-show-edit":         `"Copy path")),!A&&n&&z.createElement(z.Fragment,null,Yz.createElement(Yz,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":`,
+	"settings-restore-customizations-tab":       `h=k}else h=g;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");` + "\n" + `return l};if(!c.size)return g(h);`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
 	"force-disable-telemetry":                   `return{telemetryEnabled:f,marketingEmailsEnabled:`,
 	"virtualization-disable-contraction":        `contractionSafetyPx:3E3,outerRadiusPx:5E3`,
@@ -641,5 +642,16 @@ func TestAuthServiceLoginRedirectPatch(t *testing.T) {
 	expected := `const auth={loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}};`
 	if stubReplaced != expected {
 		t.Fatalf("unexpected stub replacement output: %s", stubReplaced)
+	}
+}
+
+func TestSettingsRestoreCustomizationsPatch(t *testing.T) {
+	settingsInput := `h.length>0&&k.set(l.screen,{sections:h})):k.set(l.screen,h);h=k}else h=g;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");` + "\n" + `return l};if(!c.size)return g(h);`
+	if !settingsRestoreCustomizationsRe.MatchString(settingsInput) {
+		t.Fatalf("settingsRestoreCustomizationsRe failed to match settings filter input")
+	}
+	settingsReplaced := settingsRestoreCustomizationsRe.ReplaceAllString(settingsInput, `g=$1=>$1;`)
+	if !strings.Contains(settingsReplaced, `h=k}else h=g;g=l=>l;if(!c.size)return g(h);`) {
+		t.Fatalf("unexpected settings restore replacement output: %s", settingsReplaced)
 	}
 }
