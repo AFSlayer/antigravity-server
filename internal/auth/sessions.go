@@ -35,6 +35,8 @@ type SessionStore struct {
 	ttl      time.Duration
 	sessions map[string]*Session
 	dirty    bool
+	modTime  time.Time
+	size     int64
 }
 
 func hashToken(raw string) string {
@@ -57,28 +59,79 @@ func NewSessionStore(path string, ttl time.Duration) (*SessionStore, error) {
 		ttl:      ttl,
 		sessions: map[string]*Session{},
 	}
+	if err := s.loadFromDiskLocked(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
 
-	data, err := os.ReadFile(path)
+func (s *SessionStore) loadFromDiskLocked() error {
+	st, statErr := os.Stat(s.path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			s.sessions = map[string]*Session{}
+			s.modTime = time.Time{}
+			s.size = 0
+			s.dirty = false
+			return nil
+		}
+		return statErr
+	}
+
+	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return s, nil
+			s.sessions = map[string]*Session{}
+			s.modTime = time.Time{}
+			s.size = 0
+			s.dirty = false
+			return nil
 		}
-		return nil, err
+		return err
 	}
 
 	var stored []*Session
 	if err := json.Unmarshal(data, &stored); err != nil {
-		return s, nil
+		s.modTime = st.ModTime()
+		s.size = st.Size()
+		return nil
 	}
 
+	loaded := make(map[string]*Session, len(stored))
 	now := time.Now()
 	for _, sess := range stored {
-		if sess.Key == "" || sess.Expired(now) {
+		if sess == nil || sess.Key == "" || sess.Expired(now) {
 			continue
 		}
-		s.sessions[sess.Key] = sess
+		loaded[sess.Key] = sess
 	}
-	return s, nil
+	s.sessions = loaded
+	s.modTime = st.ModTime()
+	s.size = st.Size()
+	s.dirty = false
+	return nil
+}
+
+// reloadIfChangedLocked picks up changes written by another process such as
+// 'agy-server sessions revoke' so revoked devices do not stay signed in on a
+// running server or get resurrected on the next Flush.
+func (s *SessionStore) reloadIfChangedLocked() {
+	if s.path == "" {
+		return
+	}
+	st, err := os.Stat(s.path)
+	if err != nil {
+		if os.IsNotExist(err) && (!s.modTime.IsZero() || s.size != 0) {
+			s.sessions = map[string]*Session{}
+			s.modTime = time.Time{}
+			s.size = 0
+			s.dirty = false
+		}
+		return
+	}
+	if !st.ModTime().Equal(s.modTime) || st.Size() != s.size {
+		_ = s.loadFromDiskLocked()
+	}
 }
 
 // Create issues a new session and returns the raw token for the cookie. Only its
@@ -100,14 +153,16 @@ func (s *SessionStore) Create(userAgent, ip string) (string, error) {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 	s.pruneLocked(now)
 	s.sessions[sess.Key] = sess
 	if len(s.sessions) > maxSessions {
 		s.evictOldestLocked(len(s.sessions) - maxSessions)
 	}
-	s.mu.Unlock()
 
-	return raw, s.persist()
+	return raw, s.persistLocked()
 }
 
 // Validate reports whether raw names a live session, refreshing its last-seen
@@ -121,6 +176,8 @@ func (s *SessionStore) Validate(raw string) bool {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 
 	sess, ok := s.sessions[key]
 	if !ok {
@@ -145,24 +202,30 @@ func (s *SessionStore) Revoke(raw string) error {
 		return nil
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 	delete(s.sessions, hashToken(raw))
-	s.mu.Unlock()
-	return s.persist()
+	return s.persistLocked()
 }
 
 // RevokeAll signs out every device and reports how many were affected.
 func (s *SessionStore) RevokeAll() (int, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 	n := len(s.sessions)
 	s.sessions = map[string]*Session{}
-	s.mu.Unlock()
-	return n, s.persist()
+	return n, s.persistLocked()
 }
 
 // List returns active sessions, newest first.
 func (s *SessionStore) List() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 
 	out := make([]Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
@@ -178,6 +241,8 @@ func (s *SessionStore) List() []Session {
 func (s *SessionStore) Count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.reloadIfChangedLocked()
 	return len(s.sessions)
 }
 
@@ -207,32 +272,42 @@ func (s *SessionStore) evictOldestLocked(n int) {
 	s.dirty = true
 }
 
-func (s *SessionStore) persist() error {
-	s.mu.Lock()
-	list := make([]*Session, 0, len(s.sessions))
+func (s *SessionStore) persistLocked() error {
+	list := make([]Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
-		list = append(list, sess)
+		list = append(list, *sess)
 	}
 	s.dirty = false
-	s.mu.Unlock()
 
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, append(data, '\n'), 0o600)
+	tmpPath := s.path + ".tmp"
+	if err := os.WriteFile(tmpPath, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if st, err := os.Stat(s.path); err == nil {
+		s.modTime = st.ModTime()
+		s.size = st.Size()
+	}
+	return nil
 }
 
 // Flush writes pending last-seen updates. Call it periodically and on shutdown.
 func (s *SessionStore) Flush() error {
 	s.mu.Lock()
-	dirty := s.dirty
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	if !dirty {
+	s.reloadIfChangedLocked()
+	if !s.dirty {
 		return nil
 	}
-	return s.persist()
+	return s.persistLocked()
 }
 
 func truncate(s string, n int) string {

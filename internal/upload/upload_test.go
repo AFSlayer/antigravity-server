@@ -127,3 +127,48 @@ func TestPathTraversalAttemptBlocked(t *testing.T) {
 		t.Fatalf("file not safely sandboxed inside workspace root: %v", err)
 	}
 }
+
+func TestUploadDuplicateFileNameDoesNotOverwrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	u := New(Options{WorkspaceRoot: tmpDir})
+
+	uploadOnce := func(content string) {
+		t.Helper()
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		_ = writer.WriteField("conversationId", "convo-dup")
+		part, err := writer.CreateFormFile("file", "image.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = part.Write([]byte(content))
+		_ = writer.Close()
+
+		req := httptest.NewRequest(http.MethodPost, UploadAPIPath, &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+		u.handleUpload(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	uploadOnce("first image")
+	uploadOnce("second image")
+
+	first, err := os.ReadFile(filepath.Join(tmpDir, "uploads", "convo-dup", "image.png"))
+	if err != nil {
+		t.Fatalf("read first upload: %v", err)
+	}
+	if string(first) != "first image" {
+		t.Errorf("first upload was overwritten: got %q", string(first))
+	}
+
+	second, err := os.ReadFile(filepath.Join(tmpDir, "uploads", "convo-dup", "image_2.png"))
+	if err != nil {
+		t.Fatalf("read second upload: %v", err)
+	}
+	if string(second) != "second image" {
+		t.Errorf("second upload content = %q, want %q", string(second), "second image")
+	}
+}

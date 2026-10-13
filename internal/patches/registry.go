@@ -2033,7 +2033,7 @@ const signInBanner = `<style id="agy-signin-banner-style">
   function check() {
     fetch("/__agy/api/signin/status", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && !d.signedIn) start(); })
+      .then(function (d) { if (d && (d.needsSignIn !== undefined ? d.needsSignIn : !d.signedIn)) start(); })
       .catch(function () {});
   }
 
