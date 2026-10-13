@@ -32,7 +32,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 
 | | Official remote (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Mobile web UI** | The desktop bundle as-is | **25 named runtime patches** for touch |
+| **Mobile web UI** | The desktop bundle as-is | **57 named runtime patches** for touch |
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |

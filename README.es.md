@@ -32,7 +32,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interfaz web móvil** | El bundle de escritorio tal cual | **25 parches en tiempo de ejecución** para táctil |
+| **Interfaz web móvil** | El bundle de escritorio tal cual | **57 parches en tiempo de ejecución** para táctil |
 | **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
 | **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
 | **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
