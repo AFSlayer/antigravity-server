@@ -86,7 +86,8 @@ type Patch struct {
 	// the same upstream code. Its result is used as written, with no $1
 	// expansion, and takes precedence over Replace and ReplaceFn. Replace should
 	// still describe the current spelling, because it is what the cache key
-	// hashes.
+	// hashes. The cache key does not see ReplaceMatch, so a change that only
+	// touches ReplaceMatch must also change Replace or the release version.
 	ReplaceMatch func(groups [][]byte, opts Options) string
 
 	// Required marks patches without which remote access cannot work at all.

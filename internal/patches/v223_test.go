@@ -43,11 +43,14 @@ func TestConversationRowActionsKeepsCanHoverPrefix(t *testing.T) {
 func TestTitlebarDeleteModalAllowsLineBreakAndNewVariable(t *testing.T) {
 	body := "J=f&&!!a;b=SDb({cascadeId:a,paneId:b,includeRemoveFromSplit:!1});\nreturn H.length>0||b.length>0||G.length>0||g.length>0||e?A.createElement(A.Fragment,null,A.createElement(NL,null)):null"
 	got := applyOnly(t, "mobile-titlebar-delete-modal", body, Options{MobileUX: true})
-	if got == body {
-		t.Errorf("the titlebar patch left the body untouched")
-	}
-	if !strings.Contains(got, `cascadeId:a,paneId:b,includeRemoveFromSplit:!1});`) {
-		t.Errorf("the captured call was lost:\n%s", got)
+	for _, want := range []string{
+		`e?A.createElement(A.Fragment,null,window.__agyDeleteModal?A.createElement(window.__agyDeleteModal,`,
+		`typeof agyDel==="function"&&a`,
+		`showLoadingSpinner:agyDelSpin}):null,A.createElement(NL,null)):null`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("titlebar output is missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -55,11 +58,17 @@ func TestTitlebarDeleteModalAllowsLineBreakAndNewVariable(t *testing.T) {
 func TestFileUploadAcceptAllHandlesConstantReference(t *testing.T) {
 	body := `A.createElement(n5a,{ref:wa,onChange:za,accept:PYb,multiple:!0}),A.createElement`
 	got := applyOnly(t, "file-upload-accept-all", body, Options{})
-	if strings.Contains(got, `accept:PYb`) {
-		t.Errorf("the constant reference survived:\n%s", got)
+	if want := `{ref:wa,onChange:za,accept:"*/*",multiple:!0}`; !strings.Contains(got, want) {
+		t.Errorf("want %q in\n%s", want, got)
 	}
-	if !strings.Contains(got, `multiple:!0`) {
-		t.Errorf("multiple:!0 was lost:\n%s", got)
+}
+
+// The constant form is only recognised next to onChange, so an unrelated file
+// input that happens to look similar is left alone.
+func TestFileUploadAcceptAllIgnoresUnrelatedConstantInput(t *testing.T) {
+	body := `A.createElement("input",{type:"file",accept:PYb,multiple:!0})`
+	if fileUploadAcceptAllRe.MatchString(body) {
+		t.Errorf("the pattern matched an input without the onChange context")
 	}
 }
 
@@ -90,5 +99,19 @@ func TestWebsocketTransportDefaultBothShapes(t *testing.T) {
 	}
 	if !strings.Contains(got, "\nvar xrc=class{}") {
 		t.Errorf("the code after the function was lost:\n%s", got)
+	}
+}
+
+// A selector whose two halves belong to different spellings is not something
+// the patch knows how to rewrite, so it must not match.
+func TestWebsocketTransportDefaultRejectsMixedShapes(t *testing.T) {
+	head := `function wrc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true"`
+	for name, body := range map[string]string{
+		"boolean head with hub tail": head + `:a.get("wsTransport")==="3"?"hub":"off"}`,
+		"mode head with old tail":    head + `?"explicit":"off":a.get("wsTransport")==="2"}`,
+	} {
+		if websocketTransportDefaultRe.MatchString(body) {
+			t.Errorf("%s: the pattern matched a mixed spelling", name)
+		}
 	}
 }

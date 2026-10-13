@@ -10,8 +10,11 @@ import (
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 )
 
-// socketConstructionRe matches how the bundle opens its RPC socket.
-var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url\);\s*[a-zA-Z0-9_$]+\.binaryType="arraybuffer";\s*var [a-zA-Z0-9_$]+=!1;\s*[a-zA-Z0-9_$]+\.onopen=`)
+// socketConstructionRe matches how the bundle opens its RPC socket and assigns
+// onopen in the same synchronous run, which the connection prewarm relies on.
+// Up to 2.22 onopen follows right after a flag; 2.23 declares a dial timer
+// in between.
+var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url\);\s*[a-zA-Z0-9_$]+\.binaryType="arraybuffer";\s*var [a-zA-Z0-9_$]+=(?:!1;|Date\.now\(\),)[\s\S]{0,1000}?[a-zA-Z0-9_$]+\.onopen=`)
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,

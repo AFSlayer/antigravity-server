@@ -56,7 +56,7 @@ var (
 
 	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"image",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"Media",onClick:([a-zA-Z0-9_$]+)\}`)
 
-	fileUploadAcceptAllRe = regexp.MustCompile(`accept:(?:"\.png,[^"]+"|[a-zA-Z0-9_$]+),[\r\n\s]*multiple:!0`)
+	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)accept:[a-zA-Z0-9_$]+,[\r\n\s]*multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
@@ -68,7 +68,7 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
-	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(\?"explicit":"off")?(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))(?:==="2"|==="3"\?"hub":"off")\}`)
+	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
 )
 
@@ -474,7 +474,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadAcceptAllRe,
-			Replace: `accept:"*/*",multiple:!0`,
+			Replace: `${1}accept:"*/*",multiple:!0`,
 		},
 		{
 			ID:      "file-upload-input-reset",
@@ -551,14 +551,17 @@ func All() []Patch {
 			// Up to 2.22 the function returned a boolean and the default was
 			// the fetch transport. From 2.23 it returns "off", "explicit" or
 			// "hub", where explicit is the plain WebSocket this patch has always
-			// selected and hub adds a fetch fallback after a 4s dial timeout.
-			// The second group is only present in the newer spelling.
-			Replace: `${1}${3}!=="1"}`,
+			// selected and hub adds a fetch fallback after a 4s dial timeout, which
+			// is why hub is not chosen. wsTransport=1 turns the transport off in
+			// both spellings. Replace is the current spelling. The older one has
+			// no second group and is handled by ReplaceMatch. Group 4 only exists
+			// in the older spelling.
+			Replace: `${1}${2}${3}==="1"?"off":"explicit"}`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
-				if g[2] != nil {
-					return string(g[1]) + string(g[2]) + string(g[3]) + `==="1"?"off":"explicit"}`
+				if g[4] != nil {
+					return string(g[1]) + string(g[4]) + `!=="1"}`
 				}
-				return string(g[1]) + string(g[3]) + `!=="1"}`
+				return string(g[1]) + string(g[2]) + string(g[3]) + `==="1"?"off":"explicit"}`
 			},
 		},
 
