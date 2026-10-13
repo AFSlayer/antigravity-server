@@ -81,6 +81,13 @@ type Patch struct {
 	// Replace is the replacement text; ReplaceFn takes precedence when set.
 	Replace   string
 	ReplaceFn func(Options) string
+	// ReplaceMatch, for Regexp patches, chooses the replacement from what the
+	// pattern captured, for a rewrite that must differ between two spellings of
+	// the same upstream code. Its result is used as written, with no $1
+	// expansion, and takes precedence over Replace and ReplaceFn. Replace should
+	// still describe the current spelling, because it is what the cache key
+	// hashes.
+	ReplaceMatch func(groups [][]byte, opts Options) string
 
 	// Required marks patches without which remote access cannot work at all.
 	Required bool
@@ -206,7 +213,12 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 		case Regexp:
 			loc := p.FindRe.FindSubmatchIndex(body)
 			if loc != nil {
-				repl := p.FindRe.Expand(nil, []byte(p.replacement(opts)), body, loc)
+				var repl []byte
+				if p.ReplaceMatch != nil {
+					repl = []byte(p.ReplaceMatch(submatches(body, loc), opts))
+				} else {
+					repl = p.FindRe.Expand(nil, []byte(p.replacement(opts)), body, loc)
+				}
 				var out []byte
 				out = append(out, body[:loc[0]]...)
 				out = append(out, repl...)
@@ -228,6 +240,18 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 	}
 
 	return body, report
+}
+
+// submatches returns the text of every group in a match, with nil for a group
+// that did not take part.
+func submatches(body []byte, loc []int) [][]byte {
+	out := make([][]byte, len(loc)/2)
+	for i := range out {
+		if loc[2*i] >= 0 {
+			out[i] = body[loc[2*i]:loc[2*i+1]]
+		}
+	}
+	return out
 }
 
 // CacheKey derives a short, stable fingerprint of the applied patch set. It is
