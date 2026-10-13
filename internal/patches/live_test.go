@@ -54,6 +54,13 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		}
 	}
 
+	// mobile-enter-newline is optional because older bundles do not need it, but
+	// a bundle that still needs it and stops matching brings back the ghost text
+	// after Enter on a phone keyboard, so a missing anchor must fail here.
+	if n := len(mobileEnterNewlineRe.FindAll(mainJS, -1)); n != 1 {
+		t.Errorf("mobile-enter-newline matched %d times in the live bundle, want 1; Enter handling on touch keyboards is no longer patched", n)
+	}
+
 	// connection-prewarm hands the bundle a socket it opened early. That only
 	// works while the bundle builds the socket this way and assigns onopen
 	// straight after, so check the shape it relies on.

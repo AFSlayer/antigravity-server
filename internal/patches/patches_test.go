@@ -40,7 +40,7 @@ func syntheticBundle() []byte {
 // regexp has no literal to reuse.
 var regexpFixtures = map[string]string{
 	"skip-onboarding":                           `c.hasOnboardingScreens&&e!==2&&RK({to:"/onboarding",replace:!0,throw:!0})`,
-	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;k.preventDefault();`,
+	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;var l=k.shiftKey&&(k.metaKey||k.ctrlKey);if(k.shiftKey&&!l)return!1;k.preventDefault();`,
 	"model-effort-submenu":                      ",onClick:()=>{var y=\nv.byEffort.get(w);y&&b(y)}",
 	"hide-mic-button":                           `uz.displayName="GutterHoverCommentButton";var vz=(`,
 	"hide-user-profile-button":                  `function wmb({className:a=""}={}){return x.createElement("a",{href:"#",onClick:b=>{b.preventDefault()},className:` + "`w-6 h-6 rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-transparent text-muted-foreground ${a}`" + `,"aria-label":"User Profile (Placeholder)"`,

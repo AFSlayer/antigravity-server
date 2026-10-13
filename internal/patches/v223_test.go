@@ -115,3 +115,24 @@ func TestWebsocketTransportDefaultRejectsMixedShapes(t *testing.T) {
 		}
 	}
 }
+
+// The composer's Enter handler gained a shift-key check before preventDefault.
+// The patch has to keep that check and still insert the touch and IME guard
+// ahead of preventDefault, for both the older and the newer handler.
+func TestMobileEnterNewlineBothHandlerShapes(t *testing.T) {
+	shift := `var l=k.shiftKey&&(k.metaKey||k.ctrlKey);if(k.shiftKey&&!l)return!1;`
+	for name, body := range map[string]string{
+		"with shift check":    `b.registerCommand(eE,k=>{if(!k)return!1;` + shift + `k.preventDefault();a(k,e);return!0},1)`,
+		"without shift check": `b.registerCommand(eE,k=>{if(!k)return!1;k.preventDefault();a(k,e);return!0},1)`,
+	} {
+		got := applyOnly(t, "mobile-enter-newline", body, Options{MobileUX: true})
+		if !strings.Contains(got, `registerCommand(eE,k=>{if(!k)return!1;`) ||
+			!strings.Contains(got, `_i=k.isComposing||k.keyCode===229||`) ||
+			!strings.Contains(got, `if(_i||(_t&&!k.metaKey&&!k.ctrlKey))return!1;k.preventDefault();a(k,e);return!0}`) {
+			t.Errorf("%s: unexpected output:\n%s", name, got)
+		}
+		if strings.Contains(body, "shiftKey") != strings.Contains(got, "k.shiftKey&&!l)return!1;var _t") {
+			t.Errorf("%s: the shift check was not kept in front of the guard:\n%s", name, got)
+		}
+	}
+}
