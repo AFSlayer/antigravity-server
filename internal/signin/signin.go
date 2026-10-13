@@ -64,9 +64,9 @@ type Coordinator struct {
 	mu      sync.Mutex
 	pending *session
 
-	authMu         sync.Mutex
-	cachedSignedIn bool
-	cachedSignedAt time.Time
+	authMu   sync.Mutex
+	cached   authState
+	cachedAt time.Time
 }
 
 // New returns a Coordinator. urlFile is where the browser shim records URLs; it
@@ -82,34 +82,66 @@ func (c *Coordinator) Available() bool {
 	return c.instance != nil && c.urlFile != ""
 }
 
+// authState is what the language server last said about the credentials.
+type authState int
+
+const (
+	authUnknown authState = iota
+	authSignedIn
+	authSignedOut
+)
+
 // SignedIn reports whether Antigravity already holds valid credentials,
 // caching positive results for 30 seconds and negative results for 3 seconds
-// to avoid querying the language server on every HTTP request.
+// to avoid querying the language server on every HTTP request. A failed query
+// counts as not signed in.
 func (c *Coordinator) SignedIn(ctx context.Context) bool {
+	return c.authStatus(ctx) == authSignedIn
+}
+
+// NeedsSignIn reports whether the language server answered that it holds no
+// valid credentials. Unlike !SignedIn it is false when the question went
+// unanswered, so a slow or failed query never sends a signed-in user to the
+// sign-in page.
+func (c *Coordinator) NeedsSignIn(ctx context.Context) bool {
+	return c.authStatus(ctx) == authSignedOut
+}
+
+func (c *Coordinator) authStatus(ctx context.Context) authState {
 	if c.instance == nil {
-		return false
+		return authUnknown
 	}
 
 	c.authMu.Lock()
-	now := time.Now()
-	if c.cachedSignedIn && now.Sub(c.cachedSignedAt) < 30*time.Second {
-		c.authMu.Unlock()
-		return true
-	}
-	if !c.cachedSignedIn && !c.cachedSignedAt.IsZero() && now.Sub(c.cachedSignedAt) < 3*time.Second {
-		c.authMu.Unlock()
-		return false
+	age := time.Since(c.cachedAt)
+	if !c.cachedAt.IsZero() {
+		if c.cached == authSignedIn && age < 30*time.Second {
+			c.authMu.Unlock()
+			return authSignedIn
+		}
+		if c.cached != authSignedIn && age < 3*time.Second {
+			state := c.cached
+			c.authMu.Unlock()
+			return state
+		}
 	}
 	c.authMu.Unlock()
 
-	signedIn := c.instance.SignedIn(ctx)
+	state := authSignedOut
+	signedIn, err := c.instance.AuthStatus(ctx)
+	switch {
+	case err != nil:
+		state = authUnknown
+	case signedIn:
+		state = authSignedIn
+	}
 
 	c.authMu.Lock()
-	c.cachedSignedIn = signedIn
-	c.cachedSignedAt = time.Now()
+	c.cached = state
+	c.cachedAt = time.Now()
 	c.authMu.Unlock()
 
-	return signedIn
+	return state
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open. If
@@ -239,8 +271,8 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	for i := 0; i < 20; i++ {
 		if c.instance.SignedIn(ctx) {
 			c.authMu.Lock()
-			c.cachedSignedIn = true
-			c.cachedSignedAt = time.Now()
+			c.cached = authSignedIn
+			c.cachedAt = time.Now()
 			c.authMu.Unlock()
 			c.finish()
 			return nil

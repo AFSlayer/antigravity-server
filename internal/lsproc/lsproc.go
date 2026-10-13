@@ -226,11 +226,21 @@ func (i *Instance) Call(ctx context.Context, method string, body any) ([]byte, e
 }
 
 // SignedIn reports whether the language server currently holds valid Antigravity
-// credentials.
+// credentials. A failed query counts as not signed in; use AuthStatus to tell
+// that apart from an answer.
 func (i *Instance) SignedIn(ctx context.Context) bool {
+	signedIn, err := i.AuthStatus(ctx)
+	return err == nil && signedIn
+}
+
+// AuthStatus asks the language server whether it holds valid Antigravity
+// credentials. The error is non-nil when no answer was obtained, for example
+// when the call timed out. GetAuthStatus can take seconds right after the
+// server's own caches expire, so a failure says nothing about the credentials.
+func (i *Instance) AuthStatus(ctx context.Context) (bool, error) {
 	data, err := i.Call(ctx, "GetAuthStatus", nil)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	var out struct {
@@ -239,9 +249,9 @@ func (i *Instance) SignedIn(ctx context.Context) bool {
 		} `json:"authResult"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return false
+		return false, err
 	}
-	return out.AuthResult.HasValidAuth
+	return out.AuthResult.HasValidAuth, nil
 }
 
 func WaitFor(ctx context.Context, timeout time.Duration, onTick func()) (*Instance, error) {

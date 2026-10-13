@@ -85,7 +85,7 @@ func TestCoordinatorSignedInCaching(t *testing.T) {
 
 	// Clear negative cache by advancing time or forcing positive
 	c.authMu.Lock()
-	c.cachedSignedAt = time.Time{}
+	c.cachedAt = time.Time{}
 	c.authMu.Unlock()
 
 	hasValidAuth.Store(true)
@@ -103,5 +103,57 @@ func TestCoordinatorSignedInCaching(t *testing.T) {
 	}
 	if count := callCount.Load(); count != 2 {
 		t.Fatalf("expected 2 calls due to cache, got %d", count)
+	}
+}
+
+// A GetAuthStatus that does not answer in time says nothing about the
+// credentials. It must not read as "sign in again", which is what sent
+// signed-in users to the Google sign-in page after the server's caches expired.
+func TestCoordinatorNeedsSignInOnlyOnExplicitNo(t *testing.T) {
+	var delay atomic.Int64
+	var hasValidAuth atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Duration(delay.Load()))
+		_ = json.NewEncoder(w).Encode(map[string]any{"authResult": map[string]any{"hasValidAuth": hasValidAuth.Load()}})
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	newCoordinator := func() *Coordinator {
+		return New(&lsproc.Instance{Port: port, CSRFToken: "t"}, "/tmp/dummy-url")
+	}
+
+	// Slow answer past the caller's deadline: unknown, neither signed in nor out.
+	delay.Store(int64(300 * time.Millisecond))
+	hasValidAuth.Store(true)
+	c := newCoordinator()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	if c.NeedsSignIn(ctx) {
+		t.Error("a timed out query must not ask for a sign-in")
+	}
+	cancel()
+	if c.SignedIn(context.Background()) {
+		t.Error("the unknown result is cached briefly and must not read as signed in")
+	}
+
+	// The same slow server answering "no" in time is an explicit sign-out.
+	delay.Store(0)
+	hasValidAuth.Store(false)
+	c = newCoordinator()
+	if !c.NeedsSignIn(context.Background()) {
+		t.Error("an explicit hasValidAuth=false must ask for a sign-in")
+	}
+
+	// And "yes" never does.
+	hasValidAuth.Store(true)
+	c = newCoordinator()
+	if c.NeedsSignIn(context.Background()) {
+		t.Error("a signed-in user must not be asked to sign in")
+	}
+
+	// A server that is not there at all is unknown too.
+	c = New(&lsproc.Instance{Port: 1, CSRFToken: "t"}, "/tmp/dummy-url")
+	if c.NeedsSignIn(context.Background()) {
+		t.Error("an unreachable server must not ask for a sign-in")
 	}
 }

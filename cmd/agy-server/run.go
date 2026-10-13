@@ -583,7 +583,10 @@ func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coord
 		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/") {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
-			if !coordinator.SignedIn(ctx) {
+			// Only an explicit "not signed in" redirects. The language server
+			// can take longer than this timeout to answer when its own caches
+			// have expired, and that must not look like a lost login.
+			if coordinator.NeedsSignIn(ctx) {
 				http.Redirect(w, r, ui.SignInPath, http.StatusFound)
 				return
 			}
