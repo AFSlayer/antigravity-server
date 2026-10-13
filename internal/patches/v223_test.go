@@ -136,3 +136,39 @@ func TestMobileEnterNewlineBothHandlerShapes(t *testing.T) {
 		}
 	}
 }
+
+// Antigravity 2.23.0 populates localStorage["projectsOrder"] on mount with
+// projectsFolderSortBy defaulted to "custom", which locks in alphabetical order
+// when projects load before conversation summaries arrive. Ensure the patch
+// dynamically sorts whenever projectsSortBy is not "custom" across 2.21, 2.22,
+// and 2.23 bundle shapes while keeping any preceding folder-sort check intact.
+func TestMobileProjectSortOrderShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "2.21 four-arg helper",
+			body: `var za=(0,A.useMemo)(()=>{if(I.length===0)return Fgb(sa,A,G,va).map(wj);var ha=sa.filter(ka=>!I.includes(ka));return ha},[y,I,G])`,
+			want: `if(G!=="custom"||I.length===0)return Fgb(sa,A,G,va).map(wj);`,
+		},
+		{
+			name: "2.22 five-arg helper",
+			body: `var za=(0,A.useMemo)(()=>{if(P.length===0)return qJb(Ba,F,L,R,X).map(uh);var ua=P.filter(ha=>Ba.includes(ha));return ua},[a,P,L])`,
+			want: `if(L!=="custom"||P.length===0)return qJb(Ba,F,L,R,X).map(uh);`,
+		},
+		{
+			name: "2.23 with folder sort branch",
+			body: `var da=(0,A.useMemo)(()=>{if(P==="last_user_prompt")return kZ(ha,D,"last_user_prompt",U).map(th);if(N.length===0)return kZ(ha,D,J,U,ea).map(th);var na=new Set(N);return na},[P,ha,N,J])`,
+			want: `if(P==="last_user_prompt")return kZ(ha,D,"last_user_prompt",U).map(th);if(J!=="custom"||N.length===0)return kZ(ha,D,J,U,ea).map(th);`,
+		},
+	}
+
+	for _, tc := range cases {
+		got := applyOnly(t, "mobile-project-sort-order", tc.body, Options{MobileUX: true})
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: want %q in\n%s", tc.name, tc.want, got)
+		}
+	}
+}
