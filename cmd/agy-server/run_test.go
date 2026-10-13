@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,7 +125,15 @@ func TestWrapRootWithSignInRedirect(t *testing.T) {
 	}
 
 	// Case 3: Coordinator is available but not signed in -> redirect GET / and GET /onboarding
-	cUnsigned := signin.New(&lsproc.Instance{Port: 99999}, "/tmp/urlfile")
+	authServer := func(hasValidAuth bool) *signin.Coordinator {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"authResult": map[string]any{"hasValidAuth": hasValidAuth}})
+		}))
+		t.Cleanup(srv.Close)
+		port := srv.Listener.Addr().(*net.TCPAddr).Port
+		return signin.New(&lsproc.Instance{Port: port, CSRFToken: "t"}, "/tmp/urlfile")
+	}
+	cUnsigned := authServer(false)
 	h3 := wrapRootWithSignInRedirect(fallback, cUnsigned)
 
 	// 3a. GET / -> 302 redirect to /__agy/signin
@@ -168,5 +178,21 @@ func TestWrapRootWithSignInRedirect(t *testing.T) {
 	h3.ServeHTTP(rec3d, httptest.NewRequest(http.MethodPost, "/", nil))
 	if rec3d.Code != http.StatusOK || rec3d.Body.String() != "fallback-body" {
 		t.Errorf("expected fallback for POST /, got code %d", rec3d.Code)
+	}
+
+	// Case 4: the language server cannot be asked -> no redirect, because the
+	// credentials may well be fine and a wrongly sent user has to sign in again.
+	cUnreachable := signin.New(&lsproc.Instance{Port: 1}, "/tmp/urlfile")
+	rec4 := httptest.NewRecorder()
+	wrapRootWithSignInRedirect(fallback, cUnreachable).ServeHTTP(rec4, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec4.Code != http.StatusOK || rec4.Body.String() != "fallback-body" {
+		t.Errorf("an unanswered auth query must not redirect, got code %d", rec4.Code)
+	}
+
+	// Case 5: signed in -> no redirect.
+	rec5 := httptest.NewRecorder()
+	wrapRootWithSignInRedirect(fallback, authServer(true)).ServeHTTP(rec5, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec5.Code != http.StatusOK || rec5.Body.String() != "fallback-body" {
+		t.Errorf("a signed-in user must not be redirected, got code %d", rec5.Code)
 	}
 }
