@@ -553,7 +553,8 @@ func All() []Patch {
 			// "hub", where explicit is the plain WebSocket this patch has always
 			// selected and hub adds a fetch fallback after a 4s dial timeout, which
 			// is why hub is not chosen. wsTransport=1 turns the transport off in
-			// both spellings. Replace is the current spelling. The older one has
+			// both spellings, and any other value selects explicit, so the
+			// upstream wsTransport=3 route to hub is no longer reachable. Replace is the current spelling. The older one has
 			// no second group and is handled by ReplaceMatch. Group 4 only exists
 			// in the older spelling.
 			Replace: `${1}${2}${3}==="1"?"off":"explicit"}`,
