@@ -44,8 +44,9 @@ func (s *SignIn) status(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"signedIn":  s.coordinator.SignedIn(ctx),
-		"available": s.coordinator.Available(),
+		"signedIn":    s.coordinator.SignedIn(ctx),
+		"needsSignIn": s.coordinator.NeedsSignIn(ctx),
+		"available":   s.coordinator.Available(),
 	})
 }
 

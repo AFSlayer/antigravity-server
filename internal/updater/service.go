@@ -141,47 +141,12 @@ func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, r
 		if !allowMaintenanceRestart {
 			return false
 		}
-
-		// If server is idle, perform maintenance restart to reclaim leaked memory and flush caches.
-		if isIdle == nil || isIdle() {
-			log.Printf("[auto-updater] server is idle, restarting language_server for daily memory maintenance...")
-			if reloadLS != nil {
-				reloadLS()
-			}
-			return true
-		}
-
-		// If active traffic exists, defer restart by retryInterval until server becomes idle or maxRetries is reached.
-		log.Printf("[auto-updater] server is busy with active traffic, deferring daily maintenance restart by %v (max %d retries)...", retryInterval, maxRetries)
-		retryTicker := time.NewTicker(retryInterval)
-		defer retryTicker.Stop()
-
-		retries := 0
-		for {
-			select {
-			case <-ctx.Done():
-				return false
-			case <-retryTicker.C:
-				if isIdle() {
-					log.Printf("[auto-updater] server became idle, restarting language_server for daily memory maintenance...")
-					if reloadLS != nil {
-						reloadLS()
-					}
-					return true
-				}
-				retries++
-				if retries >= maxRetries {
-					log.Printf("[auto-updater] server remained busy after %d deferred attempts; skipping daily maintenance restart for today", retries)
-					return false
-				}
-				log.Printf("[auto-updater] server still busy (attempt %d/%d), deferring maintenance restart by %v...", retries, maxRetries, retryInterval)
-			}
-		}
+		return waitUntilIdleAndReload(ctx, reloadLS, isIdle, retryInterval, maxRetries, "daily memory maintenance", false)
 	}
 
 	// Pre-flight permission check: abort before downloading 170MB if the target directory is not writable
 	if err := CheckWritable(targetPath); err != nil {
-		log.Printf("[auto-updater] cannot update to %s: %v. Please run 'sudo agy-server update' to update.", info.LatestVersion, err)
+		log.Printf("[auto-updater] cannot update to %s: %v. Please run 'agy-server update' to update.", info.LatestVersion, err)
 		return false
 	}
 
@@ -203,9 +168,48 @@ func checkAndApply(ctx context.Context, cfg *config.Config, targetPath string, r
 
 	log.Printf("[auto-updater] successfully updated Antigravity to %s at %s", info.LatestVersion, targetPath)
 
-	if reloadLS != nil {
-		log.Printf("[auto-updater] restarting language_server to apply update...")
-		reloadLS()
+	return waitUntilIdleAndReload(ctx, reloadLS, isIdle, retryInterval, maxRetries, "update", true)
+}
+
+func waitUntilIdleAndReload(ctx context.Context, reloadLS func(), isIdle func() bool, retryInterval time.Duration, maxRetries int, reason string, forceAfterMaxRetries bool) bool {
+	if isIdle == nil || isIdle() {
+		log.Printf("[auto-updater] server is idle, restarting language_server for %s...", reason)
+		if reloadLS != nil {
+			reloadLS()
+		}
+		return true
 	}
-	return true
+
+	log.Printf("[auto-updater] server is busy with active traffic, deferring %s restart by %v (max %d retries)...", reason, retryInterval, maxRetries)
+	retryTicker := time.NewTicker(retryInterval)
+	defer retryTicker.Stop()
+
+	retries := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-retryTicker.C:
+			if isIdle() {
+				log.Printf("[auto-updater] server became idle, restarting language_server for %s...", reason)
+				if reloadLS != nil {
+					reloadLS()
+				}
+				return true
+			}
+			retries++
+			if retries >= maxRetries {
+				if forceAfterMaxRetries {
+					log.Printf("[auto-updater] server remained busy after %d deferred attempts; restarting language_server to apply %s...", retries, reason)
+					if reloadLS != nil {
+						reloadLS()
+					}
+					return true
+				}
+				log.Printf("[auto-updater] server remained busy after %d deferred attempts; skipping %s restart for today", retries, reason)
+				return false
+			}
+			log.Printf("[auto-updater] server still busy (attempt %d/%d), deferring %s restart by %v...", retries, maxRetries, reason, retryInterval)
+		}
+	}
 }

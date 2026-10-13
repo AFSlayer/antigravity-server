@@ -196,3 +196,18 @@ func TestWrapRootWithSignInRedirect(t *testing.T) {
 		t.Errorf("a signed-in user must not be redirected, got code %d", rec5.Code)
 	}
 }
+
+func TestListenReturnsErrorWhenPortInUse(t *testing.T) {
+	ln1, err := listen("127.0.0.1", 0)
+	if err != nil {
+		t.Fatalf("first listen failed: %v", err)
+	}
+	defer ln1.Close()
+
+	port := ln1.Addr().(*net.TCPAddr).Port
+	ln2, err := listen("127.0.0.1", port)
+	if err == nil {
+		ln2.Close()
+		t.Fatalf("expected error when binding occupied port %d, got nil", port)
+	}
+}

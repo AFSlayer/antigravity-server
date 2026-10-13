@@ -32,7 +32,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interface web mobile** | O bundle de desktop como está | **25 patches de runtime** para toque |
+| **Interface web mobile** | O bundle de desktop como está | **57 patches de runtime** para toque |
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |

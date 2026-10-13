@@ -430,3 +430,67 @@ func TestStartAutoUpdaterWithOptionsMaintenanceLoop(t *testing.T) {
 		t.Fatal("timed out waiting for maintenance restart from AutoUpdater loop")
 	}
 }
+
+func TestCheckAndApplyUpdateDefersRestartWhenBusy(t *testing.T) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	content := []byte("#!/bin/sh\necho mock v2.23.0\n")
+	hdr := &tar.Header{
+		Name: "Antigravity-2.23.0/resources/bin/language_server",
+		Mode: 0755,
+		Size: int64(len(content)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-tar")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+	cfg := &config.Config{
+		IDEVersion:     "2.22.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockUpdateAvailable := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.23.0",
+			DownloadURL:     srv.URL + "/test.tar.gz",
+			UpdateAvailable: true,
+		}, nil
+	}
+
+	var reloadCalled bool
+	reloadLS := func() { reloadCalled = true }
+
+	checks := 0
+	isIdle := func() bool {
+		checks++
+		return checks >= 2
+	}
+
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, isIdle, 15*time.Millisecond, 4, mockUpdateAvailable, false)
+	if !restarted {
+		t.Errorf("expected restarted=true after update and deferred idle check")
+	}
+	if !reloadCalled {
+		t.Errorf("expected reloadLS to be called once idle")
+	}
+	if checks < 2 {
+		t.Errorf("expected update restart to check isIdle at least twice when initially busy, got %d", checks)
+	}
+}

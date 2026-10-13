@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultIDEVersion        = "2.10.0"
+	DefaultIDEVersion        = "2.23.0"
 	DefaultAPIServerURL      = "https://generativelanguage.googleapis.com"
 	DefaultCloudCodeEndpoint = "https://daily-cloudcode-pa.googleapis.com"
 )

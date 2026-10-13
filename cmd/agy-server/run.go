@@ -289,11 +289,7 @@ func (r *runner) start() error {
 }
 
 func listen(host string, port int) (net.Listener, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
-	if err == nil || port == 0 {
-		return listener, err
-	}
-	return net.Listen("tcp", net.JoinHostPort(host, "0"))
+	return net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 }
 
 func (r *runner) syncRemoteControlSetting() {
@@ -342,6 +338,15 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 			"Or point at an existing binary: agy-server serve --language-server /path/to/language_server")
 	}
 
+	shimDir := r.cfg.Path("browser-shim")
+	urlFile := r.cfg.Path("auth-url.txt")
+	if err := lsproc.WriteBrowserShim(shimDir, urlFile); err != nil {
+		warn("could not install the sign-in helper: %v", err)
+		shimDir = ""
+	} else {
+		r.shimURLFile = urlFile
+	}
+
 	filter := lsproc.Filter{BinaryPath: binary}
 
 	if instance, err := lsproc.FindMatching(filter); err == nil {
@@ -358,13 +363,6 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		return nil, err
 	}
 
-	shimDir := r.cfg.Path("browser-shim")
-	urlFile := r.cfg.Path("auth-url.txt")
-	if err := lsproc.WriteBrowserShim(shimDir, urlFile); err != nil {
-		warn("could not install the sign-in helper: %v", err)
-		shimDir = ""
-	}
-
 	csrfToken := r.loadOrCreateCSRFToken()
 
 	cmd, err := lsproc.LaunchHeadless(lsproc.HeadlessOptions{
@@ -374,15 +372,17 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		LogWriter:      logFile,
 		BrowserShimDir: shimDir,
 	})
+	_ = logFile.Close()
 	if err != nil {
 		return nil, err
 	}
-	if shimDir != "" {
-		r.shimURLFile = urlFile
-	}
+	go func() { _ = cmd.Wait() }()
 
 	instance, err := r.waitForServer(ctx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
 	if err != nil {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		return nil, err
 	}
 	if instance.CSRFToken == "" {
