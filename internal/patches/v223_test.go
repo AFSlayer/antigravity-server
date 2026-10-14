@@ -185,6 +185,7 @@ func TestMobileSettingsProjectsAndDeepLinks(t *testing.T) {
 		`{text:"Projects"}`,
 		`{text:"Not in Project"}`,
 		`settingsScreen/navigateToProjectScreen`,
+		`else if(_scr&&_scr!=="General"){a(qX(_scr));k.push(_scr)}`,
 		`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):n?A.createElement(gMb,null):fNb(m)`,
 	} {
 		if !strings.Contains(gotSettings, want) {
