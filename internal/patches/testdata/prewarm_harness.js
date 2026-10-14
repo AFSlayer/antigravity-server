@@ -13,6 +13,9 @@ function run(search, pathname) {
   const log = [];
   const socks = [];
   const timers = [];
+  const winListeners = {};
+  const docListeners = {};
+  let now = 1000;
   class FakeWS {
     constructor(url, protocols) {
       this.url = url;
@@ -36,15 +39,32 @@ function run(search, pathname) {
       (this.listeners[type] || []).forEach((fn) => fn.call(this, ev || {}));
     }
   }
+  const doc = {
+    visibilityState: "visible",
+    addEventListener(type, fn) {
+      (docListeners[type] = docListeners[type] || []).push(fn);
+    },
+    emit(type, ev) {
+      (docListeners[type] || []).forEach((fn) => fn.call(this, ev || {}));
+    },
+  };
   const win = {
     WebSocket: FakeWS,
     fetch: (url) => {
       log.push("native fetch " + url);
       return Promise.resolve({ ok: true, fake: 1 });
     },
+    addEventListener(type, fn) {
+      (winListeners[type] = winListeners[type] || []).push(fn);
+    },
+    emit(type, ev) {
+      (winListeners[type] || []).forEach((fn) => fn.call(this, ev || {}));
+    },
   };
   const ctx = {
     window: win,
+    document: doc,
+    Date: { now: () => now },
     location: {
       protocol: "https:",
       host: "agy.example.com",
@@ -68,7 +88,16 @@ function run(search, pathname) {
   };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
-  return { win, log, socks, timers };
+  return {
+    win,
+    doc,
+    log,
+    socks,
+    timers,
+    advanceTime: (ms) => {
+      now += ms;
+    },
+  };
 }
 
 const WS_URL = "wss://agy.example.com/connect-websocket";
@@ -119,6 +148,36 @@ const flush = (r) => r.timers.filter((t) => t[1] === 0).forEach((t) => t[0]());
   ws.addEventListener("open", { handleEvent() { handled++; } });
   flush(r);
   expect("handleEvent listeners hear the replayed open", handled === 1);
+
+  // If the adopted socket closes before the queued open replay timer runs, onopen does not fire.
+  r = run();
+  r.socks[0].readyState = 1;
+  r.socks[0].emit("open", {});
+  opened = 0;
+  heard = 0;
+  ws = new r.win.WebSocket(WS_URL);
+  ws.onopen = () => opened++;
+  ws.addEventListener("open", () => heard++);
+  r.socks[0].close();
+  flush(r);
+  expect("closed socket does not replay open", opened === 0 && heard === 0);
+
+  // Backgrounding the page before the bundle claims the socket drops the prewarmed socket.
+  r = run();
+  r.socks[0].readyState = 1;
+  r.doc.visibilityState = "hidden";
+  r.doc.emit("visibilitychange", {});
+  expect("visibilitychange to hidden closes unclaimed prewarm socket", r.socks[0].readyState === 3);
+  r.doc.visibilityState = "visible";
+  ws = new r.win.WebSocket(WS_URL);
+  expect("after backgrounding a fresh socket is opened on resume", ws !== r.socks[0] && r.socks.length === 2);
+
+  // Clock jump >= 120s (e.g. mobile sleep before macrotask timer runs) drops stale prewarm socket synchronously.
+  r = run();
+  r.socks[0].readyState = 1;
+  r.advanceTime(125000);
+  ws = new r.win.WebSocket(WS_URL);
+  expect("stale socket after 120s clock jump is dropped before timer macrotask", ws !== r.socks[0] && r.socks[0].readyState === 3 && r.socks.length === 2);
 
   // A frame that arrives before the bundle claims the socket drops it.
   r = run();

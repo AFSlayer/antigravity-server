@@ -88,6 +88,7 @@ var regexpFixtures = map[string]string{
 	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,
 	"websocket-liveness-probe-relax": `function QJ(a,b){var c=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{if(b.readyState!==WebSocket.OPEN)OJ(a,b);else if(lZa(a,b))if(a.inboundFrameSeq!==c)QJ(a,b);else{b.send(JSON.stringify({streamId:Ke(),type:"ping"}));var e=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{b.readyState!==WebSocket.OPEN?OJ(a,b):a.inboundFrameSeq!==e?QJ(a,b):(PJ(a),a.options.recordError?.("websocket_liveness_probe_failed",Error("no frames for 4000ms and ping unanswered; closing socket")),b.close(),OJ(a,b))},2E3)}else PJ(a)},
 2E3)}`,
+	"bootstrap-local-user-info-retry": `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
 }
 
 func fullOptions() Options {
@@ -174,6 +175,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`return b!==null?b==="true":a.get("wsTransport")!=="1"}`,
 		`OJ(a,b))},3E4)}else PJ(a)},
 2E3)}`,
+		`for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {
@@ -583,6 +585,10 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 		`requestAnimationFrame`,
 		`e.isComposing || e.keyCode === 229`,
 		`b.style.removeProperty("display")`,
+		`checkEmptyRootStuck`,
+		`emptyRootTimerStart`,
+		`agy_empty_root_reload_count`,
+		`now - emptyRootTimerStart > 15000`,
 	}
 
 	for _, guard := range requiredGuards {
