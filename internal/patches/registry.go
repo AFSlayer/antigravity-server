@@ -23,8 +23,21 @@ var (
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===0\)return ([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
-	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
-	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
+	mobileProjectSettingsExportRe       = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(\)\{var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),e=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=[a-zA-Z0-9_$]+\("main"\)`)
+	mobileSettingsProjectsRe            = regexp.MustCompile(
+		`var ([a-zA-Z0-9_$]+)=\(\)=>\{var a=([a-zA-Z0-9_$]+)\(\),\{settingsFeature:b\}=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),c=!!([a-zA-Z0-9_$]+)\(\)\.get\("settings"\)\?\.hideShortcuts,\{sharedNavItems:e,globalScreens:f,workspaces:g,showWorkspacesSection:h\}=([a-zA-Z0-9_$]+)\(\);` +
+			`b=\[\.\.\.e\.filter\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+!=="Account"\),\.\.\.f,\.\.\.\(c\?\[\]:\["Shortcuts"\]\),\.\.\.\(b\.hideProvideFeedback\?\[\]:\["Provide Feedback"\]\)\];` +
+			`var k=([a-zA-Z0-9_$]+)\(!0\);c=k\.path\.length;var l=c===0,m=k\.path\[0\]\?\?k\.exiting\[0\],n=m\?\.startsWith\("workspace:"\);` +
+			`return [a-zA-Z0-9_$]+\.createElement\("div",\{ref:k\.setHost,className:"relative h-full w-full overflow-hidden"\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),[\r\n\s]*` +
+			`\{offset:-c,active:l,depth:0,footer:e\.includes\("Account"\)\?[a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex flex-col border-t border-border p-1"\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{showChevron:!0,className:"mx-1 px-3 py-2\.5",onClick:\(\)=>\{a\(([a-zA-Z0-9_$]+)\("Account"\)\);k\.push\("Account"\)\}\}\)\):void 0\},` +
+			`[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{text:"Settings"\}\),b\.map\(([a-zA-Z0-9_$]+)=>[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{key:[a-zA-Z0-9_$]+,label:[a-zA-Z0-9_$]+,onClick:\(\)=>\{a\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\);k\.push\([a-zA-Z0-9_$]+\)\}\}\)\),` +
+			`(h&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Fragment,null,[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{text:"Workspaces"\}\),g\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{key:[a-zA-Z0-9_$]+\.uri,label:[a-zA-Z0-9_$]+\.name,[\r\n\s]*onClick:\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.uri;a\([a-zA-Z0-9_$]+\(\{workspaceUri:[a-zA-Z0-9_$]+\}\)\);k\.push\(` + "`" + `workspace:\$\{[a-zA-Z0-9_$]+\}` + "`" + `\)\}\}\)\)\))` +
+			`(\),m&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{offset:1-c,active:c===1,depth:1,exiting:k\.exiting\.includes\(m\),onExited:\(\)=>\{k\.onExited\(m\)\},header:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{onBack:k\.pop\}\)\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Provider,\{value:!0\},)` +
+			`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m\))` +
+			`(\)\)\)\};function [a-zA-Z0-9_$]+\(\)\{[^\}]+\};var [a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=!!a\.get\("settings"\)\?\.hideProjects;a=!!a\.get\("settings"\)\?\.hideShortcuts;var c=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),e=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),\{settingsFeature:f,projectManagementFeature:g\}=\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\),\{sharedNavItems:h,globalScreens:k,workspaces:l,showWorkspacesSection:m\}=[a-zA-Z0-9_$]+\(\),n=[a-zA-Z0-9_$]+\(\),[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\(g\?\.projectsStateProvider\))`,
+	)
+	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
+	mobileConversationRowActionsRe = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
@@ -288,6 +301,28 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileProjectSortOrderRe,
 			Replace: `if($3!=="custom"||$1.length===0)return $2;`,
+		},
+		// Antigravity's mobile settings component (jNb) only renders Settings and
+		// Workspaces sections, omitting the Projects and Not in Project sections
+		// present in the desktop sidebar (mNb), and ignores settingsProjectId /
+		// settingsScreen URL parameters when opening Settings from a project menu.
+		{
+			ID:      "mobile-project-settings-export",
+			Desc:    "Export project settings component to global window for mobile settings navigation",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileProjectSettingsExportRe,
+			Replace: `window.__agyProjectSettings=$1;$0`,
+		},
+		{
+			ID:      "mobile-settings-projects",
+			Desc:    "Add Projects and Not in Project sections and deep-link navigation to mobile Settings view",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileSettingsProjectsRe,
+			Replace: `var ${1}=()=>{var a=${2}(),{settingsFeature:b,projectManagementFeature:_pm}=(0,${3}.useContext)(${4}),_cfg=${5}().get("settings"),c=!!_cfg?.hideShortcuts,_hp=!!_cfg?.hideProjects,_ps=${18}(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),{sharedNavItems:e,globalScreens:f,workspaces:g,showWorkspacesSection:h}=${6}();b=[...e.filter(${12}=>${12}!=="Account"),...f,...(c?[]:["Shortcuts"]),...(b.hideProvideFeedback?[]:["Provide Feedback"])];var k=${7}(!0),_init=(0,${3}.useRef)(!1);(0,${3}.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(${10}(_scr));k.push("project:"+_pid)}else if(_scr){a(${10}(_scr));k.push(_scr)}}catch(_e){}},[]);c=k.path.length;var l=c===0,m=k.path[0]??k.exiting[0],n=m?.startsWith("workspace:");return ${3}.createElement("div",{ref:k.setHost,className:"relative h-full w-full overflow-hidden"},${3}.createElement(${8},{offset:-c,active:l,depth:0,footer:e.includes("Account")?${3}.createElement("div",{className:"flex flex-col border-t border-border p-1"},${3}.createElement(${9},{showChevron:!0,className:"mx-1 px-3 py-2.5",onClick:()=>{a(${10}("Account"));k.push("Account")}})):void 0},${3}.createElement(${11},{text:"Settings"}),b.map(${12}=>${3}.createElement(${13},{key:${12},label:${12},onClick:()=>{a(${10}(${12}));k.push(${12})}})),${14},!_hp&&_pm&&_pl.length>0&&${3}.createElement(${3}.Fragment,null,${3}.createElement(${11},{text:"Projects"}),_pl.map(_p=>${3}.createElement(${13},{key:_p.project.id,label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});k.push("project:"+_p.project.id)}}))),_pm&&${3}.createElement(${3}.Fragment,null,${3}.createElement(${11},{text:"Not in Project"}),${3}.createElement(${13},{key:"outside-of-project",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});k.push("project:outside-of-project")}}))${15}m?.startsWith("project:")&&window.__agyProjectSettings?${3}.createElement(window.__agyProjectSettings,null):${16}${17}`,
 		},
 		{
 			ID:      "mobile-user-message-actions",
@@ -2673,7 +2708,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
         if (url.indexOf(location.host + PATH) !== -1) {
           var shared = warm;
           warm = null;
-          return shared;
+          return pre && pre.readyState <= 1 ? Promise.resolve() : shared;
         }
       }
       return nativeFetch.apply(this || window, arguments);

@@ -32,7 +32,7 @@ Google 现已在 `antigravity.google.com` 推出官方远程桥接：用同一�
 
 | | 官方远程（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **58 个运行时补丁** |
+| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **60 个运行时补丁** |
 | **对话管理** | 移动端无法删除、置顶或归档 | 在 kebab 菜单与标题栏中**删除、重命名、置顶、归档** |
 | **项目导航** | 缺少项目 `(+)` 按钮；需在底部输入框切换 | 在项目列表顶部**恢复 `(+)` 按钮** |
 | **消息操作** | 撤销与复制藏在鼠标悬停之后 | 触屏上**常显撤销（`↶`）与复制（`📋`）** |
@@ -229,7 +229,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 58 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 60 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |

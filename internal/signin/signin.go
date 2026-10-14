@@ -64,9 +64,10 @@ type Coordinator struct {
 	mu      sync.Mutex
 	pending *session
 
-	authMu   sync.Mutex
-	cached   authState
-	cachedAt time.Time
+	authMu     sync.Mutex
+	cached     authState
+	cachedAt   time.Time
+	refreshing bool
 }
 
 // New returns a Coordinator. urlFile is where the browser shim records URLs; it
@@ -92,9 +93,9 @@ const (
 )
 
 // SignedIn reports whether Antigravity already holds valid credentials,
-// caching positive results for 30 seconds and negative results for 3 seconds
-// to avoid querying the language server on every HTTP request. A failed query
-// counts as not signed in.
+// caching positive results for 30 seconds (with background revalidation once
+// stale) and negative results for 3 seconds to avoid querying the language
+// server on every HTTP request. A failed query counts as not signed in.
 func (c *Coordinator) SignedIn(ctx context.Context) bool {
 	return c.authStatus(ctx) == authSignedIn
 }
@@ -115,11 +116,15 @@ func (c *Coordinator) authStatus(ctx context.Context) authState {
 	c.authMu.Lock()
 	age := time.Since(c.cachedAt)
 	if !c.cachedAt.IsZero() {
-		if c.cached == authSignedIn && age < 30*time.Second {
+		if c.cached == authSignedIn {
+			if age >= 30*time.Second && !c.refreshing {
+				c.refreshing = true
+				go c.refreshSignedIn()
+			}
 			c.authMu.Unlock()
 			return authSignedIn
 		}
-		if c.cached != authSignedIn && age < 3*time.Second {
+		if age < 3*time.Second {
 			state := c.cached
 			c.authMu.Unlock()
 			return state
@@ -142,6 +147,31 @@ func (c *Coordinator) authStatus(ctx context.Context) authState {
 	c.authMu.Unlock()
 
 	return state
+}
+
+// refreshSignedIn revalidates a previously confirmed signed-in state in the
+// background so page navigations never block on a synchronous GetAuthStatus RPC
+// once the server is signed in.
+func (c *Coordinator) refreshSignedIn() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	signedIn, err := c.instance.AuthStatus(ctx)
+
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+	c.refreshing = false
+	if c.cachedAt.IsZero() {
+		return
+	}
+	if err == nil {
+		if signedIn {
+			c.cached = authSignedIn
+		} else {
+			c.cached = authSignedOut
+		}
+	}
+	c.cachedAt = time.Now()
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open. If
