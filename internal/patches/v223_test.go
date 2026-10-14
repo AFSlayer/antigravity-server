@@ -1,6 +1,7 @@
 package patches
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -189,5 +190,84 @@ func TestMobileSettingsProjectsAndDeepLinks(t *testing.T) {
 		if !strings.Contains(gotSettings, want) {
 			t.Errorf("want %q in\n%s", want, gotSettings)
 		}
+	}
+}
+
+func TestBootstrapLocalUserInfoRetryShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "2.21 F5b",
+			body: `async function F5b(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(q(Oea,{})))),f=e.username;return{homeDirUri:vg(e.homeDirUri),username:f}}finally{b()}};`,
+			want: `async function F5b(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(q(Oea,{}))));break}catch(_e){c();if(_i===2)return{homeDirUri:vg("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:vg(e.homeDirUri),username:f}}finally{b()}};`,
+		},
+		{
+			name: "2.22 Qtc",
+			body: `async function Qtc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(r(Kga,{})))),f=e.username;return{homeDirUri:Qe(e.homeDirUri),username:f}}finally{b()}};`,
+			want: `async function Qtc(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(r(Kga,{}))));break}catch(_e){c();if(_i===2)return{homeDirUri:Qe("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:Qe(e.homeDirUri),username:f}}finally{b()}};`,
+		},
+		{
+			name: "2.23 Fzc",
+			body: `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
+			want: `async function Fzc(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}catch(_e){c();if(_i===2)return{homeDirUri:Oe("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
+		},
+	}
+
+	for _, tc := range cases {
+		got := applyOnly(t, "bootstrap-local-user-info-retry", tc.body, Options{})
+		if got != tc.want {
+			t.Errorf("%s:\ngot:  %s\nwant: %s", tc.name, got, tc.want)
+		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return
+	}
+	patched := applyOnly(t, "bootstrap-local-user-info-retry", cases[2].body, Options{})
+	script := `
+const d = (x) => x;
+const p = (x, y) => ({});
+const Fga = {};
+const Oe = (u) => "URI(" + u + ")";
+const origSetTimeout = global.setTimeout;
+global.setTimeout = (fn) => origSetTimeout(fn, 0);
+` + patched + `
+(async () => {
+  let calls = 0;
+  // 1) Transient failure on first attempt, success on second attempt
+  let res = await Fzc({
+    lsClient: {
+      getLocalUserInfo: async () => {
+        calls++;
+        if (calls === 1) throw new Error("socket closed");
+        return { homeDirUri: "file:///home/ubuntu", username: "ubuntu" };
+      }
+    }
+  });
+  if (calls !== 2 || res.homeDirUri !== "URI(file:///home/ubuntu)" || res.username !== "ubuntu") {
+    throw new Error("retry case failed: " + JSON.stringify({ calls, res }));
+  }
+
+  // 2) All 3 attempts fail -> fallback returned without throwing
+  calls = 0;
+  res = await Fzc({
+    lsClient: {
+      getLocalUserInfo: async () => {
+        calls++;
+        throw new Error("still closed");
+      }
+    }
+  });
+  if (calls !== 3 || res.homeDirUri !== "URI(file:///)" || res.username !== "") {
+    throw new Error("fallback case failed: " + JSON.stringify({ calls, res }));
+  }
+})();
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("patched Fzc runtime test failed: %v\n%s", err, out)
 	}
 }

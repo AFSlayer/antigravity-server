@@ -84,6 +84,7 @@ var (
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
+	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=d,c=d;try\{let\s+e=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=e\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\(e\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -632,6 +633,22 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  websocketLivenessProbeRe,
 			Replace: `${1}3E4${2}`,
+		},
+
+		// During app bootstrap, getServerConfiguration and getMendelFlags catch
+		// RPC errors, whereas getLocalUserInfo has no retry or fallback. If the
+		// initial RPC socket closes while a mobile PWA is briefly backgrounded,
+		// getLocalUserInfo rejects and aborts createRoot().render(), leaving #root
+		// permanently blank. Retry up to 3 times with short backoff so the
+		// transport can open a fresh socket, and fall back to a default root URI
+		// if all attempts fail so the UI still mounts.
+		{
+			ID:      "bootstrap-local-user-info-retry",
+			Desc:    "Retry getLocalUserInfo during startup so a transient socket drop does not abort mounting #root",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  bootstrapLocalUserInfoRetryRe,
+			Replace: `async function $1(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo($2)));break}catch(_e){c();if(_i===2)return{homeDirUri:$3("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:$3(e.homeDirUri),username:f}}finally{b()}}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -2589,6 +2606,55 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
   }
 
+  // 3. Watchdog: Recover if #root remains completely empty > 15s while visible and network is idle (>5s)
+  var emptyRootTimerStart = 0;
+
+  function checkEmptyRootStuck() {
+    if (document.visibilityState === "hidden") {
+      emptyRootTimerStart = 0;
+      return;
+    }
+
+    var root = document.getElementById("root");
+    if (!root) return;
+
+    if (root.children && root.children.length > 0) {
+      if (emptyRootTimerStart || sessionStorage.getItem("agy_empty_root_reload_count")) {
+        sessionStorage.removeItem("agy_empty_root_reload_count");
+        sessionStorage.removeItem("agy_empty_root_reload");
+      }
+      emptyRootTimerStart = 0;
+      return;
+    }
+
+    var now = Date.now();
+    if (now - lastNetworkActivity < 5000) {
+      emptyRootTimerStart = now;
+      return;
+    }
+
+    if (!emptyRootTimerStart) {
+      emptyRootTimerStart = now;
+      return;
+    }
+
+    if (now - emptyRootTimerStart > 15000) {
+      var reloadCount = parseInt(sessionStorage.getItem("agy_empty_root_reload_count") || "0", 10);
+      if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+        return;
+      }
+      var lastReload = parseInt(sessionStorage.getItem("agy_empty_root_reload") || "0", 10);
+      if (now - lastReload > 15000) {
+        pingServer(function () {
+          sessionStorage.setItem("agy_empty_root_reload", Date.now().toString());
+          sessionStorage.setItem("agy_empty_root_reload_count", (reloadCount + 1).toString());
+          console.warn("[agy-watchdog] Empty #root stuck > 15s with idle network and live server, recovering via clean reload");
+          window.location.reload();
+        });
+      }
+    }
+  }
+
   // Debounced DOM observer via requestAnimationFrame to eliminate streaming layout churn
   var domCheckTimer = null;
   function scheduleDOMCheck() {
@@ -2597,6 +2663,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
       domCheckTimer = null;
       checkAndDismissLostConnectionBanner();
       checkConversationSpinnerStuck();
+      checkEmptyRootStuck();
     });
   }
 
@@ -2611,6 +2678,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     setInterval(function () {
       checkAndDismissLostConnectionBanner();
       checkConversationSpinnerStuck();
+      checkEmptyRootStuck();
     }, 1000);
 
     document.addEventListener("keydown", function (e) {
@@ -2623,12 +2691,14 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") {
         stuckTimerStart = 0;
+        emptyRootTimerStart = 0;
         pingServer(checkAndDismissLostConnectionBanner);
       }
     });
 
     window.addEventListener("pageshow", function () {
       stuckTimerStart = 0;
+      emptyRootTimerStart = 0;
       pingServer(checkAndDismissLostConnectionBanner);
     });
   }
@@ -2681,25 +2751,60 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
     var pre = null;
     var claimed = false;
     var expiry = null;
+    var createdAt = Date.now();
+    var hidden = Boolean(typeof document !== "undefined" && document.visibilityState === "hidden");
 
-    if (secure) {
+    var drop = function () {
+      if (claimed) return;
+      warm = null;
+      if (!pre) return;
+      var s = pre;
+      pre = null;
+      try { s.close(); } catch (e) {}
+    };
+
+    if (!hidden && secure) {
       warm = nativeFetch.call(window, location.origin + PATH, { credentials: "include", mode: "no-cors" }).catch(function () {});
     }
 
-    try {
-      pre = new NativeWS(wsUrl);
-      var drop = function () {
-        if (claimed || !pre) return;
-        var s = pre;
+    if (!hidden) {
+      try {
+        pre = new NativeWS(wsUrl);
+        pre.addEventListener("close", function () { if (!claimed) pre = null; });
+        pre.addEventListener("error", function () { if (!claimed) pre = null; });
+        pre.addEventListener("message", drop);
+        expiry = setTimeout(drop, 120000);
+      } catch (e) {
         pre = null;
-        try { s.close(); } catch (e) {}
-      };
-      pre.addEventListener("close", function () { if (!claimed) pre = null; });
-      pre.addEventListener("error", function () { if (!claimed) pre = null; });
-      pre.addEventListener("message", drop);
-      expiry = setTimeout(drop, 120000);
-    } catch (e) {
-      pre = null;
+      }
+    }
+
+    if (typeof document !== "undefined" && document.addEventListener) {
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") {
+          hidden = true;
+          drop();
+        }
+      });
+    }
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("pagehide", function () {
+        hidden = true;
+        drop();
+      });
+    }
+
+    function isFresh() {
+      if (claimed || !pre) return false;
+      if (hidden || (typeof document !== "undefined" && document.visibilityState === "hidden")) {
+        drop();
+        return false;
+      }
+      if (Date.now() - createdAt >= 120000 || pre.readyState > 1) {
+        drop();
+        return false;
+      }
+      return true;
     }
 
     window.fetch = function (input, init) {
@@ -2708,7 +2813,12 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
         if (url.indexOf(location.host + PATH) !== -1) {
           var shared = warm;
           warm = null;
-          return pre && pre.readyState <= 1 ? Promise.resolve() : shared;
+          if (isFresh()) {
+            return Promise.resolve();
+          }
+          if (!hidden && Date.now() - createdAt < 120000) {
+            return shared;
+          }
         }
       }
       return nativeFetch.apply(this || window, arguments);
@@ -2729,7 +2839,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
       var handler = null;
       var fired = false;
       function fire(ev) {
-        if (fired || !handler) return;
+        if (fired || !handler || ws.readyState !== 1) return;
         fired = true;
         try { handler.call(ws, ev); } catch (e) { setTimeout(function () { throw e; }); }
       }
@@ -2741,7 +2851,10 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
           : listener && typeof listener.handleEvent === "function" ? function (ev) { listener.handleEvent(ev); }
           : null;
         if (type === "open" && ws.readyState === 1 && call) {
-          setTimeout(function () { try { call.call(ws, new Event("open")); } catch (e) { setTimeout(function () { throw e; }); } }, 0);
+          setTimeout(function () {
+            if (ws.readyState !== 1) return;
+            try { call.call(ws, new Event("open")); } catch (e) { setTimeout(function () { throw e; }); }
+          }, 0);
         }
       };
       Object.defineProperty(ws, "onopen", {
@@ -2758,7 +2871,7 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
     }
 
     function WS(url, protocols) {
-      if (!claimed && pre && protocols === undefined && pre.readyState <= 1 && sameUrl(url)) {
+      if (protocols === undefined && sameUrl(url) && isFresh()) {
         claimed = true;
         clearTimeout(expiry);
         expiry = null;
@@ -2767,9 +2880,8 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
         adopt(ws);
         return ws;
       }
-      if (pre && pre.readyState > 1) {
-        try { pre.close(); } catch (e) {}
-        pre = null;
+      if (!claimed && pre && pre.readyState > 1) {
+        drop();
       }
       return protocols === undefined ? new NativeWS(url) : new NativeWS(url, protocols);
     }

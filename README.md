@@ -32,7 +32,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 
 | | Official remote (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Mobile web UI** | The desktop bundle as-is | **60 named runtime patches** for touch |
+| **Mobile web UI** | The desktop bundle as-is | **61 named runtime patches** for touch |
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
@@ -251,7 +251,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 60 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 61 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |

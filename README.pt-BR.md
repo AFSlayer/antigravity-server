@@ -32,7 +32,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interface web mobile** | O bundle de desktop como está | **60 patches de runtime** para toque |
+| **Interface web mobile** | O bundle de desktop como está | **61 patches de runtime** para toque |
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
@@ -213,7 +213,7 @@ server {
 
 ## Patches de Experiência Mobile (UX)
 
-O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 60 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 61 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
 
 | Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
 | :--- | :--- | :--- |
