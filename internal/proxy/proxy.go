@@ -57,6 +57,10 @@ type Proxy struct {
 	cachedMainJS   []byte
 	cachedMainTag  string
 
+	htmlMu              sync.RWMutex
+	cachedHTML          []byte
+	cachedHTMLMissingWS bool
+
 	// wsTransportMissing remembers the last main.js outcome for the HTML patches.
 	wsTransportMissing atomic.Bool
 }
@@ -155,6 +159,19 @@ func (p *Proxy) Handler() http.Handler {
 			}
 		}
 
+		// Fast-path: Serve cached patched root HTML immediately from memory (0ms latency)
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			if html := p.cachedRootHTML(); html != nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Length", strconv.Itoa(len(html)))
+				if r.Method == http.MethodGet {
+					_, _ = w.Write(html)
+				}
+				return
+			}
+		}
+
 		p.handler.ServeHTTP(w, r)
 	})
 }
@@ -242,6 +259,9 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	target, ok := targetFor(resp)
 	if !ok {
+		if resp.StatusCode == http.StatusOK && resp.Request != nil && (resp.Request.Method == http.MethodGet || resp.Request.Method == http.MethodHead) && isCacheableStaticAsset(resp.Request.URL.Path) {
+			resp.Header.Set("Cache-Control", staticAssetCacheControl)
+		}
 		return nil
 	}
 
@@ -283,6 +303,11 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 			p.cachedMainTag = tag
 			p.mainJSMu.Unlock()
 		}
+	} else if target == patches.HTML && resp.Request != nil && resp.Request.Method == http.MethodGet && resp.Request.URL.Path == "/" && len(body) > 0 {
+		p.htmlMu.Lock()
+		p.cachedHTML = patched
+		p.cachedHTMLMissingWS = opts.WebSocketTransportMissing
+		p.htmlMu.Unlock()
 	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(patched))
@@ -347,6 +372,33 @@ func (p *Proxy) cachedBundle() ([]byte, string) {
 	p.mainJSMu.RLock()
 	defer p.mainJSMu.RUnlock()
 	return p.cachedMainJS, p.cachedMainTag
+}
+
+func (p *Proxy) cachedRootHTML() []byte {
+	p.htmlMu.RLock()
+	defer p.htmlMu.RUnlock()
+	if p.cachedHTML == nil || p.cachedHTMLMissingWS != p.wsTransportMissing.Load() {
+		return nil
+	}
+	return p.cachedHTML
+}
+
+// staticAssetCacheControl lets browsers reuse unpatched static assets (render-
+// blocking CSS, syntax highlighters, icons, fonts) from disk cache for 1 hour
+// and revalidate in the background for a day, avoiding per-navigation round
+// trips caused by the language server's default "no-cache" header.
+const staticAssetCacheControl = "private, max-age=3600, stale-while-revalidate=86400"
+
+func isCacheableStaticAsset(path string) bool {
+	if path == "/main.js" || strings.HasPrefix(path, "/__agy/") {
+		return false
+	}
+	for _, ext := range []string{".css", ".js", ".svg", ".png", ".ico", ".woff2", ".woff", ".ttf", ".mp3", ".wasm"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // bundleCacheControl makes browsers revalidate the patched bundle on every

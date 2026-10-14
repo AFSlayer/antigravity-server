@@ -172,3 +172,22 @@ func TestMobileProjectSortOrderShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestMobileSettingsProjectsAndDeepLinks(t *testing.T) {
+	gotExport := applyOnly(t, "mobile-project-settings-export", regexpFixtures["mobile-project-settings-export"], Options{MobileUX: true})
+	if !strings.Contains(gotExport, `window.__agyProjectSettings=RNb;function RNb(){`) {
+		t.Errorf("export patch output wrong:\n%s", gotExport)
+	}
+
+	gotSettings := applyOnly(t, "mobile-settings-projects", regexpFixtures["mobile-settings-projects"], Options{MobileUX: true})
+	for _, want := range []string{
+		`{text:"Projects"}`,
+		`{text:"Not in Project"}`,
+		`settingsScreen/navigateToProjectScreen`,
+		`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):n?A.createElement(gMb,null):fNb(m)`,
+	} {
+		if !strings.Contains(gotSettings, want) {
+			t.Errorf("want %q in\n%s", want, gotSettings)
+		}
+	}
+}

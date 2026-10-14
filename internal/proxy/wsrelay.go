@@ -71,9 +71,9 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 		// proxies than the library's Host-only comparison.
 		InsecureSkipVerify: true,
 		Subprotocols:       subprotocols,
-		// Each message is compressed on its own. Context takeover would shrink
-		// the repeated keys further but holds a sliding window per connection.
-		CompressionMode: websocket.CompressionNoContextTakeover,
+		// Context takeover keeps a sliding LZ77 window across frames so repeated
+		// JSON keys and trajectory step prefixes compress much further over time.
+		CompressionMode: websocket.CompressionContextTakeover,
 	})
 	if err != nil {
 		// Accept has already written the failure response.

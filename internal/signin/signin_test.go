@@ -157,3 +157,67 @@ func TestCoordinatorNeedsSignInOnlyOnExplicitNo(t *testing.T) {
 		t.Error("an unreachable server must not ask for a sign-in")
 	}
 }
+
+// Once a server is signed in, an expired 30s cache entry must return the cached
+// signed-in state immediately and revalidate in the background so root page
+// loads never block on a slow GetAuthStatus RPC.
+func TestCoordinatorSignedInStaleWhileRevalidate(t *testing.T) {
+	var delay atomic.Int64
+	var hasValidAuth atomic.Bool
+	revalidated := make(chan struct{}, 4)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if d := time.Duration(delay.Load()); d > 0 {
+			time.Sleep(d)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"authResult": map[string]any{"hasValidAuth": hasValidAuth.Load()}})
+		select {
+		case revalidated <- struct{}{}:
+		default:
+		}
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	c := New(&lsproc.Instance{Port: port, CSRFToken: "t"}, "/tmp/dummy-url")
+
+	hasValidAuth.Store(true)
+	if !c.SignedIn(context.Background()) {
+		t.Fatal("initial SignedIn check failed")
+	}
+	<-revalidated
+
+	// Age the positive cache past 30s and make upstream slow (200ms).
+	c.authMu.Lock()
+	c.cachedAt = time.Now().Add(-35 * time.Second)
+	c.authMu.Unlock()
+	delay.Store(int64(200 * time.Millisecond))
+	hasValidAuth.Store(false)
+
+	start := time.Now()
+	if c.NeedsSignIn(context.Background()) {
+		t.Fatal("stale positive cache must return immediately as signed in while revalidating")
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Errorf("stale-while-revalidate blocked for %v, want immediate return", elapsed)
+	}
+
+	// Wait for the background refresh to finish and flip state to signed out.
+	select {
+	case <-revalidated:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background revalidation did not complete")
+	}
+	for i := 0; i < 50; i++ {
+		c.authMu.Lock()
+		busy := c.refreshing
+		c.authMu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !c.NeedsSignIn(context.Background()) {
+		t.Error("expected NeedsSignIn=true after background revalidation observed sign-out")
+	}
+}
