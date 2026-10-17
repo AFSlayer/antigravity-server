@@ -20,7 +20,7 @@ var (
 	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
-	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
+	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:e,sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);return )[a-zA-Z0-9_$]+\(\)\|\|(a\.length===0&&!g\?null:)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===0\)return ([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileProjectSettingsExportRe       = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(\)\{var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),e=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=[a-zA-Z0-9_$]+\("main"\)`)
@@ -58,7 +58,7 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var ([a-zA-Z0-9_$]+)=!!this\.storageService\.get\("didAskForNotificationPermission"\);`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{section:)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},)([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),`)
+	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{section:)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\)\.get\("conciergeAgent"\)\?\.enabled\?\?!1)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)),`)
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
@@ -76,7 +76,7 @@ var (
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\(\"\",a\)!==void 0\})`)
 
-	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
@@ -228,7 +228,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
-			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7}.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},${8}.createElement(${9},{surface:"background"})),`,
+			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7},`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -277,7 +277,13 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectKebabMenuRe,
-			Replace: `,${1}=(0,${2}.useContext)(${3}),${4}=!1,`,
+			Replace: `${5}${6}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[5] != nil {
+					return string(g[5]) + string(g[6])
+				}
+				return `,` + string(g[1]) + `=(0,` + string(g[2]) + `.useContext)(` + string(g[3]) + `),` + string(g[4]) + `=!1,`
+			},
 		},
 		{
 			ID:      "mobile-project-add-click-close-sidebar",
