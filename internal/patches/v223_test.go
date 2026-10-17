@@ -272,3 +272,67 @@ global.setTimeout = (fn) => origSetTimeout(fn, 0);
 		t.Fatalf("patched Fzc runtime test failed: %v\n%s", err, out)
 	}
 }
+
+func TestAntigravity224PatchShapes(t *testing.T) {
+	t.Run("mobile-new-convo-view", func(t *testing.T) {
+		v223 := `var g1b=()=>{var a=e1b(),b=f1b();return(0,A.useCallback)((c,e)=>{a(e.map(f=>({trigger:f,ran:!1})));b(c,{section:e})},[a,b])};var i1b=()=>{var a=h1b(),{q:b}=oR({strict:!1});r4("MOBILE_HOME_VIEW");return A.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},A.createElement(g1b,{surface:"background"})),A.createElement("div",null))}`
+		v224 := `var j8b=()=>{var a=g8b(),b=h8b();return(0,A.useCallback)((c,e)=>{a(e.map(f=>({trigger:f,ran:!1})));b(c,{section:e})},[a,b])};var k8b=()=>{var a=j8b(),{q:b}=FS({strict:!1}),c=fk().get("conciergeAgent")?.enabled??!1;s4("MOBILE_HOME_VIEW");return A.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pt-3"},c&&A.createElement("div",{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"},A.createElement(b7b,null)),A.createElement(i8b,{surface:"background"})),A.createElement("div",null))}`
+
+		got223 := applyOnly(t, "mobile-new-convo-view", v223, Options{MobileUX: true})
+		if !strings.Contains(got223, `{section:e,replace:!0}`) ||
+			!strings.Contains(got223, `var {section:sec}=oR({strict:!1}),isMobileNew=`) ||
+			!strings.Contains(got223, `,"Start a new conversation")):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},A.createElement(g1b,{surface:"background"})),`) {
+			t.Errorf("2.23 shape output wrong:\n%s", got223)
+		}
+
+		got224 := applyOnly(t, "mobile-new-convo-view", v224, Options{MobileUX: true})
+		if !strings.Contains(got224, `{section:e,replace:!0}`) ||
+			!strings.Contains(got224, `var {section:sec}=FS({strict:!1}),isMobileNew=`) ||
+			!strings.Contains(got224, `,"Start a new conversation")):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pt-3"},c&&A.createElement("div",{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"},A.createElement(b7b,null)),A.createElement(i8b,{surface:"background"})),`) {
+			t.Errorf("2.24 shape output wrong:\n%s", got224)
+		}
+		if node, err := exec.LookPath("node"); err == nil {
+			for _, snippet := range []string{got223, got224} {
+				if out, err := exec.Command(node, "-e", "function test(){"+snippet+"}").CombinedOutput(); err != nil {
+					t.Fatalf("invalid JS syntax in patched mobile-new-convo-view: %v\n%s", err, out)
+				}
+			}
+		}
+	})
+
+	t.Run("mobile-project-kebab-menu", func(t *testing.T) {
+		v223 := `var F=!1,H=(0,A.useContext)(z0b),J=rK()&&H!==null,K=!0;`
+		v224 := `function D7b(a){var {isOpen:b,onOpenChange:c,ariaLabel:e,sortMode:f,onSortModeChange:g,size:h="icon"}=a;a=B7b(a);return xL()||a.length===0&&!g?null:A.createElement(TM,{open:b,onOpenChange:c})}`
+
+		got223 := applyOnly(t, "mobile-project-kebab-menu", v223, Options{MobileUX: true})
+		if want := `,H=(0,A.useContext)(z0b),J=!1,`; !strings.Contains(got223, want) {
+			t.Errorf("2.23 shape: want %q in\n%s", want, got223)
+		}
+
+		got224 := applyOnly(t, "mobile-project-kebab-menu", v224, Options{MobileUX: true})
+		if want := `a=B7b(a);return a.length===0&&!g?null:A.createElement(TM,`; !strings.Contains(got224, want) {
+			t.Errorf("2.24 shape: want %q in\n%s", want, got224)
+		}
+		if node, err := exec.LookPath("node"); err == nil {
+			for _, snippet := range []string{got223, got224} {
+				if out, err := exec.Command(node, "-e", "function test(){"+snippet+"}").CombinedOutput(); err != nil {
+					t.Fatalf("invalid JS syntax in patched mobile-project-kebab-menu: %v\n%s", err, out)
+				}
+			}
+		}
+	})
+
+	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
+		v224 := `if(true){}else{var u=qNa(m.name,m.type);if(u)if(m.size>1048576)e?.("Text file size exceeds 1MB limit"),g(Mf.VALIDATION_CHECK_FAILED,` + "\n" + `Error("Text file size exceeds 1MB limit"));else try{}catch(err){}}`
+		got224 := applyOnly(t, "file-upload-large-file-streaming-fallback", v224, Options{})
+		if want := `if(u)if(m.size>1048576){if(window.__agyUpload){window.__agyUpload([m]);return;}}else try{`; !strings.Contains(got224, want) {
+			t.Errorf("2.24 shape: want %q in\n%s", want, got224)
+		}
+		if node, err := exec.LookPath("node"); err == nil {
+			wrapped := "function test(){" + got224 + "}"
+			if out, err := exec.Command(node, "-e", wrapped).CombinedOutput(); err != nil {
+				t.Fatalf("invalid JS syntax in patched file-upload-large-file-streaming-fallback: %v\n%s", err, out)
+			}
+		}
+	})
+}
