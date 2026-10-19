@@ -2307,6 +2307,28 @@ const uploaderScript = `<script>
     hiddenFileInput.click();
   };
 
+  var NATIVE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'];
+
+  function isNativeImageFile(f) {
+    if (!f || !f.type) return false;
+    return NATIVE_IMAGE_TYPES.indexOf(f.type.split(';')[0].trim().toLowerCase()) !== -1;
+  }
+
+  function dismissNativeDragOverlays() {
+    window.dispatchEvent(new MouseEvent('mouseup'));
+    try {
+      window.dispatchEvent(new DragEvent('dragleave', { relatedTarget: null }));
+    } catch (_) {
+      var leaveEvent = new Event('dragleave');
+      try {
+        Object.defineProperty(leaveEvent, 'relatedTarget', { value: null });
+      } catch (_) {
+        leaveEvent.relatedTarget = null;
+      }
+      window.dispatchEvent(leaveEvent);
+    }
+  }
+
   // Drag and drop support using Antigravity native UI
   window.addEventListener('dragover', function(e) {
     if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
@@ -2322,20 +2344,42 @@ const uploaderScript = `<script>
     var files = e.dataTransfer && e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    var needsStreaming = false;
-    for (var i = 0; i < files.length; i++) {
-      var f = files[i];
-      var isSmallImage = f.type.startsWith('image/') && f.size <= 1048576;
-      if (!isSmallImage) {
-        needsStreaming = true;
-        break;
+    var dirNames = {};
+    var items = e.dataTransfer && e.dataTransfer.items;
+    if (items) {
+      for (var j = 0; j < items.length; j++) {
+        try {
+          var item = items[j];
+          if (item && item.kind === 'file' && typeof item.webkitGetAsEntry === 'function') {
+            var entry = item.webkitGetAsEntry();
+            if (entry && entry.isDirectory && entry.name) {
+              dirNames[entry.name] = true;
+            }
+          }
+        } catch (_) {}
       }
     }
 
-    if (needsStreaming) {
+    var uploadFiles = [];
+    var needsStreaming = false;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (dirNames[f.name]) continue;
+      uploadFiles.push(f);
+      if (!isNativeImageFile(f)) {
+        needsStreaming = true;
+      }
+    }
+
+    if (needsStreaming && uploadFiles.length > 0) {
       e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      dismissNativeDragOverlays();
       if (window.__agyUpload) {
-        window.__agyUpload(files);
+        window.__agyUpload(uploadFiles);
       }
     }
   }, true);
