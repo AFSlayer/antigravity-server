@@ -671,3 +671,126 @@ func TestSettingsRestoreCustomizationsPatch(t *testing.T) {
 		t.Fatalf("unexpected settings restore replacement output: %s", settingsReplaced)
 	}
 }
+
+func TestUploaderScriptDropBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+
+	script := strings.TrimSuffix(strings.TrimPrefix(uploaderScript, "<script>"), "</script>")
+	harness := `
+const assert = require("assert");
+const listeners = {};
+let mouseupCount = 0;
+let dragleaveNullCount = 0;
+let upstreamDropCount = 0;
+let uploadedBatches = [];
+
+global.Event = class Event {
+  constructor(type) {
+    this.type = type;
+    this.defaultPrevented = false;
+    this._stopped = false;
+    this._immediateStopped = false;
+  }
+  preventDefault() { this.defaultPrevented = true; }
+  stopPropagation() { this._stopped = true; }
+  stopImmediatePropagation() { this._stopped = true; this._immediateStopped = true; }
+};
+global.MouseEvent = class MouseEvent extends global.Event {};
+global.DragEvent = class DragEvent extends global.Event {
+  constructor(type, init) {
+    super(type);
+    this.relatedTarget = init && "relatedTarget" in init ? init.relatedTarget : undefined;
+  }
+};
+
+global.window = {
+  location: { search: "", pathname: "/c/test-convo" },
+  addEventListener(type, fn, capture) {
+    if (!listeners[type]) listeners[type] = [];
+    listeners[type].push({ fn, capture: Boolean(capture) });
+  },
+  dispatchEvent(ev) {
+    if (ev.type === "mouseup") mouseupCount++;
+    if (ev.type === "dragleave" && ev.relatedTarget === null) dragleaveNullCount++;
+    const list = (listeners[ev.type] || []).slice();
+    for (const entry of list.filter(x => x.capture)) {
+      entry.fn(ev);
+      if (ev._immediateStopped) return !ev.defaultPrevented;
+    }
+    if (ev._stopped) return !ev.defaultPrevented;
+    for (const entry of list.filter(x => !x.capture)) {
+      entry.fn(ev);
+      if (ev._immediateStopped) return !ev.defaultPrevented;
+    }
+    return !ev.defaultPrevented;
+  }
+};
+global.document = {
+  getElementById() { return null; },
+  createElement() { return { style: {}, appendChild() {}, addEventListener() {} }; },
+  body: { appendChild() {} }
+};
+
+` + script + `
+
+// Register stand-in upstream bubble drop listener (like m5a) and substitute __agyUpload
+window.addEventListener("drop", () => { upstreamDropCount++; }, false);
+window.__agyUpload = (files) => { uploadedBatches.push(Array.from(files)); };
+
+function fireDrop(files, items) {
+  const ev = new Event("drop");
+  ev.dataTransfer = { files, items: items || [] };
+  window.dispatchEvent(ev);
+  return ev;
+}
+
+// 1. Small image (<= 1MB): only upstream drop runs, custom uploader does not run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([{ name: "small.png", type: "image/png", size: 200 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 0, "small image should not trigger custom upload");
+assert.strictEqual(upstreamDropCount, 1, "small image should reach upstream drop listener");
+
+// 2. Large image (> 1MB): only upstream drop runs (upstream compresses via canvas), custom uploader does not run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([
+  { name: "large.png", type: "image/png", size: 5 * 1024 * 1024 },
+  { name: "photo.jpg", type: "image/jpeg", size: 3 * 1024 * 1024 }
+]);
+assert.strictEqual(uploadedBatches.length, 0, "large native images must not trigger duplicate custom upload");
+assert.strictEqual(upstreamDropCount, 1, "large native images must reach upstream drop listener");
+
+// 3. Non-image or unsupported file: custom uploader runs, propagation to upstream is stopped, overlays are dismissed
+uploadedBatches = [];
+upstreamDropCount = 0;
+mouseupCount = 0;
+dragleaveNullCount = 0;
+const archiveFile = { name: "bundle.zip", type: "application/zip", size: 4 * 1024 * 1024 };
+const dropEv = fireDrop([archiveFile]);
+assert.strictEqual(uploadedBatches.length, 1, "non-image file should trigger custom upload");
+assert.strictEqual(uploadedBatches[0].length, 1);
+assert.strictEqual(uploadedBatches[0][0].name, "bundle.zip");
+assert.strictEqual(upstreamDropCount, 0, "stopPropagation must prevent upstream drop listener from running simultaneously");
+assert.strictEqual(dropEv.defaultPrevented, true, "drop event must be defaultPrevented");
+assert.ok(mouseupCount >= 1, "mouseup must be dispatched to reset context drop overlay");
+assert.ok(dragleaveNullCount >= 1, "dragleave with relatedTarget:null must be dispatched to reset media drop overlay");
+
+// 4. Directory drop: custom uploader must ignore directories and let upstream zip handler run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop(
+  [{ name: "my-folder", type: "", size: 0 }],
+  [{ kind: "file", webkitGetAsEntry: () => ({ isDirectory: true, name: "my-folder" }) }]
+);
+assert.strictEqual(uploadedBatches.length, 0, "directory drop must not trigger custom file upload");
+assert.strictEqual(upstreamDropCount, 1, "directory drop must reach upstream folder zip listener");
+`
+
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("uploaderScript drop harness failed: %v\n%s", err, out)
+	}
+}
