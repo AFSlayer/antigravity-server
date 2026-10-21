@@ -63,7 +63,7 @@ func (s *SignIn) page(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_ = tmpl.ExecuteTemplate(w, "signin.html", map[string]any{
 		"Available": s.coordinator.Available(),
-		"SignedIn":  s.coordinator.SignedIn(ctx),
+		"SignedIn":  s.coordinator.SignedInFresh(ctx),
 	})
 }
 
@@ -75,7 +75,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := contextWithTimeout(r, 40*time.Second)
 	defer cancel()
 
-	if s.coordinator.SignedIn(ctx) {
+	if s.coordinator.SignedInFresh(ctx) {
 		writeJSON(w, http.StatusOK, map[string]any{"signedIn": true})
 		return
 	}
