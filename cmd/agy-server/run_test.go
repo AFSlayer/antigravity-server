@@ -195,6 +195,30 @@ func TestWrapRootWithSignInRedirect(t *testing.T) {
 	if rec5.Code != http.StatusOK || rec5.Body.String() != "fallback-body" {
 		t.Errorf("a signed-in user must not be redirected, got code %d", rec5.Code)
 	}
+
+	// Case 6: positive cache is warm, then user signs out and hits GET /onboarding -> immediate redirect.
+	signedInDynamic := true
+	dynSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"authResult": map[string]any{"hasValidAuth": signedInDynamic}})
+	}))
+	t.Cleanup(dynSrv.Close)
+	dynPort := dynSrv.Listener.Addr().(*net.TCPAddr).Port
+	cDynamic := signin.New(&lsproc.Instance{Port: dynPort, CSRFToken: "t"}, "/tmp/urlfile")
+	h6 := wrapRootWithSignInRedirect(fallback, cDynamic)
+
+	rec6Warm := httptest.NewRecorder()
+	h6.ServeHTTP(rec6Warm, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec6Warm.Code != http.StatusOK {
+		t.Fatalf("expected 200 on initial signed-in GET /, got %d", rec6Warm.Code)
+	}
+
+	signedInDynamic = false
+	rec6Onboarding := httptest.NewRecorder()
+	h6.ServeHTTP(rec6Onboarding, httptest.NewRequest(http.MethodGet, "/onboarding?login=true", nil))
+	if rec6Onboarding.Code != http.StatusFound || rec6Onboarding.Header().Get("Location") != ui.SignInPath {
+		t.Errorf("expected GET /onboarding after logout to bypass stale cache and redirect to %q, got code %d loc %q",
+			ui.SignInPath, rec6Onboarding.Code, rec6Onboarding.Header().Get("Location"))
+	}
 }
 
 func TestListenReturnsErrorWhenPortInUse(t *testing.T) {

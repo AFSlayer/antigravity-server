@@ -221,3 +221,43 @@ func TestCoordinatorSignedInStaleWhileRevalidate(t *testing.T) {
 		t.Error("expected NeedsSignIn=true after background revalidation observed sign-out")
 	}
 }
+
+func TestCoordinatorSignedInFreshInvalidatesStaleCache(t *testing.T) {
+	var hasValidAuth atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"authResult": map[string]any{
+				"hasValidAuth": hasValidAuth.Load(),
+			},
+		})
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	c := New(&lsproc.Instance{Port: port, CSRFToken: "t"}, "/tmp/dummy-url")
+	ctx := context.Background()
+
+	// Warm the 30s positive cache.
+	hasValidAuth.Store(true)
+	if !c.SignedIn(ctx) {
+		t.Fatal("expected initial SignedIn=true")
+	}
+
+	// Simulate user signing out inside the web app while the 30s cache is still fresh.
+	hasValidAuth.Store(false)
+	if !c.SignedIn(ctx) {
+		t.Fatal("expected cached SignedIn=true before fresh check")
+	}
+
+	// SignedInFresh must bypass the positive cache, observe sign-out immediately,
+	// and update the cache so subsequent SignedIn / NeedsSignIn calls also see it.
+	if c.SignedInFresh(ctx) {
+		t.Fatal("SignedInFresh must return false immediately after sign-out")
+	}
+	if c.SignedIn(ctx) {
+		t.Fatal("SignedIn cache must be updated to false after SignedInFresh")
+	}
+	if !c.NeedsSignIn(ctx) {
+		t.Fatal("NeedsSignIn cache must be updated to true after SignedInFresh")
+	}
+}

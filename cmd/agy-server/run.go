@@ -580,13 +580,22 @@ func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coord
 		return fallback
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/") {
+		isOnboarding := r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/"
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || isOnboarding) {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			// Only an explicit "not signed in" redirects. The language server
 			// can take longer than this timeout to answer when its own caches
-			// have expired, and that must not look like a lost login.
-			if coordinator.NeedsSignIn(ctx) {
+			// have expired, and that must not look like a lost login. On
+			// /onboarding routes (reached right after signing out), bypass the
+			// 30s positive cache so refreshing redirects immediately.
+			needsSignIn := false
+			if isOnboarding {
+				needsSignIn = coordinator.NeedsSignInFresh(ctx)
+			} else {
+				needsSignIn = coordinator.NeedsSignIn(ctx)
+			}
+			if needsSignIn {
 				http.Redirect(w, r, ui.SignInPath, http.StatusFound)
 				return
 			}

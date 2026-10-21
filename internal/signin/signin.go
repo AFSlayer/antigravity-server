@@ -100,12 +100,27 @@ func (c *Coordinator) SignedIn(ctx context.Context) bool {
 	return c.authStatus(ctx) == authSignedIn
 }
 
+// SignedInFresh queries the language server directly, bypassing the in-memory
+// cache, and updates the cached state with the fresh answer. Use it on explicit
+// sign-in routes so logging out in the web app and clicking Sign In never
+// serves a stale "Already signed in" page.
+func (c *Coordinator) SignedInFresh(ctx context.Context) bool {
+	return c.queryAuthStatus(ctx) == authSignedIn
+}
+
 // NeedsSignIn reports whether the language server answered that it holds no
 // valid credentials. Unlike !SignedIn it is false when the question went
 // unanswered, so a slow or failed query never sends a signed-in user to the
 // sign-in page.
 func (c *Coordinator) NeedsSignIn(ctx context.Context) bool {
 	return c.authStatus(ctx) == authSignedOut
+}
+
+// NeedsSignInFresh queries the language server directly, bypassing the
+// in-memory cache, and reports whether it answered that it holds no valid
+// credentials.
+func (c *Coordinator) NeedsSignInFresh(ctx context.Context) bool {
+	return c.queryAuthStatus(ctx) == authSignedOut
 }
 
 func (c *Coordinator) authStatus(ctx context.Context) authState {
@@ -119,7 +134,8 @@ func (c *Coordinator) authStatus(ctx context.Context) authState {
 		if c.cached == authSignedIn {
 			if age >= 30*time.Second && !c.refreshing {
 				c.refreshing = true
-				go c.refreshSignedIn()
+				prevCachedAt := c.cachedAt
+				go c.refreshSignedIn(prevCachedAt)
 			}
 			c.authMu.Unlock()
 			return authSignedIn
@@ -131,6 +147,14 @@ func (c *Coordinator) authStatus(ctx context.Context) authState {
 		}
 	}
 	c.authMu.Unlock()
+
+	return c.queryAuthStatus(ctx)
+}
+
+func (c *Coordinator) queryAuthStatus(ctx context.Context) authState {
+	if c.instance == nil {
+		return authUnknown
+	}
 
 	state := authSignedOut
 	signedIn, err := c.instance.AuthStatus(ctx)
@@ -152,7 +176,7 @@ func (c *Coordinator) authStatus(ctx context.Context) authState {
 // refreshSignedIn revalidates a previously confirmed signed-in state in the
 // background so page navigations never block on a synchronous GetAuthStatus RPC
 // once the server is signed in.
-func (c *Coordinator) refreshSignedIn() {
+func (c *Coordinator) refreshSignedIn(prevCachedAt time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -161,7 +185,7 @@ func (c *Coordinator) refreshSignedIn() {
 	c.authMu.Lock()
 	defer c.authMu.Unlock()
 	c.refreshing = false
-	if c.cachedAt.IsZero() {
+	if c.cachedAt.IsZero() || !c.cachedAt.Equal(prevCachedAt) {
 		return
 	}
 	if err == nil {

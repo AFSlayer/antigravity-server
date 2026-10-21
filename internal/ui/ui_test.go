@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
@@ -132,5 +133,57 @@ func TestSignInStatusIncludesNeedsSignIn(t *testing.T) {
 	}
 	if body2["signedIn"] || !body2["needsSignIn"] {
 		t.Fatalf("when signed out expected signedIn=false and needsSignIn=true, got %+v", body2)
+	}
+}
+
+func TestSignInPageBypassesStaleCacheAfterLogout(t *testing.T) {
+	signedIn := true
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/exa.language_server_pb.LanguageServerService/GetAuthStatus" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"authResult": map[string]any{
+					"hasValidAuth": signedIn,
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	inst := &lsproc.Instance{Port: port, CSRFToken: "token"}
+	s := NewSignIn(signin.New(inst, "/tmp/url"))
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	// 1. Warm the 30s positive cache via /__agy/api/signin/status.
+	recStatus := httptest.NewRecorder()
+	mux.ServeHTTP(recStatus, httptest.NewRequest(http.MethodGet, SignInStatusPath, nil))
+	if recStatus.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recStatus.Code)
+	}
+
+	// 2. User logs out in the web app and navigates to /__agy/signin within the 30s window.
+	signedIn = false
+	recPage := httptest.NewRecorder()
+	mux.ServeHTTP(recPage, httptest.NewRequest(http.MethodGet, SignInPath, nil))
+	if recPage.Code != http.StatusOK {
+		t.Fatalf("page status = %d, want 200", recPage.Code)
+	}
+	if strings.Contains(recPage.Body.String(), "Already signed in") {
+		t.Fatalf("GET %s served stale 'Already signed in' page after logout", SignInPath)
+	}
+
+	// 3. Subsequent status poll should also reflect the refreshed signed-out state.
+	recStatusAfter := httptest.NewRecorder()
+	mux.ServeHTTP(recStatusAfter, httptest.NewRequest(http.MethodGet, SignInStatusPath, nil))
+	var bodyAfter map[string]bool
+	if err := json.NewDecoder(recStatusAfter.Body).Decode(&bodyAfter); err != nil {
+		t.Fatal(err)
+	}
+	if bodyAfter["signedIn"] || !bodyAfter["needsSignIn"] {
+		t.Fatalf("expected status after page visit to be signedIn=false, needsSignIn=true, got %+v", bodyAfter)
 	}
 }
