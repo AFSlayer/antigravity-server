@@ -45,7 +45,7 @@ func TestTitlebarDeleteModalAllowsLineBreakAndNewVariable(t *testing.T) {
 	body := "J=f&&!!a;b=SDb({cascadeId:a,paneId:b,includeRemoveFromSplit:!1});\nreturn H.length>0||b.length>0||G.length>0||g.length>0||e?A.createElement(A.Fragment,null,A.createElement(NL,null)):null"
 	got := applyOnly(t, "mobile-titlebar-delete-modal", body, Options{MobileUX: true})
 	for _, want := range []string{
-		`e?A.createElement(A.Fragment,null,window.__agyDeleteModal?A.createElement(window.__agyDeleteModal,`,
+		`e?A.createElement(A.Fragment,null,window.__agyDeleteModal&&typeof agyShowDel!=="undefined"?A.createElement(window.__agyDeleteModal,`,
 		`typeof agyDel==="function"&&a`,
 		`showLoadingSpinner:agyDelSpin}):null,A.createElement(NL,null)):null`,
 	} {
@@ -334,5 +334,90 @@ func TestAntigravity224PatchShapes(t *testing.T) {
 				t.Fatalf("invalid JS syntax in patched file-upload-large-file-streaming-fallback: %v\n%s", err, out)
 			}
 		}
+	})
+}
+
+func TestAntigravity226PatchShapes(t *testing.T) {
+	checkSyntax := func(t *testing.T, name, code string) {
+		t.Helper()
+		node, err := exec.LookPath("node")
+		if err != nil {
+			return
+		}
+		if out, err := exec.Command(node, "-e", "function test(){"+code+"}").CombinedOutput(); err != nil {
+			t.Fatalf("invalid JS syntax in %s: %v\n%s", name, err, out)
+		}
+	}
+
+	t.Run("skip-onboarding", func(t *testing.T) {
+		v226 := `function x(){c.hasOnboardingScreens&&e!==2&&(Hac(),LQ({to:"/onboarding",search:Meb,replace:!0,throw:!0}))}`
+		got := applyOnly(t, "skip-onboarding", v226, Options{})
+		if strings.Contains(got, `to:"/onboarding"`) {
+			t.Errorf("the onboarding redirect survived:\n%s", got)
+		}
+		checkSyntax(t, "skip-onboarding", got)
+	})
+
+	t.Run("mobile-titlebar-delete-hook", func(t *testing.T) {
+		v226 := "var r=PQb(a),t=JQb(a),{handleArchive:u,handleRestore:v,handlePin:w,handleUnpin:x,isArchiveSupported:y,handleShare:B,showShareModal:D,shareUrl:C,handleCloseShareModal:E,\nonShare:G}=tZ(a??\"\");"
+		got := applyOnly(t, "mobile-titlebar-delete-hook", v226, Options{MobileUX: true})
+		if !strings.Contains(got, `var r=PQb(a),t=JQb(a),{handleArchive:u,handleRestore:v,handlePin:w,handleUnpin:x,isArchiveSupported:y,handleDelete:agyDel,showDeleteModal:agyShowDel,setShowDeleteModal:agySetShowDel,showLoadingSpinner:agyDelSpin,handleCloseDeleteModal:agyCloseDel,handleShare:B,showShareModal:D,shareUrl:C,handleCloseShareModal:E,onShare:G}=tZ(a??"");`) {
+			t.Errorf("2.26 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "mobile-titlebar-delete-hook", got)
+	})
+
+	t.Run("mobile-settings-projects", func(t *testing.T) {
+		v226 := `var X_b=()=>{var a=Nk(),b=gj(),c=b.get("settingsFeature")??Pk.settingsFeature;b=!!b.get("settings")?.hideShortcuts;var {sharedNavItems:e,globalScreens:f,workspaces:g,showWorkspacesSection:h}=S_b();c=[...e.filter(p=>p!=="Account"),...f,...(b?[]:["Shortcuts"]),...(c.hideProvideFeedback?[]:["Provide Feedback"])];var k=S2a(!0);b=k.path.length;var l=b===0,m=k.path[0]??k.exiting[0],n=m?.startsWith("workspace:");return A.createElement("div",{ref:k.setHost,className:"relative h-full w-full overflow-hidden"},` + "\n" + `A.createElement(SM,{offset:-b,active:l,depth:0,footer:e.includes("Account")?A.createElement("div",{className:"flex flex-col border-t border-border p-1"},A.createElement(UWb,{showChevron:!0,className:"mx-1 px-3 py-2.5",onClick:()=>{a(Vu("Account"));k.push("Account")}})):void 0},A.createElement(V_b,{text:"Settings"}),c.map(p=>A.createElement(U_b,{key:p,text:p,label:eT(p),onClick:()=>{a(Vu(p));k.push(p)}})),h&&A.createElement(A.Fragment,null,A.createElement(V_b,{text:"Workspaces"}),g.map(p=>A.createElement(U_b,` + "\n" + `{key:p.uri,text:p.name,onClick:()=>{var r=p.uri;a(Wu({workspaceUri:r}));k.push(` + "`workspace:${r}`" + `)}})))),m&&A.createElement(SM,{offset:1-b,active:b===1,depth:1,exiting:k.exiting.includes(m),onExited:()=>{k.onExited(m)},header:A.createElement(W_b,{onBack:k.pop})},A.createElement(VWb.Provider,{value:!0},n?A.createElement(VZb,null):T_b(m))))};function Y_b(){return["Settings"]};var e0b=A.memo(function(){var a=gj(),b=!!a.get("settings")?.hideProjects,c=!!a.get("settings")?.hideShortcuts,e=Ok(Yu),f=Ok(Zu),{projectManagementFeature:g}=(0,A.useContext)(Qk),h=a.get("settingsFeature")??Pk.settingsFeature,{sharedNavItems:k,globalScreens:l,workspaces:m,showWorkspacesSection:n}=S_b(),p=Ok(wm),r=zl(g?.projectsStateProvider);return null});`
+		got := applyOnly(t, "mobile-settings-projects", v226, Options{MobileUX: true})
+		for _, want := range []string{
+			`var {projectManagementFeature:_pm}=(0,A.useContext)(Qk),_hp=!!gj().get("settings")?.hideProjects,_ps=zl(_pm?.projectsStateProvider)`,
+			`{text:"Projects"}`,
+			`{text:"Not in Project"}`,
+			`else if(_scr&&_scr!=="General"){a(Vu(_scr));k.push(_scr)}`,
+			`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):n?A.createElement(VZb,null):T_b(m)`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.26 shape missing %q in:\n%s", want, got)
+			}
+		}
+		checkSyntax(t, "mobile-settings-projects", got)
+	})
+
+	t.Run("composer-upload-menu-item", func(t *testing.T) {
+		v226 := `var items=[{icon:Aa=>A.createElement(Z,{name:"attach_file",size:Aa.width?Number(Aa.width):14,className:Aa.className}),label:"Files",onClick:aa}];`
+		got := applyOnly(t, "composer-upload-menu-item", v226, Options{})
+		if !strings.Contains(got, `label:"Upload File",onClick:()=>window.__agyTriggerUpload&&window.__agyTriggerUpload()`) {
+			t.Errorf("2.26 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "composer-upload-menu-item", got)
+	})
+
+	t.Run("file-upload-input-reset", func(t *testing.T) {
+		v226 := `var Z7a=({onFilesSelected:a})=>{var b=(0,A.useRef)(null),c=(0,A.useCallback)(e=>{e=e.target;if(e.files&&e.files.length>0){var f=e.files;if(typeof DataTransfer!=="undefined"&&typeof FileList!=="undefined"&&e.files instanceof FileList){f=new DataTransfer;for(let g of Array.from(e.files))f.items.add(g);f=f.files}a(f);e.value=""}},[a]);return{openFileDialog:(0,A.useCallback)(()=>{b.current?.click()},[]),fileInputRef:b,handleFileChange:c}};`
+		got := applyOnly(t, "file-upload-input-reset", v226, Options{})
+		if !strings.Contains(got, `if(b.current)b.current.value="";b.current?.click()`) {
+			t.Errorf("2.26 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "file-upload-input-reset", got)
+	})
+
+	t.Run("question-modal-write-in-focus", func(t *testing.T) {
+		v226 := "var props={onClick:()=>{e||\n(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}};"
+		got := applyOnly(t, "question-modal-write-in-focus", v226, Options{})
+		if !strings.Contains(got, `,onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`) {
+			t.Errorf("2.26 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "question-modal-write-in-focus", got)
+	})
+
+	t.Run("question-modal-prevent-radio-focus-steal", func(t *testing.T) {
+		v226 := `e||J===void 0||a.isMultiSelect||!document.hasFocus()||vGb(K)&&K!==E.current||G.current.get(J)?.focus();`
+		got := applyOnly(t, "question-modal-prevent-radio-focus-steal", v226, Options{})
+		want := `e||J===void 0||a.isMultiSelect||!document.hasFocus()||vGb(K)&&K!==E.current||document.activeElement?.getAttribute?.("data-testid")==="ask-question-writein"||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)||G.current.get(J)?.focus();`
+		if got != want {
+			t.Errorf("2.26 shape:\ngot:  %s\nwant: %s", got, want)
+		}
+		checkSyntax(t, "question-modal-prevent-radio-focus-steal", got)
 	})
 }
