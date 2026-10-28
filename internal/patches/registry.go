@@ -622,15 +622,15 @@ func All() []Patch {
 				if g[2] != nil {
 					return `if(` + string(g[2]) + `)if(` + string(g[3]) + `.size>1048576){if(window.__agyUpload){if(!window.__agyHandledFiles||!window.__agyHandledFiles.has(` + string(g[3]) + `))window.__agyUpload([` + string(g[3]) + `]);return;}}`
 				}
-				out := fileUploadIcbHeaderRe.ReplaceAllString(string(g[0]), `${1}window.__agySyncMediaState&&window.__agySyncMediaState($2,$3);${4}if($6>=$7||(window.__agyShouldStreamSingle&&window.__agyShouldStreamSingle($5,$6,$7))){if(window.__agyUpload){if(!window.__agyHandledFiles||!window.__agyHandledFiles.has($5))window.__agyUpload([$5]);return;}$8}`)
-				out = fileUploadVideoBranchRe.ReplaceAllString(out, `else if($1.includes($2.type.toLowerCase()))if($2.size>20971520){if(window.__agyUpload){if(!window.__agyHandledFiles||!window.__agyHandledFiles.has($2))window.__agyUpload([$2]);return;}}else try{`)
-				out = fileUploadSizeLimitBranchRe.ReplaceAllString(out, `if($1.size>$2){if(window.__agyUpload){if(!window.__agyHandledFiles||!window.__agyHandledFiles.has($1))window.__agyUpload([$1]);return;}}`)
+				out := fileUploadIcbHeaderRe.ReplaceAllString(string(g[0]), `${1}window.__agySyncMediaState&&window.__agySyncMediaState($2,$3);${4}if($6>=$7||(window.__agyShouldStreamSingle&&window.__agyShouldStreamSingle($5,$6,$7))){if(window.__agyUpload){if((!window.__agyHandledFiles||!window.__agyHandledFiles.has($5))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled($5)))window.__agyUpload([$5]);return;}$8}`)
+				out = fileUploadVideoBranchRe.ReplaceAllString(out, `else if($1.includes($2.type.toLowerCase()))if($2.size>20971520){if(window.__agyUpload){if((!window.__agyHandledFiles||!window.__agyHandledFiles.has($2))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled($2)))window.__agyUpload([$2]);return;}}else try{`)
+				out = fileUploadSizeLimitBranchRe.ReplaceAllString(out, `if($1.size>$2){if(window.__agyUpload){if((!window.__agyHandledFiles||!window.__agyHandledFiles.has($1))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled($1)))window.__agyUpload([$1]);return;}}`)
 				return fileUploadBatchEntryRe.ReplaceAllStringFunc(out, func(m string) string {
 					sub := fileUploadBatchEntryRe.FindStringSubmatch(m)
 					if len(sub) >= 7 && sub[5] != "" && sub[6] != "" {
-						return sub[1] + `=window.__agyPartitionFiles?window.__agyPartitionFiles(` + sub[1] + `,` + sub[5] + `-` + sub[6] + `,` + sub[6] + `):Array.from(` + sub[1] + `).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(` + sub[1] + `.length!==0){` + sub[2]
+						return sub[1] + `=window.__agyPartitionFiles?window.__agyPartitionFiles(` + sub[1] + `,` + sub[5] + `-` + sub[6] + `,` + sub[6] + `):Array.from(` + sub[1] + `).filter(_f=>(!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled(_f)));if(` + sub[1] + `.length!==0){` + sub[2]
 					}
-					return sub[1] + `=window.__agyPartitionFiles?window.__agyPartitionFiles(` + sub[1] + `):Array.from(` + sub[1] + `).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(` + sub[1] + `.length!==0){`
+					return sub[1] + `=window.__agyPartitionFiles?window.__agyPartitionFiles(` + sub[1] + `):Array.from(` + sub[1] + `).filter(_f=>(!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled(_f)));if(` + sub[1] + `.length!==0){`
 				})
 			},
 		},
@@ -2372,6 +2372,8 @@ const uploaderScript = `<script>
   var activeMediaCount = 0;
   var maxMediaSlots = 5;
   var cumulativeNativeBytes = 0;
+  var inFlightNativeUntil = 0;
+  var syncedByIcb = false;
 
   function fileFingerprint(f) {
     if (!f) return '';
@@ -2404,11 +2406,17 @@ const uploaderScript = `<script>
   }
   window.__agyIsFileHandled = isFileHandled;
 
-  window.__agySyncMediaState = function(count, maxSlots) {
+  window.__agySyncMediaState = function(count, maxSlots, forceReset) {
+    syncedByIcb = true;
     if (typeof count === 'number') {
+      var prevCount = activeMediaCount;
       activeMediaCount = Math.max(0, count);
-      if (activeMediaCount === 0) {
+      if (activeMediaCount > 0) {
+        inFlightNativeUntil = 0;
+      } else if (forceReset || prevCount > 0 || Date.now() >= inFlightNativeUntil) {
         cumulativeNativeBytes = 0;
+        inFlightNativeUntil = 0;
+        if (reservedFingerprints) reservedFingerprints.clear();
       }
     }
     if (typeof maxSlots === 'number' && maxSlots > 0) {
@@ -2419,7 +2427,10 @@ const uploaderScript = `<script>
   window.__agyUpload = function(files) {
     if (!files || files.length === 0) return;
     for (var i = 0; i < files.length; i++) {
-      uploadSingleFile(files[i]);
+      var f = files[i];
+      if (!f) continue;
+      markFileHandled(f);
+      uploadSingleFile(f);
     }
   };
 
@@ -2499,10 +2510,13 @@ const uploaderScript = `<script>
   window.__agyShouldStreamSingle = function(f, currentCount, maxSlots) {
     if (!f) return false;
     if (isFileHandled(f)) return true;
+    var now = Date.now();
     if (typeof currentCount === 'number') {
+      var prevCount = activeMediaCount;
       activeMediaCount = Math.max(0, currentCount);
-      if (activeMediaCount === 0 && (!reservedFingerprints || reservedFingerprints.size === 0)) {
+      if (activeMediaCount === 0 && (prevCount > 0 || (now >= inFlightNativeUntil && (!reservedFingerprints || reservedFingerprints.size === 0)))) {
         cumulativeNativeBytes = 0;
+        inFlightNativeUntil = 0;
       }
     }
     if (typeof maxSlots === 'number' && maxSlots > 0) {
@@ -2512,7 +2526,8 @@ const uploaderScript = `<script>
     var rTs = reservedFingerprints && fp ? reservedFingerprints.get(fp) : 0;
     if (rTs) {
       reservedFingerprints.delete(fp);
-      if (Date.now() - rTs < 2000) {
+      if (now - rTs < 2000) {
+        inFlightNativeUntil = now + 3000;
         return false;
       }
     }
@@ -2521,23 +2536,24 @@ const uploaderScript = `<script>
       return true;
     }
     cumulativeNativeBytes += est;
+    inFlightNativeUntil = now + 3000;
     return false;
   };
 
   window.__agyPartitionFiles = function(fileList, maxSlots, currentCount) {
     if (!fileList || fileList.length === 0) return [];
+    var now = Date.now();
     if (typeof currentCount === 'number') {
+      var prevCount = activeMediaCount;
       activeMediaCount = Math.max(0, currentCount);
-      if (activeMediaCount === 0 && (!reservedFingerprints || reservedFingerprints.size === 0)) {
+      if (activeMediaCount === 0 && (prevCount > 0 || (now >= inFlightNativeUntil && (!reservedFingerprints || reservedFingerprints.size === 0)))) {
         cumulativeNativeBytes = 0;
+        inFlightNativeUntil = 0;
       }
     }
     var limitSlots = typeof maxSlots === 'number' ? Math.max(0, maxSlots) : Math.max(0, maxMediaSlots - activeMediaCount);
-    var baseBytes = activeMediaCount > 0 ? cumulativeNativeBytes : 0;
-    var batchBytes = 0;
     var nativeFiles = [];
     var streamingFiles = [];
-    var now = Date.now();
     for (var i = 0; i < fileList.length; i++) {
       var f = fileList[i];
       if (isFileHandled(f)) continue;
@@ -2549,6 +2565,7 @@ const uploaderScript = `<script>
       if (wasReserved) {
         if (nativeFiles.length < limitSlots) {
           nativeFiles.push(f);
+          inFlightNativeUntil = now + 3000;
           if (reservedFingerprints && fp) {
             reservedFingerprints.set(fp, now);
           }
@@ -2558,18 +2575,16 @@ const uploaderScript = `<script>
         }
         continue;
       }
-      if (isWithinNativeLimit(f) && nativeFiles.length < limitSlots && baseBytes + batchBytes + est <= 20971520) {
+      if (isWithinNativeLimit(f) && nativeFiles.length < limitSlots && cumulativeNativeBytes + est <= 20971520) {
         nativeFiles.push(f);
-        batchBytes += est;
+        cumulativeNativeBytes += est;
+        inFlightNativeUntil = now + 3000;
         if (reservedFingerprints && fp) {
           reservedFingerprints.set(fp, now);
         }
       } else {
         streamingFiles.push(f);
       }
-    }
-    if (batchBytes > 0) {
-      cumulativeNativeBytes = baseBytes + batchBytes;
     }
     if (streamingFiles.length > 0) {
       for (var k = 0; k < streamingFiles.length; k++) {
@@ -2631,10 +2646,11 @@ const uploaderScript = `<script>
     var streamingFiles = [];
     var hasNativeFile = false;
     var nativeCount = 0;
-    var remainingSlots = Math.max(0, maxMediaSlots - activeMediaCount);
-    var baseBytes = activeMediaCount > 0 ? cumulativeNativeBytes : 0;
-    var batchBytes = 0;
     var now = Date.now();
+    if (!syncedByIcb || (activeMediaCount === 0 && now >= inFlightNativeUntil)) {
+      cumulativeNativeBytes = 0;
+    }
+    var remainingSlots = Math.max(0, maxMediaSlots - activeMediaCount);
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       if (dirNames[f.name]) {
@@ -2642,10 +2658,11 @@ const uploaderScript = `<script>
         continue;
       }
       var est = estimateNativeBytes(f);
-      if (isWithinNativeLimit(f) && nativeCount < remainingSlots && baseBytes + batchBytes + est <= 20971520) {
+      if (isWithinNativeLimit(f) && nativeCount < remainingSlots && cumulativeNativeBytes + est <= 20971520) {
         hasNativeFile = true;
         nativeCount++;
-        batchBytes += est;
+        cumulativeNativeBytes += est;
+        inFlightNativeUntil = now + 3000;
         if (reservedFingerprints) {
           var fp = fileFingerprint(f);
           if (fp) reservedFingerprints.set(fp, now);
@@ -2653,9 +2670,6 @@ const uploaderScript = `<script>
       } else {
         streamingFiles.push(f);
       }
-    }
-    if (batchBytes > 0) {
-      cumulativeNativeBytes = baseBytes + batchBytes;
     }
 
     if (streamingFiles.length > 0) {

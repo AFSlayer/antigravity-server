@@ -564,7 +564,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		if want := `window.__agySyncMediaState&&window.__agySyncMediaState(b,f);`; !strings.Contains(got, want) {
 			t.Errorf("expected media state sync %q in:\n%s", want, got)
 		}
-		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m,f-b,b):Array.from(m).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(m.length!==0){var r=f-b;`; !strings.Contains(got, want) {
+		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m,f-b,b):Array.from(m).filter(_f=>(!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled(_f)));if(m.length!==0){var r=f-b;`; !strings.Contains(got, want) {
 			t.Errorf("expected batch entry filter %q in:\n%s", want, got)
 		}
 		checkSyntax(t, "file-upload-large-file-streaming-fallback-228", got)

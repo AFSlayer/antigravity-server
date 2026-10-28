@@ -859,22 +859,27 @@ assert.strictEqual(kept.length, 2, "only maxSlots files should be kept for nativ
 assert.strictEqual(uploadedBatches.length, 1, "overflow file beyond maxSlots should be streamed");
 assert.strictEqual(uploadedBatches[0][0].name, "c.txt");
 
-// 10. Multi-batch cumulative 20MB tracking across separate drops/selections
+// 10. Multi-batch cumulative 20MB tracking across separate drops/selections (including intermediate 0-count re-render during async arrayBuffer)
 uploadedBatches = [];
 upstreamDropCount = 0;
-window.__agySyncMediaState(0, 5);
-fireDrop([{ name: "batch1.zip", type: "application/zip", size: 14 * 1024 * 1024 }]);
+window.__agySyncMediaState(0, 5, true);
+const batch1File = { name: "batch1.zip", type: "application/zip", size: 14 * 1024 * 1024 };
+fireDrop([batch1File]);
 assert.strictEqual(uploadedBatches.length, 0, "first 14MB zip should fit native budget");
 assert.strictEqual(upstreamDropCount, 1);
+assert.strictEqual(window.__agyShouldStreamSingle(batch1File, 0, 5), false, "__agyShouldStreamSingle should consume reservation and keep 14MB in-flight");
+// Simulate React re-render from setIsDraggingMedia(false) while Za.length (b) is still 0 during async arrayBuffer()
+window.__agySyncMediaState(0, 5);
+// Now arrayBuffer() completes and Za.length becomes 1
 window.__agySyncMediaState(1, 5);
 fireDrop([{ name: "batch2.zip", type: "application/zip", size: 10 * 1024 * 1024 }]);
-assert.strictEqual(uploadedBatches.length, 1, "second 10MB zip exceeding 20MB cumulative budget should stream");
+assert.strictEqual(uploadedBatches.length, 1, "second 10MB zip exceeding 20MB cumulative budget should stream even after intermediate 0-count re-render");
 assert.strictEqual(uploadedBatches[0][0].name, "batch2.zip");
 assert.strictEqual(upstreamDropCount, 1, "second drop should be stopped from reaching upstream");
 
 // 11. Fingerprint deduplication prevents duplicate upload even if DataTransfer recreates File wrapper instance
 uploadedBatches = [];
-window.__agySyncMediaState(0, 5);
+window.__agySyncMediaState(0, 5, true);
 const origLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
 const clonedLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
 const img = { name: "pic.png", type: "image/png", size: 100 * 1024, lastModified: 1700000000 };
