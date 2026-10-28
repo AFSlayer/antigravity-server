@@ -330,7 +330,7 @@ func TestAntigravity224PatchShapes(t *testing.T) {
 	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
 		v224 := `if(true){}else{var u=qNa(m.name,m.type);if(u)if(m.size>1048576)e?.("Text file size exceeds 1MB limit"),g(Mf.VALIDATION_CHECK_FAILED,` + "\n" + `Error("Text file size exceeds 1MB limit"));else try{}catch(err){}}`
 		got224 := applyOnly(t, "file-upload-large-file-streaming-fallback", v224, Options{})
-		if want := `if(u)if(m.size>1048576){if(window.__agyUpload){window.__agyUpload([m]);return;}}else try{`; !strings.Contains(got224, want) {
+		if want := `if(u)if(m.size>1048576){if(window.__agyUpload){if(!window.__agyHandledFiles||!window.__agyHandledFiles.has(m))window.__agyUpload([m]);return;}}else try{`; !strings.Contains(got224, want) {
 			t.Errorf("2.24 shape: want %q in\n%s", want, got224)
 		}
 		if node, err := exec.LookPath("node"); err == nil {
@@ -487,8 +487,10 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `var NR=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,adminDisabled:h=!1,disabledReason:k,toggleTooltip:l,isLast:m=!1,onDelete:n,deleteTitle:q="Delete",onToggle:r,toggleChecked:t,toggleDisabled:u=!1,expandableContent:v,actions:w})=>{var x=w||n||r,[y,z]=(0,A.useState)(!1),B=(0,A.useRef)(null);return A.createElement("div",null,d,f,v)};`
 		got := applyOnly(t, "settings-rules-editor", v228, Options{})
 		for _, want := range []string{
+			`_rawP=String(b||"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/")`,
+			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
 			`if(agySavedDesc!==null)d=agySavedDesc;`,
-			`if(b)f=_R.createElement(_R.Fragment,null,f,_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit"`,
+			`var agyDoEdit=_canEdit?async()=>{`,
 			`var agyExp=v?_R.createElement(_R.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;`,
 		} {
 			if !strings.Contains(got, want) {
@@ -496,6 +498,76 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 			}
 		}
 		checkSyntax(t, "settings-rules-editor", got)
+	})
+
+	t.Run("settings-customizations-show-edit", func(t *testing.T) {
+		v223 := `var el=A.createElement("div",null,A.createElement(A.Fragment,null,A.createElement(ty,{id:G,delayShow:200},"Copy Path")),!y&&n&&A.createElement(A.Fragment,null,A.createElement(tA,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":q,className:"rounded opacity-20","data-tooltip-id":H},A.createElement(W,{name:"edit_note",className:"w-4 h-4"}))));`
+		got223 := applyOnly(t, "settings-customizations-show-edit", v223, Options{})
+		if want := `"Copy Path")),n&&A.createElement(A.Fragment,null,A.createElement(tA,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":q`; !strings.Contains(got223, want) {
+			t.Errorf("2.23 shape: want %q in\n%s", want, got223)
+		}
+		checkSyntax(t, "settings-customizations-show-edit-223", got223)
+
+		v228 := `var el=A.createElement("div",null,A.createElement(A.Fragment,null,A.createElement(iA,{id:E,delayShow:200},"Copy Path")),!w&&n&&A.createElement(A.Fragment,null,A.createElement(lA,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":q,className:"rounded opacity-20","data-tooltip-id":C},A.createElement(Z,{name:"delete",className:"w-4 h-4"}))));`
+		got228 := applyOnly(t, "settings-customizations-show-edit", v228, Options{})
+		for _, want := range []string{
+			`"Copy Path")),typeof agyDoEdit==="function"&&agyDoEdit&&A.createElement(lA,{variant:"ghost",size:"icon-sm",onClick:agyDoEdit,"aria-label":"Edit"`,
+			`A.createElement(Z,{name:"edit_note",className:"w-4 h-4"})),!w&&n&&A.createElement(A.Fragment,null,A.createElement(lA,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":q`,
+		} {
+			if !strings.Contains(got228, want) {
+				t.Errorf("2.28 shape missing %q in:\n%s", want, got228)
+			}
+		}
+		checkSyntax(t, "settings-customizations-show-edit-228", got228)
+	})
+
+	t.Run("settings-doc-row-editor", func(t *testing.T) {
+		v228 := `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;return A.createElement("div",null,f,g,k)}`
+		got := applyOnly(t, "settings-doc-row-editor", v228, Options{})
+		for _, want := range []string{
+			`_R=A,_rawP=String(c??b??"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`if(!q&&agyEdit){if(_tmr.current){clearTimeout(_tmr.current);_tmr.current=null;}agySetDone(!1);agySetErr("");agySetEdit(!1);}`,
+			`if(agySaved!==null){f=n&&_hadFm?agySaved:_stripFm(agySaved);d=_parseDesc(agySaved);}`,
+			`if(q&&agyEdit){agySetEdit(!1);return;}`,
+			`agySetTxt(typeof json.content==="string"&&(json.content.length>0||agySaved!==null)?json.content:(agySaved??f??""));agySetEdit(!0);r(!0);`,
+			`fetch("/__agy/api/rules/read?path="+encodeURIComponent(_p))`,
+			`fetch("/__agy/api/rules/save"`,
+			`k=k?_R.createElement(_R.Fragment,null,agyEditBtn,k):agyEditBtn`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.28 shape missing %q in:\n%s", want, got)
+			}
+		}
+		checkSyntax(t, "settings-doc-row-editor", got)
+	})
+
+	t.Run("composer-upload-menu-item", func(t *testing.T) {
+		v228 := `var items=[{icon:qa=>A.createElement(Z,{name:"attach_file",size:qa.width?Number(qa.width):14,className:qa.className}),label:"Files",onClick:ta}];`
+		got := applyOnly(t, "composer-upload-menu-item", v228, Options{})
+		for _, want := range []string{
+			`label:"Upload File",onClick:()=>window.__agyTriggerUpload&&window.__agyTriggerUpload()`,
+			`{name:"attach_file",size:qa.width?Number(qa.width):14,className:qa.className}),label:"Files",onClick:ta}`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.28 shape missing %q in:\n%s", want, got)
+			}
+		}
+		checkSyntax(t, "composer-upload-menu-item-228", got)
+	})
+
+	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
+		v228 := `function test(){var icb=(a,b,c,d,f=5)=>{var g=Qv(),h=async m=>{let w=c?COa:[];if(b>=f)d?.("Maximum number of attachments reached");else if(DOa.includes(m.type.toLowerCase()))if(m.size>10485760)d?.("PDF file size exceeds 10MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("PDF file size exceeds 10MB limit"));else a();else{var r=MOa(m.name,m.type);if(r)if(m.size>10485760)d?.("Document file size exceeds 10MB limit"),` + "\n" + `g(yg.VALIDATION_CHECK_FAILED,Error("Document file size exceeds 10MB limit"));else a();else{var t=POa(m.name,m.type);if(t)if(m.size>20971520)d?.("Zip file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Zip file size exceeds 20MB limit"));else a();else{var u=IOa(m.name,m.type);if(u)if(m.size>1048576)d?.("Text file size exceeds 1MB limit"),g(yg.VALIDATION_CHECK_FAILED,` + "\n" + `Error("Text file size exceeds 1MB limit"));else a();else if(w.includes(m.type.toLowerCase()))try{a()}catch(x){}else{var v=JOa(m.name,m.type);if(v)if(m.size>20971520)d?.("Audio file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Audio file size exceeds 20MB limit"));else a();else if(m.size>20971520)d?.("File size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("File size exceeds 20MB limit"));else a()}}}}},k=async m=>{if(m.length!==0){var r=f-b;a()}};return{k}}}`
+		got := applyOnly(t, "file-upload-large-file-streaming-fallback", v228, Options{})
+		if count := strings.Count(got, `window.__agyUpload([m])`); count != 8 {
+			t.Errorf("expected all 8 streaming fallback branches (max-slot + video + 6 size limits) to stream via __agyUpload, got %d in:\n%s", count, got)
+		}
+		if want := `window.__agySyncMediaState&&window.__agySyncMediaState(b,f);`; !strings.Contains(got, want) {
+			t.Errorf("expected media state sync %q in:\n%s", want, got)
+		}
+		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m,f-b,b):Array.from(m).filter(_f=>(!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled(_f)));if(m.length!==0){var r=f-b;`; !strings.Contains(got, want) {
+			t.Errorf("expected batch entry filter %q in:\n%s", want, got)
+		}
+		checkSyntax(t, "file-upload-large-file-streaming-fallback-228", got)
 	})
 
 	t.Run("file-upload-accept-all", func(t *testing.T) {

@@ -71,6 +71,7 @@ var regexpFixtures = map[string]string{
 	"mobile-hide-aux-sidebar":                   `G.createElement(bZ,{iconName:"dock_to_bottom",onClick:m,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"})`,
 	"settings-rules-editor":                     `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var w=k||m||p,[y,z]=(0,G.useState)(!1),`,
 	"settings-customizations-show-edit":         `"Copy path")),!A&&n&&z.createElement(z.Fragment,null,Yz.createElement(Yz,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":`,
+	"settings-doc-row-editor":                   `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;`,
 	"settings-restore-customizations-tab":       `h=k}else h=g;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");` + "\n" + `return l};if(!c.size)return g(h);`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
 	"force-disable-telemetry":                   `return{telemetryEnabled:f,marketingEmailsEnabled:`,
@@ -78,6 +79,7 @@ var regexpFixtures = map[string]string{
 	"folder-picker-initial-path":                `initialPath:b?b.fsPath:g?"C:/":"/",fetchDirectoryContents:`,
 	"composer-upload-menu-item":                 `{icon:ea=>x.createElement(T,{name:"image",size:ea.width?Number(ea.width):14,className:ea.className}),` + "\n" + `label:"Media",onClick:oa}`,
 	"file-upload-accept-all":                    `accept:".png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif,video/webm,.mp4,video/mp4,.pdf,application/pdf,.txt,text/plain,.csv,text/csv,.json,application/json,.md,text/markdown,.py,text/x-python,.js,.mjs,text/javascript,.ts,.tsx,text/x-typescript,.html,.htm,text/html,.css,text/css",multiple:!0`,
+	"file-drop-accept-all":                      `function TC(a,b=""){if(b.startsWith("image/")||b.startsWith("video/")||b.startsWith("audio/")||b==="application/pdf"||KOa(b,a)||AC(b,a))return!0;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return hPa.has(a)}`,
 	"file-upload-input-reset":                   `var IRa=({onFilesSelected:a})=>{var b=(0,x.useRef)(null),c=(0,x.useCallback)(e=>{e=e.target;e.files&&a(e.files)},[a]);return{openFileDialog:(0,x.useCallback)(()=>{b.current?.click()},[]),fileInputRef:b,handleFileChange:c}};`,
 	"file-upload-custom-text-types":             `function WEa(a,b){b=b.split(";")[0].trim().toLowerCase();if(UEa.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return VEa[a]}function XEa(a){return WEa("",a)!==void 0}`,
 	"file-upload-large-file-streaming-fallback": `if(n)if(k.size>1048576)console.error("Text file size exceeds 1MB limit");`,
@@ -143,8 +145,9 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`initialPath:"/home/ubuntu/workspace",fetchDirectoryContents:`,
 		`Upload File`,
 		`accept:"*/*",multiple:!0`,
+		`function TC(a,b=""){return!0}`,
 		`if(t.files&&t.files.length>0)a(t.files);t.value=""`,
-		`a==="har"||a==="jsonl"?"application/json":"text/plain"`,
+		`a==="md"||a==="markdown"?"text/markdown"`,
 		`window.__agyUpload([k])`,
 		`var e=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService`,
 		`isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec)`,
@@ -765,22 +768,45 @@ fireDrop([
 assert.strictEqual(uploadedBatches.length, 0, "large native images must not trigger duplicate custom upload");
 assert.strictEqual(upstreamDropCount, 1, "large native images must reach upstream drop listener");
 
-// 3. Non-image or unsupported file: custom uploader runs, propagation to upstream is stopped, overlays are dismissed
+// 3. Files within 2.28.0 native limits (<= 1MB text, <= 10MB PDF/doc, <= 20MB zip/other): upstream drop runs, custom uploader does not intercept
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([
+  { name: "bundle.zip", type: "application/zip", size: 4 * 1024 * 1024 },
+  { name: "notes.txt", type: "text/plain", size: 200 * 1024 },
+  { name: "report.pdf", type: "application/pdf", size: 5 * 1024 * 1024 }
+]);
+assert.strictEqual(uploadedBatches.length, 0, "files within native size limits should reach upstream drop handler");
+assert.strictEqual(upstreamDropCount, 1, "files within native size limits should reach upstream drop listener");
+
+// 4. Oversized file exceeding native limit (> 20MB zip or > 1MB text): custom uploader runs, propagation to upstream is stopped, overlays are dismissed
 uploadedBatches = [];
 upstreamDropCount = 0;
 mouseupCount = 0;
 dragleaveNullCount = 0;
-const archiveFile = { name: "bundle.zip", type: "application/zip", size: 4 * 1024 * 1024 };
+const archiveFile = { name: "huge-bundle.zip", type: "application/zip", size: 25 * 1024 * 1024 };
 const dropEv = fireDrop([archiveFile]);
-assert.strictEqual(uploadedBatches.length, 1, "non-image file should trigger custom upload");
+assert.strictEqual(uploadedBatches.length, 1, "oversized file should trigger custom upload");
 assert.strictEqual(uploadedBatches[0].length, 1);
-assert.strictEqual(uploadedBatches[0][0].name, "bundle.zip");
+assert.strictEqual(uploadedBatches[0][0].name, "huge-bundle.zip");
 assert.strictEqual(upstreamDropCount, 0, "stopPropagation must prevent upstream drop listener from running simultaneously");
 assert.strictEqual(dropEv.defaultPrevented, true, "drop event must be defaultPrevented");
 assert.ok(mouseupCount >= 1, "mouseup must be dispatched to reset context drop overlay");
 assert.ok(dragleaveNullCount >= 1, "dragleave with relatedTarget:null must be dispatched to reset media drop overlay");
 
-// 4. Directory drop: custom uploader must ignore directories and let upstream zip handler run
+// 5. Mixed native image + oversized file drop (including empty MIME .log): streams only the oversized file once, marks it in __agyHandledFiles, and lets upstream drop handler run for the native image
+uploadedBatches = [];
+upstreamDropCount = 0;
+const mixedImage = { name: "photo.png", type: "image/png", size: 500 * 1024 };
+const mixedHugeLog = { name: "huge.log", type: "", size: 3 * 1024 * 1024 };
+fireDrop([mixedImage, mixedHugeLog]);
+assert.strictEqual(uploadedBatches.length, 1, "mixed drop should stream oversized file immediately");
+assert.strictEqual(uploadedBatches[0].length, 1, "mixed drop must not include native image in custom upload");
+assert.strictEqual(uploadedBatches[0][0].name, "huge.log");
+assert.strictEqual(Boolean(window.__agyHandledFiles && window.__agyHandledFiles.has(mixedHugeLog)), true, "oversized file must be tracked in __agyHandledFiles to prevent duplicate icb fallback");
+assert.strictEqual(upstreamDropCount, 1, "mixed drop must reach upstream drop listener for the native image");
+
+// 6. Directory drop & directory + oversized file mixed drop: custom uploader must ignore directories and let upstream zip handler run
 uploadedBatches = [];
 upstreamDropCount = 0;
 fireDrop(
@@ -789,6 +815,80 @@ fireDrop(
 );
 assert.strictEqual(uploadedBatches.length, 0, "directory drop must not trigger custom file upload");
 assert.strictEqual(upstreamDropCount, 1, "directory drop must reach upstream folder zip listener");
+
+uploadedBatches = [];
+upstreamDropCount = 0;
+const folderPlusHugeZip = { name: "archive.zip", type: "application/zip", size: 25 * 1024 * 1024 };
+fireDrop(
+  [{ name: "my-folder", type: "", size: 0 }, folderPlusHugeZip],
+  [
+    { kind: "file", webkitGetAsEntry: () => ({ isDirectory: true, name: "my-folder" }) },
+    { kind: "file", webkitGetAsEntry: () => ({ isDirectory: false, name: "archive.zip" }) }
+  ]
+);
+assert.strictEqual(uploadedBatches.length, 1, "oversized file dropped alongside directory should stream");
+assert.strictEqual(uploadedBatches[0][0].name, "archive.zip");
+assert.strictEqual(upstreamDropCount, 1, "directory drop alongside oversized file must still reach upstream folder zip listener");
+
+// 7. Multiple files whose individual sizes are <= 20MB but cumulative non-image size exceeds 20MB: excess files stream automatically
+uploadedBatches = [];
+upstreamDropCount = 0;
+const zipA = { name: "part1.zip", type: "application/zip", size: 12 * 1024 * 1024 };
+const zipB = { name: "part2.zip", type: "application/zip", size: 12 * 1024 * 1024 };
+fireDrop([zipA, zipB]);
+assert.strictEqual(uploadedBatches.length, 1, "cumulative >20MB batch should stream excess file");
+assert.strictEqual(uploadedBatches[0].length, 1);
+assert.strictEqual(uploadedBatches[0][0].name, "part2.zip");
+assert.strictEqual(upstreamDropCount, 1, "first file within 20MB budget should still reach upstream drop listener");
+
+// 8. Extensionless Dockerfile > 1MB is recognized as text and streamed
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([{ name: "Dockerfile", type: "", size: 2 * 1024 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 1, "Dockerfile > 1MB should stream via custom uploader");
+assert.strictEqual(uploadedBatches[0][0].name, "Dockerfile");
+assert.strictEqual(upstreamDropCount, 0);
+
+// 9. __agyPartitionFiles respects remaining native slot count (maxSlots)
+uploadedBatches = [];
+const f1 = { name: "a.txt", type: "text/plain", size: 100 };
+const f2 = { name: "b.txt", type: "text/plain", size: 100 };
+const f3 = { name: "c.txt", type: "text/plain", size: 100 };
+const kept = window.__agyPartitionFiles([f1, f2, f3], 2, 0);
+assert.strictEqual(kept.length, 2, "only maxSlots files should be kept for native attachment");
+assert.strictEqual(uploadedBatches.length, 1, "overflow file beyond maxSlots should be streamed");
+assert.strictEqual(uploadedBatches[0][0].name, "c.txt");
+
+// 10. Multi-batch cumulative 20MB tracking across separate drops/selections (including intermediate 0-count re-render during async arrayBuffer)
+uploadedBatches = [];
+upstreamDropCount = 0;
+window.__agySyncMediaState(0, 5, true);
+const batch1File = { name: "batch1.zip", type: "application/zip", size: 14 * 1024 * 1024 };
+fireDrop([batch1File]);
+assert.strictEqual(uploadedBatches.length, 0, "first 14MB zip should fit native budget");
+assert.strictEqual(upstreamDropCount, 1);
+assert.strictEqual(window.__agyShouldStreamSingle(batch1File, 0, 5), false, "__agyShouldStreamSingle should consume reservation and keep 14MB in-flight");
+// Simulate React re-render from setIsDraggingMedia(false) while Za.length (b) is still 0 during async arrayBuffer()
+window.__agySyncMediaState(0, 5);
+// Now arrayBuffer() completes and Za.length becomes 1
+window.__agySyncMediaState(1, 5);
+fireDrop([{ name: "batch2.zip", type: "application/zip", size: 10 * 1024 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 1, "second 10MB zip exceeding 20MB cumulative budget should stream even after intermediate 0-count re-render");
+assert.strictEqual(uploadedBatches[0][0].name, "batch2.zip");
+assert.strictEqual(upstreamDropCount, 1, "second drop should be stopped from reaching upstream");
+
+// 11. Fingerprint deduplication prevents duplicate upload even if DataTransfer recreates File wrapper instance
+uploadedBatches = [];
+window.__agySyncMediaState(0, 5, true);
+const origLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
+const clonedLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
+const img = { name: "pic.png", type: "image/png", size: 100 * 1024, lastModified: 1700000000 };
+fireDrop([img, origLog]);
+assert.strictEqual(uploadedBatches.length, 1, "capture drop streams origLog once");
+const partitioned = window.__agyPartitionFiles([img, clonedLog], 5, 0);
+assert.strictEqual(uploadedBatches.length, 1, "__agyPartitionFiles must not re-upload cloned File with matching fingerprint");
+assert.strictEqual(partitioned.length, 1);
+assert.strictEqual(partitioned[0].name, "pic.png");
 `
 
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
