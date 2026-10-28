@@ -147,7 +147,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`accept:"*/*",multiple:!0`,
 		`function TC(a,b=""){return!0}`,
 		`if(t.files&&t.files.length>0)a(t.files);t.value=""`,
-		`a==="har"||a==="jsonl"?"application/json":b.startsWith("text/")?"text/plain":void 0`,
+		`a==="md"||a==="markdown"?"text/markdown"`,
 		`window.__agyUpload([k])`,
 		`var e=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService`,
 		`isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec)`,
@@ -794,17 +794,19 @@ assert.strictEqual(dropEv.defaultPrevented, true, "drop event must be defaultPre
 assert.ok(mouseupCount >= 1, "mouseup must be dispatched to reset context drop overlay");
 assert.ok(dragleaveNullCount >= 1, "dragleave with relatedTarget:null must be dispatched to reset media drop overlay");
 
-// 5. Mixed native image + oversized file drop: let upstream drop handler run so image attaches natively and icb fallback streams oversized file
+// 5. Mixed native image + oversized file drop (including empty MIME .log): streams only the oversized file once, marks it in __agyHandledFiles, and lets upstream drop handler run for the native image
 uploadedBatches = [];
 upstreamDropCount = 0;
-fireDrop([
-  { name: "photo.png", type: "image/png", size: 500 * 1024 },
-  { name: "huge.log", type: "text/plain", size: 3 * 1024 * 1024 }
-]);
-assert.strictEqual(uploadedBatches.length, 0, "mixed drop must not hijack native image into custom upload at capture phase");
-assert.strictEqual(upstreamDropCount, 1, "mixed drop must reach upstream drop listener");
+const mixedImage = { name: "photo.png", type: "image/png", size: 500 * 1024 };
+const mixedHugeLog = { name: "huge.log", type: "", size: 3 * 1024 * 1024 };
+fireDrop([mixedImage, mixedHugeLog]);
+assert.strictEqual(uploadedBatches.length, 1, "mixed drop should stream oversized file immediately");
+assert.strictEqual(uploadedBatches[0].length, 1, "mixed drop must not include native image in custom upload");
+assert.strictEqual(uploadedBatches[0][0].name, "huge.log");
+assert.strictEqual(Boolean(window.__agyHandledFiles && window.__agyHandledFiles.has(mixedHugeLog)), true, "oversized file must be tracked in __agyHandledFiles to prevent duplicate icb fallback");
+assert.strictEqual(upstreamDropCount, 1, "mixed drop must reach upstream drop listener for the native image");
 
-// 6. Directory drop: custom uploader must ignore directories and let upstream zip handler run
+// 6. Directory drop & directory + oversized file mixed drop: custom uploader must ignore directories and let upstream zip handler run
 uploadedBatches = [];
 upstreamDropCount = 0;
 fireDrop(
@@ -813,6 +815,20 @@ fireDrop(
 );
 assert.strictEqual(uploadedBatches.length, 0, "directory drop must not trigger custom file upload");
 assert.strictEqual(upstreamDropCount, 1, "directory drop must reach upstream folder zip listener");
+
+uploadedBatches = [];
+upstreamDropCount = 0;
+const folderPlusHugeZip = { name: "archive.zip", type: "application/zip", size: 25 * 1024 * 1024 };
+fireDrop(
+  [{ name: "my-folder", type: "", size: 0 }, folderPlusHugeZip],
+  [
+    { kind: "file", webkitGetAsEntry: () => ({ isDirectory: true, name: "my-folder" }) },
+    { kind: "file", webkitGetAsEntry: () => ({ isDirectory: false, name: "archive.zip" }) }
+  ]
+);
+assert.strictEqual(uploadedBatches.length, 1, "oversized file dropped alongside directory should stream");
+assert.strictEqual(uploadedBatches[0][0].name, "archive.zip");
+assert.strictEqual(upstreamDropCount, 1, "directory drop alongside oversized file must still reach upstream folder zip listener");
 `
 
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
