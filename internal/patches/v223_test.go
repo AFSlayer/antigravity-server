@@ -487,9 +487,9 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `var NR=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,adminDisabled:h=!1,disabledReason:k,toggleTooltip:l,isLast:m=!1,onDelete:n,deleteTitle:q="Delete",onToggle:r,toggleChecked:t,toggleDisabled:u=!1,expandableContent:v,actions:w})=>{var x=w||n||r,[y,z]=(0,A.useState)(!1),B=(0,A.useRef)(null);return A.createElement("div",null,d,f,v)};`
 		got := applyOnly(t, "settings-rules-editor", v228, Options{})
 		for _, want := range []string{
-			`_p=String(b||"").replace(/^file:\/\//,"").replace(/\\/g,"/")`,
-			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins)\//.test(_p)&&!/\.json$/i.test(_p))`,
-			`if(agySavedDesc!==null&&(!d||!agySavedDesc.trimStart().startsWith("---")))d=agySavedDesc;`,
+			`_rawP=String(b||"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/")`,
+			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`if(agySavedDesc!==null)d=agySavedDesc;`,
 			`var agyDoEdit=_canEdit?async()=>{`,
 			`var agyExp=v?_R.createElement(_R.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;`,
 		} {
@@ -525,7 +525,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;return A.createElement("div",null,f,g,k)}`
 		got := applyOnly(t, "settings-doc-row-editor", v228, Options{})
 		for _, want := range []string{
-			`_R=A,_p=String(c??b??"").replace(/^file:\/\//,"").replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`_R=A,_rawP=String(c??b??"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
 			`if(!q&&agyEdit)agySetEdit(!1);`,
 			`if(q&&agyEdit){agySetEdit(!1);return;}`,
 			`agySetTxt(json.content??f??"");agySetEdit(!0);r(!0);`,
@@ -560,7 +560,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		if count := strings.Count(got, `window.__agyUpload([m])`); count != 6 {
 			t.Errorf("expected all 6 size limit branches to stream via __agyUpload, got %d in:\n%s", count, got)
 		}
-		if want := `m=Array.from(m).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(m.length!==0){`; !strings.Contains(got, want) {
+		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m):Array.from(m).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(m.length!==0){`; !strings.Contains(got, want) {
 			t.Errorf("expected batch entry filter %q in:\n%s", want, got)
 		}
 		checkSyntax(t, "file-upload-large-file-streaming-fallback-228", got)
