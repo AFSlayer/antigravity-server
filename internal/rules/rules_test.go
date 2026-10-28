@@ -117,7 +117,23 @@ func TestRulesReadAndSave(t *testing.T) {
 		t.Fatalf("fallback content mismatch: got %q, want %q", legacyRes.Content, legacyContent)
 	}
 
-	// 5. Test Path Traversal Protection
+	// 5. Test ~/.agents/skills global skill directory
+	agentsSkillDir := filepath.Join(tempDir, ".agents", "skills", "global-skill")
+	if err := os.MkdirAll(agentsSkillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	saveAgentsSkillBody, _ := json.Marshal(saveRequest{
+		Path:    agentsSkillDir,
+		Content: "# Global Agent Skill\n",
+	})
+	reqAgentsSave := httptest.NewRequest(http.MethodPost, SaveAPIPath, bytes.NewReader(saveAgentsSkillBody))
+	recAgentsSave := httptest.NewRecorder()
+	mux.ServeHTTP(recAgentsSave, reqAgentsSave)
+	if recAgentsSave.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on ~/.agents/skills save, got %d: %s", recAgentsSave.Code, recAgentsSave.Body.String())
+	}
+
+	// 6. Test Path Traversal Protection
 	badPath := filepath.Join(tempDir, "..", "..", "etc", "passwd")
 	reqBad := httptest.NewRequest(http.MethodGet, ReadAPIPath+"?path="+badPath, nil)
 	recBad := httptest.NewRecorder()

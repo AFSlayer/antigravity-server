@@ -182,7 +182,11 @@ func (m *Manager) validatePath(inputPath string) (string, error) {
 
 	var allowed []string
 	if m.homeDir != "" {
-		allowed = append(allowed, filepath.Join(m.homeDir, ".gemini"))
+		allowed = append(allowed,
+			filepath.Join(m.homeDir, ".gemini"),
+			filepath.Join(m.homeDir, ".agents"),
+			filepath.Join(m.homeDir, ".agent"),
+		)
 	}
 	if m.workspaceRoot != "" {
 		allowed = append(allowed, m.workspaceRoot)

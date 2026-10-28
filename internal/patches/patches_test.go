@@ -854,10 +854,36 @@ uploadedBatches = [];
 const f1 = { name: "a.txt", type: "text/plain", size: 100 };
 const f2 = { name: "b.txt", type: "text/plain", size: 100 };
 const f3 = { name: "c.txt", type: "text/plain", size: 100 };
-const kept = window.__agyPartitionFiles([f1, f2, f3], 2);
+const kept = window.__agyPartitionFiles([f1, f2, f3], 2, 0);
 assert.strictEqual(kept.length, 2, "only maxSlots files should be kept for native attachment");
 assert.strictEqual(uploadedBatches.length, 1, "overflow file beyond maxSlots should be streamed");
 assert.strictEqual(uploadedBatches[0][0].name, "c.txt");
+
+// 10. Multi-batch cumulative 20MB tracking across separate drops/selections
+uploadedBatches = [];
+upstreamDropCount = 0;
+window.__agySyncMediaState(0, 5);
+fireDrop([{ name: "batch1.zip", type: "application/zip", size: 14 * 1024 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 0, "first 14MB zip should fit native budget");
+assert.strictEqual(upstreamDropCount, 1);
+window.__agySyncMediaState(1, 5);
+fireDrop([{ name: "batch2.zip", type: "application/zip", size: 10 * 1024 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 1, "second 10MB zip exceeding 20MB cumulative budget should stream");
+assert.strictEqual(uploadedBatches[0][0].name, "batch2.zip");
+assert.strictEqual(upstreamDropCount, 1, "second drop should be stopped from reaching upstream");
+
+// 11. Fingerprint deduplication prevents duplicate upload even if DataTransfer recreates File wrapper instance
+uploadedBatches = [];
+window.__agySyncMediaState(0, 5);
+const origLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
+const clonedLog = { name: "trace.log", type: "", size: 2 * 1024 * 1024, lastModified: 1700000000 };
+const img = { name: "pic.png", type: "image/png", size: 100 * 1024, lastModified: 1700000000 };
+fireDrop([img, origLog]);
+assert.strictEqual(uploadedBatches.length, 1, "capture drop streams origLog once");
+const partitioned = window.__agyPartitionFiles([img, clonedLog], 5, 0);
+assert.strictEqual(uploadedBatches.length, 1, "__agyPartitionFiles must not re-upload cloned File with matching fingerprint");
+assert.strictEqual(partitioned.length, 1);
+assert.strictEqual(partitioned[0].name, "pic.png");
 `
 
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
