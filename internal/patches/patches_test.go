@@ -829,6 +829,35 @@ fireDrop(
 assert.strictEqual(uploadedBatches.length, 1, "oversized file dropped alongside directory should stream");
 assert.strictEqual(uploadedBatches[0][0].name, "archive.zip");
 assert.strictEqual(upstreamDropCount, 1, "directory drop alongside oversized file must still reach upstream folder zip listener");
+
+// 7. Multiple files whose individual sizes are <= 20MB but cumulative non-image size exceeds 20MB: excess files stream automatically
+uploadedBatches = [];
+upstreamDropCount = 0;
+const zipA = { name: "part1.zip", type: "application/zip", size: 12 * 1024 * 1024 };
+const zipB = { name: "part2.zip", type: "application/zip", size: 12 * 1024 * 1024 };
+fireDrop([zipA, zipB]);
+assert.strictEqual(uploadedBatches.length, 1, "cumulative >20MB batch should stream excess file");
+assert.strictEqual(uploadedBatches[0].length, 1);
+assert.strictEqual(uploadedBatches[0][0].name, "part2.zip");
+assert.strictEqual(upstreamDropCount, 1, "first file within 20MB budget should still reach upstream drop listener");
+
+// 8. Extensionless Dockerfile > 1MB is recognized as text and streamed
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([{ name: "Dockerfile", type: "", size: 2 * 1024 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 1, "Dockerfile > 1MB should stream via custom uploader");
+assert.strictEqual(uploadedBatches[0][0].name, "Dockerfile");
+assert.strictEqual(upstreamDropCount, 0);
+
+// 9. __agyPartitionFiles respects remaining native slot count (maxSlots)
+uploadedBatches = [];
+const f1 = { name: "a.txt", type: "text/plain", size: 100 };
+const f2 = { name: "b.txt", type: "text/plain", size: 100 };
+const f3 = { name: "c.txt", type: "text/plain", size: 100 };
+const kept = window.__agyPartitionFiles([f1, f2, f3], 2);
+assert.strictEqual(kept.length, 2, "only maxSlots files should be kept for native attachment");
+assert.strictEqual(uploadedBatches.length, 1, "overflow file beyond maxSlots should be streamed");
+assert.strictEqual(uploadedBatches[0][0].name, "c.txt");
 `
 
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {

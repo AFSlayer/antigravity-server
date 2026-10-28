@@ -488,7 +488,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		got := applyOnly(t, "settings-rules-editor", v228, Options{})
 		for _, want := range []string{
 			`_rawP=String(b||"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/")`,
-			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
 			`if(agySavedDesc!==null)d=agySavedDesc;`,
 			`var agyDoEdit=_canEdit?async()=>{`,
 			`var agyExp=v?_R.createElement(_R.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;`,
@@ -525,10 +525,10 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;return A.createElement("div",null,f,g,k)}`
 		got := applyOnly(t, "settings-doc-row-editor", v228, Options{})
 		for _, want := range []string{
-			`_R=A,_rawP=String(c??b??"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`_R=A,_rawP=String(c??b??"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
 			`if(!q&&agyEdit)agySetEdit(!1);`,
 			`if(q&&agyEdit){agySetEdit(!1);return;}`,
-			`agySetTxt(json.content??f??"");agySetEdit(!0);r(!0);`,
+			`agySetTxt(json.content||(agySaved??f)||"");agySetEdit(!0);r(!0);`,
 			`fetch("/__agy/api/rules/read?path="+encodeURIComponent(_p))`,
 			`fetch("/__agy/api/rules/save"`,
 			`k=k?_R.createElement(_R.Fragment,null,agyEditBtn,k):agyEditBtn`,
@@ -555,12 +555,12 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 	})
 
 	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
-		v228 := `function test(m,d,g,yg){if(DOa.includes(m.type.toLowerCase()))if(m.size>10485760)d?.("PDF file size exceeds 10MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("PDF file size exceeds 10MB limit"));else a();else{var r=MOa(m.name,m.type);if(r)if(m.size>10485760)d?.("Document file size exceeds 10MB limit"),` + "\n" + `g(yg.VALIDATION_CHECK_FAILED,Error("Document file size exceeds 10MB limit"));else a();else{var t=POa(m.name,m.type);if(t)if(m.size>20971520)d?.("Zip file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Zip file size exceeds 20MB limit"));else a();else{var u=IOa(m.name,m.type);if(u)if(m.size>1048576)d?.("Text file size exceeds 1MB limit"),g(yg.VALIDATION_CHECK_FAILED,` + "\n" + `Error("Text file size exceeds 1MB limit"));else a();else{var v=JOa(m.name,m.type);if(v)if(m.size>20971520)d?.("Audio file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Audio file size exceeds 20MB limit"));else a();else if(m.size>20971520)d?.("File size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("File size exceeds 20MB limit"));else a()}}}}var k=async m=>{if(m.length!==0){a()}}}`
+		v228 := `function test(m,d,g,yg){if(DOa.includes(m.type.toLowerCase()))if(m.size>10485760)d?.("PDF file size exceeds 10MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("PDF file size exceeds 10MB limit"));else a();else{var r=MOa(m.name,m.type);if(r)if(m.size>10485760)d?.("Document file size exceeds 10MB limit"),` + "\n" + `g(yg.VALIDATION_CHECK_FAILED,Error("Document file size exceeds 10MB limit"));else a();else{var t=POa(m.name,m.type);if(t)if(m.size>20971520)d?.("Zip file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Zip file size exceeds 20MB limit"));else a();else{var u=IOa(m.name,m.type);if(u)if(m.size>1048576)d?.("Text file size exceeds 1MB limit"),g(yg.VALIDATION_CHECK_FAILED,` + "\n" + `Error("Text file size exceeds 1MB limit"));else a();else{var v=JOa(m.name,m.type);if(v)if(m.size>20971520)d?.("Audio file size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("Audio file size exceeds 20MB limit"));else a();else if(m.size>20971520)d?.("File size exceeds 20MB limit"),g(yg.VALIDATION_CHECK_FAILED,Error("File size exceeds 20MB limit"));else a()}}}}var k=async m=>{if(m.length!==0){var r=f-b;a()}}}`
 		got := applyOnly(t, "file-upload-large-file-streaming-fallback", v228, Options{})
 		if count := strings.Count(got, `window.__agyUpload([m])`); count != 6 {
 			t.Errorf("expected all 6 size limit branches to stream via __agyUpload, got %d in:\n%s", count, got)
 		}
-		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m):Array.from(m).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(m.length!==0){`; !strings.Contains(got, want) {
+		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m,f-b):Array.from(m).filter(_f=>!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f));if(m.length!==0){var r=f-b;`; !strings.Contains(got, want) {
 			t.Errorf("expected batch entry filter %q in:\n%s", want, got)
 		}
 		checkSyntax(t, "file-upload-large-file-streaming-fallback-228", got)
