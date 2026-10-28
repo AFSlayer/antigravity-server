@@ -49,7 +49,8 @@ var (
 	mobileKebabCallPinArchiveRe      = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),[\r\n\s]*\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:(\(\)=>\{?[a-zA-Z0-9_$]+\(!0\)\}?|[a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([^\}]+?),isUnread:([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)?),onOpenChange:([a-zA-Z0-9_$]+)(?:,[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+))?(?:,[\r\n\s]*onShareClick:[^\}]+?)?\}\)`)
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
-	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy path"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":`)
+	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy [pP]ath"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":(?:([a-zA-Z0-9_$]+,className:"[^"]+","data-tooltip-id":[a-zA-Z0-9_$]+\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{name:"(edit_note|delete)"))?`)
+	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[q,r\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)(t=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,u=[a-zA-Z0-9_$]+\|\|b;)`)
 	settingsRestoreCustomizationsRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
@@ -68,15 +69,17 @@ var (
 
 	folderPickerInitialPathRe = regexp.MustCompile(`initialPath:[a-zA-Z0-9_$]+\?[a-zA-Z0-9_$]+\.fsPath:[a-zA-Z0-9_$]+\?"C:/":"/",fetchDirectoryContents:`)
 
-	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(?:image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(?:Media|Files)",onClick:([a-zA-Z0-9_$]+)\}`)
+	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(Media|Files)",onClick:([a-zA-Z0-9_$]+)\}`)
 
 	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)(?:accept:[a-zA-Z0-9_$]+,[\r\n\s]*)?multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
+	fileDropAcceptAllRe   = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b=""\)\{if\(b\.startsWith\("image\/"\)\|\|b\.startsWith\("video\/"\)\|\|b\.startsWith\("audio\/"\)\|\|b==="application\/pdf"\|\|[a-zA-Z0-9_$]+\(b,a\)\|\|[a-zA-Z0-9_$]+\(b,a\)\)return!0;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return [a-zA-Z0-9_$]+\.has\(a\)\}`)
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;(?:[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)|if\([a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\.files\.length>0\)\{[\s\S]{1,300}?[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.value=""\})\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\(\"\",a\)!==void 0\})`)
 
-	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.size>10485760\)[a-zA-Z0-9_$]+\?\.\("PDF file size exceeds 10MB limit"\)[\s\S]{1,500}?Error\("Document file size exceeds 10MB limit"\)\);[\s\S]{1,500}?Error\("Zip file size exceeds 20MB limit"\)\);[\s\S]{1,500}?Error\("Text file size exceeds 1MB limit"\)\);[\s\S]{1,900}?Error\("Audio file size exceeds 20MB limit"\)\);(?:[\s\S]{1,900}?Error\("File size exceeds 20MB limit"\)\);)?|if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadSizeLimitBranchRe           = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.size>(10485760|20971520|1048576)\)[a-zA-Z0-9_$]+\?\.\("(?:(?:PDF|Document|Zip|Text|Audio) file|File) size exceeds \d+MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("(?:(?:PDF|Document|Zip|Text|Audio) file|File) size exceeds \d+MB limit"\)\);`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
@@ -444,10 +447,9 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: func(Options) bool { return true },
 			FindRe:  settingsRulesEditorRe,
-			Replace: `${1}var _R=${14},[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)${3}=agySavedDesc;var agyDoEdit=b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0;var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};if(b)${4}=_R.createElement(_R.Fragment,null,${4},_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit",className:"text-[10px] px-1.5 py-0.5 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"},agyEdit?"Close":"Edit"));var agyEditorNode=agyEdit?_R.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},_R.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write markdown instructions...",className:"agy-rules-editor w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y text-foreground leading-normal",style:{fontSize:"11px",lineHeight:"1.45",minHeight:"200px",maxHeight:"500px"},spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save")))):null;var agyExp=${12}?_R.createElement(_R.Fragment,null,${12},agyEditorNode):agyEditorNode;${12}=agyExp;${13}`,
+			Replace: `${1}var _R=${14},[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)${3}=agySavedDesc;var agyDoEdit=b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0;var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};var agyEditorNode=agyEdit?_R.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},_R.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write markdown instructions...",className:"agy-rules-editor w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y text-foreground leading-normal",style:{fontSize:"11px",lineHeight:"1.45",minHeight:"200px",maxHeight:"500px"},spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save")))):null;var agyExp=${12}?_R.createElement(_R.Fragment,null,${12},agyEditorNode):agyEditorNode;${12}=agyExp;${13}`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				desc := string(g[3])
-				badge := string(g[4])
 				exp := string(g[12])
 				react := string(g[14])
 				editorTail := `var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};`
@@ -456,18 +458,40 @@ func All() []Patch {
 					onEdit := string(g[5])
 					return string(g[1]) + `var _R=` + react + `,[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)` + desc + `=agySavedDesc;var agyDoEdit=` + onEdit + `||(b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0);` + editorTail + onEdit + `=agyDoEdit;` + editorTailEnd
 				}
-				return string(g[1]) + `var _R=` + react + `,[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)` + desc + `=agySavedDesc;var agyDoEdit=b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0;` + editorTail + `if(b)` + badge + `=_R.createElement(_R.Fragment,null,` + badge + `,_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit",className:"text-[10px] px-1.5 py-0.5 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"},agyEdit?"Close":"Edit"));` + editorTailEnd
+				return string(g[1]) + `var _R=` + react + `,[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)` + desc + `=agySavedDesc;var agyDoEdit=b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0;` + editorTail + editorTailEnd
 			},
 		},
 		{
-			ID:       "settings-customizations-show-edit",
-			Desc:     "Allow edit action button to appear even when custom actions dropdown is present (e.g. for Skills)",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Enabled:  func(Options) bool { return true },
-			Optional: true,
-			FindRe:   settingsCustomizationsShowEditRe,
-			Replace:  `${1}$3&&$4.createElement($5.Fragment,null,$6.createElement($7,{variant:"ghost",size:"icon-sm",onClick:$8,"aria-label":`,
+			ID:      "settings-customizations-show-edit",
+			Desc:    "Allow edit action button to appear in Settings Customizations rows",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  settingsCustomizationsShowEditRe,
+			Replace: `${1}typeof agyDoEdit==="function"&&agyDoEdit&&$4.createElement($7,{variant:"ghost",size:"icon-sm",onClick:agyDoEdit,"aria-label":"Edit",className:"rounded opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:!text-foreground"},$4.createElement($10,{name:"edit_note",className:"w-4 h-4"})),!$2&&$3&&$4.createElement($5.Fragment,null,$6.createElement($7,{variant:"ghost",size:"icon-sm",onClick:$8,"aria-label":`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if string(g[11]) == "delete" {
+					react := string(g[4])
+					btn := string(g[7])
+					icon := string(g[10])
+					editBtn := `typeof agyDoEdit==="function"&&agyDoEdit&&` + react + `.createElement(` + btn + `,{variant:"ghost",size:"icon-sm",onClick:agyDoEdit,"aria-label":"Edit",className:"rounded opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:!text-foreground"},` + react + `.createElement(` + icon + `,{name:"edit_note",className:"w-4 h-4"})),`
+					return string(g[1]) + editBtn + "!" + string(g[2]) + "&&" + string(g[3]) + "&&" + react + ".createElement(" + string(g[5]) + ".Fragment,null," + string(g[6]) + ".createElement(" + btn + `,{variant:"ghost",size:"icon-sm",onClick:` + string(g[8]) + `,"aria-label":` + string(g[9])
+				}
+				tail := ""
+				if g[9] != nil {
+					tail = string(g[9])
+				}
+				return string(g[1]) + string(g[3]) + "&&" + string(g[4]) + ".createElement(" + string(g[5]) + ".Fragment,null," + string(g[6]) + ".createElement(" + string(g[7]) + `,{variant:"ghost",size:"icon-sm",onClick:` + string(g[8]) + `,"aria-label":` + tail
+			},
+		},
+		{
+			ID:      "settings-doc-row-editor",
+			Desc:    "Enable inline and modal editing for skills & rules in Customizations Installed view",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  settingsDocRowEditorRe,
+			Replace: `${1}_R=${3},_p=c??b,[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySaved,agySetSaved]=_R.useState(null);if(agySaved!==null){f=agySaved;${2}=agySaved.length>120?agySaved.slice(0,120)+"\u2026":agySaved;}var agyDoEdit=_p?async(ev)=>{if(ev&&ev.stopPropagation)ev.stopPropagation();r(!0);if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(_p));if(res.ok){let json=await res.json();agySetTxt(json.content??f??"");agySetEdit(!0);}}catch(e){}}:void 0;var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:_p,content:agyTxt})});if(res.ok){agySetDone(!0);agySetSaved(agyTxt);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},800);}}catch(e){}finally{agySetSave(!1)}};if(_p){var agyEditIcon=_R.createElement("svg",{xmlns:"http://www.w3.org/2000/svg",width:16,height:16,viewBox:"0 -960 960 960",fill:"currentColor","aria-hidden":"true"},_R.createElement("path",{d:"M160-400v-80h280v80H160Zm0-160v-80h440v80H160Zm0-160v-80h440v80H160Zm360 560v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q8 9 12.5 20t4.5 22q0 11-4 22.5T863-380L643-160H520Zm300-263-37-37 37 37ZM580-220h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z"})),agyEditBtn=_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit",title:"Edit",className:"p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center"},agyEditIcon);k=k?_R.createElement(_R.Fragment,null,agyEditBtn,k):agyEditBtn;if(agyEdit){g=_R.createElement("div",{className:"w-full flex flex-col gap-2 pt-1"},_R.createElement("textarea",{value:agyTxt,onChange:ev=>agySetTxt(ev.target.value),placeholder:"Write markdown instructions...",className:"agy-rules-editor w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y text-foreground leading-normal",style:{fontSize:"11px",lineHeight:"1.45",minHeight:"260px",maxHeight:"55vh"},spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground cursor-pointer"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"},agySave?"Saving...":(agyDone?"Saved ✓":"Save"))));}else if(!g){g=_R.createElement("div",{className:"flex flex-col gap-2"},_R.createElement("div",{className:"flex justify-end"},_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit",className:"text-xs h-7 px-2.5 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"},agyEditIcon,"Edit")),f&&(n?_R.createElement(n,{markdown:f,className:"text-sm"}):_R.createElement("pre",{className:"text-sm whitespace-pre-wrap font-mono"},f)));}}var ${4}`,
 		},
 		{
 			ID:      "settings-restore-customizations-tab",
@@ -548,7 +572,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  composerUploadMenuRe,
-			Replace: `{icon:$1=>$2.createElement($3,{name:"attach_file",size:$1.width?Number($1.width):14,className:$1.className}),label:"Upload File",onClick:()=>window.__agyTriggerUpload&&window.__agyTriggerUpload()},{icon:$1=>$2.createElement($3,{name:"image",size:$1.width?Number($1.width):14,className:$1.className}),label:"Media",onClick:$4}`,
+			Replace: `{icon:$1=>$2.createElement($3,{name:"attach_file",size:$1.width?Number($1.width):14,className:$1.className}),label:"Upload File",onClick:()=>window.__agyTriggerUpload&&window.__agyTriggerUpload()},{icon:$1=>$2.createElement($3,{name:"$4",size:$1.width?Number($1.width):14,className:$1.className}),label:"$5",onClick:$6}`,
 		},
 		{
 			ID:      "file-upload-accept-all",
@@ -557,6 +581,14 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  fileUploadAcceptAllRe,
 			Replace: `${1}accept:"*/*",multiple:!0`,
+		},
+		{
+			ID:      "file-drop-accept-all",
+			Desc:    "Allow dropping any file extension into the composer attachment handler",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  fileDropAcceptAllRe,
+			Replace: `function $1(a,b=""){return!0}`,
 		},
 		{
 			ID:      "file-upload-input-reset",
@@ -568,19 +600,25 @@ func All() []Patch {
 		},
 		{
 			ID:      "file-upload-custom-text-types",
-			Desc:    "Allow non-standard text and data files like .har to be attached as text/plain or application/json",
+			Desc:    "Allow non-standard text and data files like .har and .jsonl to be attached as text/plain or application/json",
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadCustomTextTypesRe,
-			Replace: `function $1(a,b){b=b.split(";")[0].trim().toLowerCase();if($2.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return $3[a]||(b.startsWith("image/")||b.startsWith("video/")||b==="application/pdf"?void 0:a==="har"||a==="jsonl"?"application/json":"text/plain")}${4}`,
+			Replace: `function $1(a,b){b=b.split(";")[0].trim().toLowerCase();if($2.includes(b))return b;if(!a||!a.includes("."))return;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return $3[a]||(a==="har"||a==="jsonl"?"application/json":b.startsWith("text/")?"text/plain":void 0)}${4}`,
 		},
 		{
 			ID:      "file-upload-large-file-streaming-fallback",
-			Desc:    "Stream large files exceeding 1MB to the workspace asynchronously with progress UI",
+			Desc:    "Stream files exceeding native size limits to the workspace asynchronously with progress UI",
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadLargeFileStreamingRe,
-			Replace: `if($1)if($2.size>1048576){if(window.__agyUpload){window.__agyUpload([$2]);return;}}`,
+			Replace: `if($2)if($3.size>1048576){if(window.__agyUpload){window.__agyUpload([$3]);return;}}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[2] != nil {
+					return `if(` + string(g[2]) + `)if(` + string(g[3]) + `.size>1048576){if(window.__agyUpload){window.__agyUpload([` + string(g[3]) + `]);return;}}`
+				}
+				return fileUploadSizeLimitBranchRe.ReplaceAllString(string(g[0]), `if($1.size>$2){if(window.__agyUpload){window.__agyUpload([$1]);return;}}`)
+			},
 		},
 		{
 			ID:      "question-modal-write-in-radio",
@@ -2338,10 +2376,52 @@ const uploaderScript = `<script>
   };
 
   var NATIVE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'];
+  var NATIVE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
+  var TEXT_MIME_TYPES = ['text/plain', 'text/csv', 'text/markdown', 'text/html', 'text/css', 'text/javascript', 'text/x-typescript', 'text/x-python', 'application/json'];
+  var TEXT_EXTS = ['txt', 'csv', 'md', 'html', 'htm', 'css', 'js', 'mjs', 'ts', 'tsx', 'py', 'json', 'har', 'jsonl'];
+  var DOC_MIME_TYPES = [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/msword',
+    'application/vnd.ms-excel',
+    'application/vnd.ms-powerpoint'
+  ];
+  var DOC_EXTS = ['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt'];
+
+  function getFileExt(name) {
+    if (!name || typeof name !== 'string') return '';
+    var idx = name.lastIndexOf('.');
+    return idx >= 0 ? name.slice(idx + 1).toLowerCase() : '';
+  }
+
+  function getNormalizedMime(f) {
+    if (!f || !f.type) return '';
+    return f.type.split(';')[0].trim().toLowerCase();
+  }
 
   function isNativeImageFile(f) {
-    if (!f || !f.type) return false;
-    return NATIVE_IMAGE_TYPES.indexOf(f.type.split(';')[0].trim().toLowerCase()) !== -1;
+    if (!f) return false;
+    var mime = getNormalizedMime(f);
+    if (mime && NATIVE_IMAGE_TYPES.indexOf(mime) !== -1) return true;
+    var ext = getFileExt(f.name);
+    return !mime && ext !== '' && NATIVE_IMAGE_EXTS.indexOf(ext) !== -1;
+  }
+
+  function isWithinNativeLimit(f) {
+    if (!f) return false;
+    if (isNativeImageFile(f)) return true;
+    var size = typeof f.size === 'number' ? f.size : 0;
+    var mime = getNormalizedMime(f);
+    var ext = getFileExt(f.name);
+    if (DOC_MIME_TYPES.indexOf(mime) !== -1 || DOC_EXTS.indexOf(ext) !== -1) {
+      return size <= 10485760;
+    }
+    if (TEXT_MIME_TYPES.indexOf(mime) !== -1 || mime.indexOf('text/') === 0 || TEXT_EXTS.indexOf(ext) !== -1) {
+      return size <= 1048576;
+    }
+    return size <= 20971520;
   }
 
   function dismissNativeDragOverlays() {
@@ -2390,18 +2470,19 @@ const uploaderScript = `<script>
       }
     }
 
-    var uploadFiles = [];
-    var needsStreaming = false;
+    var streamingFiles = [];
+    var hasNativeFile = false;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       if (dirNames[f.name]) continue;
-      uploadFiles.push(f);
-      if (!isNativeImageFile(f)) {
-        needsStreaming = true;
+      if (isWithinNativeLimit(f)) {
+        hasNativeFile = true;
+      } else {
+        streamingFiles.push(f);
       }
     }
 
-    if (needsStreaming && uploadFiles.length > 0) {
+    if (streamingFiles.length > 0 && !hasNativeFile) {
       e.preventDefault();
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') {
@@ -2409,7 +2490,7 @@ const uploaderScript = `<script>
       }
       dismissNativeDragOverlays();
       if (window.__agyUpload) {
-        window.__agyUpload(uploadFiles);
+        window.__agyUpload(streamingFiles);
       }
     }
   }, true);
