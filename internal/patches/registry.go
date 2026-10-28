@@ -50,7 +50,7 @@ var (
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy path"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":`)
-	settingsRestoreCustomizationsRe  = regexp.MustCompile(`g=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
+	settingsRestoreCustomizationsRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
 
@@ -120,14 +120,13 @@ func All() []Patch {
 		// On touch devices without send modifiers (Cmd/Ctrl), or during CJK IME composition,
 		// bypass preventDefault() to prevent character duplication and ghost remnants.
 		{
-			ID:       "mobile-enter-newline",
-			Desc:     "Preserve native newline and prevent IME composition corruption on touch devices",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			Enabled:  mobile,
-			FindRe:   mobileEnterNewlineRe,
-			Replace:  `registerCommand($1,$2=>{if(!$2)return!1;${3}var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
+			ID:      "mobile-enter-newline",
+			Desc:    "Preserve native newline and prevent IME composition corruption on touch devices",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileEnterNewlineRe,
+			Replace: `registerCommand($1,$2=>{if(!$2)return!1;${3}var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
@@ -471,14 +470,13 @@ func All() []Patch {
 			Replace:  `${1}$3&&$4.createElement($5.Fragment,null,$6.createElement($7,{variant:"ghost",size:"icon-sm",onClick:$8,"aria-label":`,
 		},
 		{
-			ID:       "settings-restore-customizations-tab",
-			Desc:     "Preserve Customizations tab in Settings modal so it remains accessible on mobile and desktop",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Enabled:  func(Options) bool { return true },
-			Optional: true,
-			FindRe:   settingsRestoreCustomizationsRe,
-			Replace:  `g=${1}=>${1};`,
+			ID:      "settings-restore-customizations-tab",
+			Desc:    "Preserve Customizations tab in Settings modal so it remains accessible on mobile and desktop",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: func(Options) bool { return true },
+			FindRe:  settingsRestoreCustomizationsRe,
+			Replace: `${1}=${2}=>${2};`,
 		},
 		{
 			ID:      "suppress-conversation-unavailable-modal",

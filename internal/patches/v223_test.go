@@ -506,4 +506,20 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		}
 		checkSyntax(t, "file-upload-accept-all", got)
 	})
+
+	t.Run("settings-restore-customizations-tab", func(t *testing.T) {
+		v226 := `var g,k=h;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");return l};if(!c.size)return g(h);`
+		got226 := applyOnly(t, "settings-restore-customizations-tab", v226, Options{})
+		if want := `g=l=>l;if(!c.size)return g(h);`; !strings.Contains(got226, want) {
+			t.Errorf("2.26 shape: want %q in\n%s", want, got226)
+		}
+		checkSyntax(t, "settings-restore-customizations-tab-226", got226)
+
+		v228 := `var h=g,k=h;h=m=>{if(!c)return m;m=new Map(m);m.delete("Customizations");return m};if(!d.size)return h(k);`
+		got228 := applyOnly(t, "settings-restore-customizations-tab", v228, Options{})
+		if want := `h=m=>m;if(!d.size)return h(k);`; !strings.Contains(got228, want) {
+			t.Errorf("2.28 shape: want %q in\n%s", want, got228)
+		}
+		checkSyntax(t, "settings-restore-customizations-tab-228", got228)
+	})
 }
