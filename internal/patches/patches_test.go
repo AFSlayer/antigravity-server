@@ -167,6 +167,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`Save`,
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
+		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
@@ -666,7 +667,7 @@ func TestSettingsRestoreCustomizationsPatch(t *testing.T) {
 	if !settingsRestoreCustomizationsRe.MatchString(settingsInput) {
 		t.Fatalf("settingsRestoreCustomizationsRe failed to match settings filter input")
 	}
-	settingsReplaced := settingsRestoreCustomizationsRe.ReplaceAllString(settingsInput, `g=$1=>$1;`)
+	settingsReplaced := settingsRestoreCustomizationsRe.ReplaceAllString(settingsInput, `${1}=${2}=>${2};`)
 	if !strings.Contains(settingsReplaced, `h=k}else h=g;g=l=>l;if(!c.size)return g(h);`) {
 		t.Fatalf("unexpected settings restore replacement output: %s", settingsReplaced)
 	}
