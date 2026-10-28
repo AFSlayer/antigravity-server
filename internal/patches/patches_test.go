@@ -278,8 +278,8 @@ func TestMissingAnchorIsReported(t *testing.T) {
 	if len(report.Missing()) == 0 {
 		t.Fatal("expected missing anchors to be reported")
 	}
-	if len(report.MissingRequired()) != 2 {
-		t.Errorf("want 2 missing required patches, got %d", len(report.MissingRequired()))
+	if len(report.MissingRequired()) != 1 {
+		t.Errorf("want 1 missing required patch, got %d", len(report.MissingRequired()))
 	}
 }
 

@@ -215,6 +215,11 @@ func TestBootstrapLocalUserInfoRetryShapes(t *testing.T) {
 			body: `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
 			want: `async function Fzc(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}catch(_e){c();if(_i===2)return{homeDirUri:Oe("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
 		},
+		{
+			name: "2.28 mTc",
+			body: `async function mTc(a){var b=e,c=e;try{let d=c(await b(a.lsClient.getLocalUserInfo(Vb(Mfa,{})))),f=d.username;return{homeDirUri:Df(d.homeDirUri),username:f}}finally{b()}};`,
+			want: `async function mTc(a){var b=e,c=e;try{let d;for(let _i=0;_i<3;_i++)try{d=c(await b(a.lsClient.getLocalUserInfo(Vb(Mfa,{}))));break}catch(_e){c();if(_i===2)return{homeDirUri:Df("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=d.username;return{homeDirUri:Df(d.homeDirUri),username:f}}finally{b()}};`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -419,5 +424,86 @@ func TestAntigravity226PatchShapes(t *testing.T) {
 			t.Errorf("2.26 shape:\ngot:  %s\nwant: %s", got, want)
 		}
 		checkSyntax(t, "question-modal-prevent-radio-focus-steal", got)
+	})
+}
+
+func TestAntigravity228PatchShapes(t *testing.T) {
+	checkSyntax := func(t *testing.T, name, code string) {
+		t.Helper()
+		node, err := exec.LookPath("node")
+		if err != nil {
+			return
+		}
+		if out, err := exec.Command(node, "-e", "function test(){"+code+"}").CombinedOutput(); err != nil {
+			t.Fatalf("invalid JS syntax in %s: %v\n%s", name, err, out)
+		}
+	}
+
+	t.Run("mobile-back-clears-section", func(t *testing.T) {
+		v228 := `var el=A.createElement(Y1,{iconName:"arrow_back",onClick:()=>c(),"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"});`
+		got := applyOnly(t, "mobile-back-clears-section", v228, Options{MobileUX: true})
+		if !strings.Contains(got, `onClick:()=>c({clearSection:!0}),"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"})`) {
+			t.Errorf("2.28 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "mobile-back-clears-section", got)
+	})
+
+	t.Run("mobile-project-kebab-menu", func(t *testing.T) {
+		v228 := `function suc(a){var {isOpen:b,onOpenChange:c,ariaLabel:d,sortMode:f,onSortModeChange:g,size:h="icon"}=a;a=quc(a);return WN()||a.length===0&&!g?null:A.createElement(mP,{open:b,onOpenChange:c})}`
+		got := applyOnly(t, "mobile-project-kebab-menu", v228, Options{MobileUX: true})
+		if want := `a=quc(a);return a.length===0&&!g?null:A.createElement(mP,`; !strings.Contains(got, want) {
+			t.Errorf("2.28 shape: want %q in\n%s", want, got)
+		}
+		checkSyntax(t, "mobile-project-kebab-menu", got)
+	})
+
+	t.Run("mobile-project-settings-export", func(t *testing.T) {
+		v228 := `function Xmb(){var a=ml(Bv),b=ml(Cv),c=Kn(),d=Qv(),{logEvent:f}=CF(),[g,h]=bT("main");return null}`
+		got := applyOnly(t, "mobile-project-settings-export", v228, Options{MobileUX: true})
+		if !strings.Contains(got, `window.__agyProjectSettings=Xmb;function Xmb(){`) {
+			t.Errorf("2.28 shape output wrong:\n%s", got)
+		}
+		checkSyntax(t, "mobile-project-settings-export", got)
+	})
+
+	t.Run("mobile-settings-projects", func(t *testing.T) {
+		v228 := `var glb=()=>{var a=ll(),b=yl(),{sharedNavItems:c,globalScreens:d,workspaces:f,showWorkspacesSection:g}=blb();b=[...c.filter(q=>q!=="Account"),...d,...(b.hideProvideFeedback?[]:["Provide Feedback"])];var h=Sjb(!0),k=h.path.length,l=k===0,m=h.path[0]??h.exiting[0],n=m?.startsWith("workspace:");return A.createElement("div",{ref:h.setHost,className:"relative h-full w-full overflow-hidden"},A.createElement(YR,{offset:-k,active:l,depth:0,footer:c.includes("Account")?A.createElement("div",{className:"flex flex-col border-t border-border p-1"},` + "\n" + `A.createElement(idb,{showChevron:!0,className:"mx-1 px-3 py-2.5",onClick:()=>{a(vv("Account"));h.push("Account")}})):void 0},A.createElement(elb,{text:"Settings"}),b.map(q=>A.createElement(dlb,{key:q,text:q,label:NP(q),onClick:()=>{a(vv(q));h.push(q)}})),g&&A.createElement(A.Fragment,null,A.createElement(elb,{text:"Workspaces"}),f.map(q=>A.createElement(dlb,{key:q.uri,text:q.name,onClick:()=>{var r=q.uri;a(wv({workspaceUri:r}));h.push(` + "`workspace:${r}`" + `)}})))),m&&A.createElement(YR,{offset:1-k,active:k===` + "\n" + `1,depth:1,exiting:h.exiting.includes(m),onExited:()=>{h.onExited(m)},header:A.createElement(flb,{onBack:h.pop})},A.createElement(jdb.Provider,{value:!0},n?A.createElement(pjb,null):clb(m))))};function hlb(){return["Settings"]};var ylb=A.memo(function(){var a=Gj(),b=!!a.get("settings")?.hideProjects,c=ml(yv),d=ml(zv),f=El(),g=yl(),{sharedNavItems:h,globalScreens:k,workspaces:l,showWorkspacesSection:m}=blb(),n=ml(nm),q=ql(f.projectsStateProvider);return null});`
+		got := applyOnly(t, "mobile-settings-projects", v228, Options{MobileUX: true})
+		for _, want := range []string{
+			`var _pm=El(),_hp=!!Gj().get("settings")?.hideProjects,_ps=ql(_pm?.projectsStateProvider)`,
+			`{text:"Projects"}`,
+			`{text:"Not in Project"}`,
+			`else if(_scr&&_scr!=="General"){a(vv(_scr));h.push(_scr)}`,
+			`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):n?A.createElement(pjb,null):clb(m)`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.28 shape missing %q in:\n%s", want, got)
+			}
+		}
+		checkSyntax(t, "mobile-settings-projects", got)
+	})
+
+	t.Run("settings-rules-editor", func(t *testing.T) {
+		v228 := `var NR=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,adminDisabled:h=!1,disabledReason:k,toggleTooltip:l,isLast:m=!1,onDelete:n,deleteTitle:q="Delete",onToggle:r,toggleChecked:t,toggleDisabled:u=!1,expandableContent:v,actions:w})=>{var x=w||n||r,[y,z]=(0,A.useState)(!1),B=(0,A.useRef)(null);return A.createElement("div",null,d,f,v)};`
+		got := applyOnly(t, "settings-rules-editor", v228, Options{})
+		for _, want := range []string{
+			`if(agySavedDesc!==null)d=agySavedDesc;`,
+			`if(b)f=_R.createElement(_R.Fragment,null,f,_R.createElement("button",{type:"button",onClick:agyDoEdit,"aria-label":"Edit"`,
+			`var agyExp=v?_R.createElement(_R.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.28 shape missing %q in:\n%s", want, got)
+			}
+		}
+		checkSyntax(t, "settings-rules-editor", got)
+	})
+
+	t.Run("file-upload-accept-all", func(t *testing.T) {
+		v228 := `var el=A.createElement(Msb,{ref:za,onChange:sa,multiple:!0});`
+		got := applyOnly(t, "file-upload-accept-all", v228, Options{})
+		if want := `{ref:za,onChange:sa,accept:"*/*",multiple:!0}`; !strings.Contains(got, want) {
+			t.Errorf("2.28 shape: want %q in\n%s", want, got)
+		}
+		checkSyntax(t, "file-upload-accept-all", got)
 	})
 }
