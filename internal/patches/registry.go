@@ -2227,22 +2227,173 @@ const uploaderScript = `<script>
     return params.get('project') || params.get('workspace') || '';
   }
 
-  function insertPromptPath(path) {
-    var el = document.querySelector('[contenteditable="true"]');
-    if (el) {
-      el.focus();
-      var textToInsert = path + ' ';
-      try {
-        if (!document.execCommand('insertText', false, textToInsert)) {
-          el.innerText = (el.innerText ? el.innerText + ' ' : '') + textToInsert;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
+  var pendingPromptPaths = [];
+  var pendingFlushTimer = null;
+
+  function findComposerEditor() {
+    if (typeof document.querySelector !== 'function') return null;
+    return document.querySelector('[data-testid="agent-input-box"] [contenteditable="true"]') ||
+           document.querySelector('[contenteditable="true"]');
+  }
+
+  function insertIntoComposerElement(el, path) {
+    if (!el || !path) return false;
+    var curText = typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
+    var prefix = (curText && !/\s$/.test(curText)) ? ' ' : '';
+    var textToInsert = prefix + path + ' ';
+
+    if (el.__lexicalEditor) {
+      var inserted = false;
+      if (typeof el.__lexicalEditor.update === 'function') {
+        try {
+          el.__lexicalEditor.update(function() {
+            var state = el.__lexicalEditor._pendingEditorState ||
+                        (typeof el.__lexicalEditor.getEditorState === 'function' ? el.__lexicalEditor.getEditorState() : null);
+            var root = state && state._nodeMap && typeof state._nodeMap.get === 'function' ? state._nodeMap.get('root') : null;
+            if (!root) return;
+            var rootText = typeof root.getTextContent === 'function' ? root.getTextContent() : curText;
+            var lexPrefix = (rootText && !/\s$/.test(rootText)) ? ' ' : '';
+            var lexText = lexPrefix + path + ' ';
+            var sel = null;
+            var lastChild = typeof root.getLastChild === 'function' ? root.getLastChild() : null;
+            if (lastChild && typeof lastChild.selectEnd === 'function') {
+              sel = lastChild.selectEnd();
+            } else if (typeof root.selectEnd === 'function') {
+              sel = root.selectEnd();
+            }
+            if (!sel || typeof sel.insertText !== 'function') {
+              sel = state._selection;
+            }
+            if (sel && typeof sel.insertText === 'function') {
+              sel.insertText(lexText);
+              inserted = true;
+            }
+          }, { discrete: true });
+        } catch (_) {}
+      }
+
+      if (!inserted) {
+        try {
+          if (typeof el.__lexicalEditor.focus === 'function') {
+            el.__lexicalEditor.focus();
+          }
+        } catch (_) {}
+        try {
+          if (typeof el.focus === 'function') {
+            el.focus();
+          }
+        } catch (_) {}
+        if (typeof InputEvent === 'function' && typeof el.dispatchEvent === 'function') {
+          try {
+            var bi = new InputEvent('beforeinput', {
+              bubbles: true,
+              cancelable: true,
+              inputType: 'insertReplacementText',
+              data: textToInsert
+            });
+            el.dispatchEvent(bi);
+            if (bi.defaultPrevented) {
+              inserted = true;
+            }
+          } catch (_) {}
         }
-      } catch (e) {
-        el.innerText = (el.innerText ? el.innerText + ' ' : '') + textToInsert;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        try {
+          if ((!document.hasFocus || document.hasFocus()) && typeof el.__lexicalEditor.focus === 'function') {
+            el.__lexicalEditor.focus();
+          }
+        } catch (_) {}
+      }
+
+      if (inserted) return true;
+    }
+
+    try {
+      if (typeof el.focus === 'function') {
+        el.focus();
+      }
+    } catch (_) {}
+    try {
+      if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, textToInsert)) {
+        return true;
+      }
+    } catch (_) {}
+
+    el.innerText = (el.innerText ? el.innerText.replace(/\s*$/, ' ') : '') + path + ' ';
+    if (typeof el.dispatchEvent === 'function' && typeof Event === 'function') {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return true;
+  }
+
+  function flushPendingPromptPaths() {
+    if (!pendingPromptPaths.length) {
+      if (pendingFlushTimer) {
+        clearInterval(pendingFlushTimer);
+        pendingFlushTimer = null;
+      }
+      return;
+    }
+    var currentConvo = getActiveConversationId();
+    var el = findComposerEditor();
+    if (!el) return;
+
+    var remaining = [];
+    for (var i = 0; i < pendingPromptPaths.length; i++) {
+      var item = pendingPromptPaths[i];
+      var sameConvo = !item.convoId || item.convoId === currentConvo || item.convoId.indexOf('temp_') === 0;
+      if (sameConvo) {
+        if (!insertIntoComposerElement(el, item.path)) {
+          remaining.push(item);
+        }
+      } else {
+        remaining.push(item);
       }
     }
+    pendingPromptPaths = remaining;
+    if (!pendingPromptPaths.length && pendingFlushTimer) {
+      clearInterval(pendingFlushTimer);
+      pendingFlushTimer = null;
+    }
   }
+
+  function enqueuePendingPromptPath(convoId, path) {
+    pendingPromptPaths.push({ convoId: convoId || '', path: path });
+    if (!pendingFlushTimer && typeof setInterval === 'function') {
+      pendingFlushTimer = setInterval(flushPendingPromptPaths, 500);
+    }
+  }
+
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('focus', flushPendingPromptPaths);
+    window.addEventListener('popstate', flushPendingPromptPaths);
+  }
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) flushPendingPromptPaths();
+    });
+  }
+
+  function insertPromptPath(path, targetConvoId) {
+    if (!path) return false;
+    var currentConvo = getActiveConversationId();
+    if (targetConvoId && targetConvoId !== currentConvo && targetConvoId.indexOf('temp_') !== 0) {
+      enqueuePendingPromptPath(targetConvoId, path);
+      return false;
+    }
+    var el = findComposerEditor();
+    if (el && insertIntoComposerElement(el, path)) {
+      return true;
+    }
+    enqueuePendingPromptPath(targetConvoId || currentConvo, path);
+    return false;
+  }
+  window.__agyInsertPromptPath = insertPromptPath;
+  window.__agyFlushPendingPaths = flushPendingPromptPaths;
+
+  var DEFAULT_CHUNK_SIZE = 48 * 1024 * 1024;
+  var MAX_CHUNK_RETRIES = 3;
+  var CHUNK_TIMEOUT_MS = 180000;
 
   function uploadSingleFile(file) {
     var convoId = getActiveConversationId();
@@ -2296,71 +2447,154 @@ const uploaderScript = `<script>
     card.appendChild(footer);
     container.appendChild(card);
 
-    var formData = new FormData();
-    formData.append('conversationId', convoId);
-    formData.append('projectPath', projectPath);
-    formData.append('file', file);
-
-    var xhr = new XMLHttpRequest();
+    var chunkSize = (typeof window.__agyChunkSize === 'number' && window.__agyChunkSize > 0)
+      ? window.__agyChunkSize
+      : DEFAULT_CHUNK_SIZE;
+    var totalChunks = (file.size > chunkSize) ? Math.ceil(file.size / chunkSize) : 1;
+    var uploadId = 'up_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     var startTime = Date.now();
-
-    xhr.upload.onprogress = function(e) {
-      if (e.lengthComputable) {
-        var pct = Math.round((e.loaded / e.total) * 100);
-        bar.style.width = pct + '%';
-        pctSpan.textContent = pct + '%';
-        bytesSpan.textContent = formatBytes(e.loaded) + ' / ' + formatBytes(e.total);
-        var elapsed = (Date.now() - startTime) / 1000;
-        if (elapsed > 0.4) {
-          var speed = e.loaded / elapsed;
-          speedSpan.textContent = formatBytes(speed) + '/s';
-        }
-      }
-    };
-
-    xhr.onload = function() {
-      if (xhr.status === 200) {
-        try {
-          var res = JSON.parse(xhr.responseText);
-          bar.style.background = '#22c55e';
-          pctSpan.textContent = 'Completed';
-          pctSpan.style.color = '#22c55e';
-          speedSpan.textContent = res.relativePath;
-          
-          insertPromptPath(res.relativePath);
-
-          setTimeout(function() {
-            card.style.opacity = '0';
-            card.style.transform = 'translateY(6px)';
-            setTimeout(function() { card.remove(); }, 200);
-          }, 2500);
-        } catch (err) {
-          showError('Invalid server response');
-        }
-      } else {
-        showError('Upload failed (' + xhr.status + ')');
-      }
-    };
-
-    xhr.onerror = function() {
-      showError('Network error');
-    };
-
-    xhr.ontimeout = function() {
-      showError('Request timed out');
-    };
 
     function showError(msg) {
       bar.style.background = '#ef4444';
       pctSpan.textContent = 'Failed';
       pctSpan.style.color = '#ef4444';
       speedSpan.textContent = msg;
-      setTimeout(function() { card.remove(); }, 5000);
+      setTimeout(function() { if (typeof card.remove === 'function') card.remove(); }, 5000);
     }
 
-    xhr.timeout = 120000;
-    xhr.open('POST', '/__agy/api/upload');
-    xhr.send(formData);
+    function abortChunkedUpload() {
+      if (totalChunks <= 1) return;
+      try {
+        var abortXhr = new XMLHttpRequest();
+        var qs = 'uploadId=' + encodeURIComponent(uploadId) +
+                 '&conversationId=' + encodeURIComponent(convoId) +
+                 '&projectPath=' + encodeURIComponent(projectPath);
+        abortXhr.open('DELETE', '/__agy/api/upload?' + qs);
+        abortXhr.send();
+      } catch (_) {}
+    }
+
+    function failUpload(msg) {
+      abortChunkedUpload();
+      showError(msg);
+    }
+
+    function isRetryableStatus(status) {
+      return status === 408 || status === 429 || (status >= 500 && status < 600);
+    }
+
+    function scheduleRetry(chunkIndex, nextAttempt) {
+      var baseDelay = (typeof window.__agyRetryDelayMs === 'number' && window.__agyRetryDelayMs >= 0)
+        ? window.__agyRetryDelayMs
+        : 800;
+      speedSpan.textContent = 'Retrying (' + nextAttempt + '/' + MAX_CHUNK_RETRIES + ')...';
+      setTimeout(function() {
+        sendChunk(chunkIndex, nextAttempt);
+      }, baseDelay * nextAttempt);
+    }
+
+    function sendChunk(chunkIndex, attempt) {
+      var chunkOffset = chunkIndex * chunkSize;
+      var chunkEnd = Math.min(file.size, chunkOffset + chunkSize);
+      var blob = (totalChunks > 1 && typeof file.slice === 'function')
+        ? file.slice(chunkOffset, chunkEnd)
+        : file;
+
+      var formData = new FormData();
+      formData.append('conversationId', convoId);
+      formData.append('projectPath', projectPath);
+      if (totalChunks > 1) {
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', String(chunkIndex));
+        formData.append('totalChunks', String(totalChunks));
+        formData.append('chunkOffset', String(chunkOffset));
+        formData.append('fileName', file.name);
+      }
+      formData.append('file', blob, file.name);
+
+      var xhr = new XMLHttpRequest();
+      if (!xhr.upload) xhr.upload = {};
+
+      xhr.upload.onprogress = function(e) {
+        if (e && e.lengthComputable) {
+          var chunkBytes = chunkEnd - chunkOffset;
+          var loadedInChunk = e.total > 0 ? Math.min(chunkBytes, Math.round((e.loaded / e.total) * chunkBytes)) : e.loaded;
+          var overallLoaded = Math.min(file.size, chunkOffset + loadedInChunk);
+          var pct = file.size > 0 ? Math.min(100, Math.round((overallLoaded / file.size) * 100)) : 100;
+          bar.style.width = pct + '%';
+          pctSpan.textContent = pct + '%';
+          bytesSpan.textContent = formatBytes(overallLoaded) + ' / ' + formatBytes(file.size);
+          var elapsed = (Date.now() - startTime) / 1000;
+          if (elapsed > 0.4) {
+            var speed = overallLoaded / elapsed;
+            speedSpan.textContent = formatBytes(speed) + '/s';
+          }
+        }
+      };
+
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          try {
+            var res = JSON.parse(xhr.responseText);
+            if (!res || res.success === false) {
+              failUpload((res && res.error) ? res.error : 'Upload failed');
+              return;
+            }
+            if (chunkIndex + 1 < totalChunks) {
+              var completedBytes = chunkEnd;
+              var pct = file.size > 0 ? Math.min(100, Math.round((completedBytes / file.size) * 100)) : 100;
+              bar.style.width = pct + '%';
+              pctSpan.textContent = pct + '%';
+              bytesSpan.textContent = formatBytes(completedBytes) + ' / ' + formatBytes(file.size);
+              sendChunk(chunkIndex + 1, 0);
+              return;
+            }
+            bar.style.width = '100%';
+            bar.style.background = '#22c55e';
+            pctSpan.textContent = 'Completed';
+            pctSpan.style.color = '#22c55e';
+            bytesSpan.textContent = formatBytes(file.size) + ' / ' + formatBytes(file.size);
+            speedSpan.textContent = res.relativePath;
+            
+            insertPromptPath(res.relativePath, convoId);
+
+            setTimeout(function() {
+              card.style.opacity = '0';
+              card.style.transform = 'translateY(6px)';
+              setTimeout(function() { if (typeof card.remove === 'function') card.remove(); }, 200);
+            }, 2500);
+          } catch (err) {
+            failUpload('Invalid server response');
+          }
+        } else if (isRetryableStatus(xhr.status) && attempt < MAX_CHUNK_RETRIES) {
+          scheduleRetry(chunkIndex, attempt + 1);
+        } else {
+          failUpload('Upload failed (' + xhr.status + ')');
+        }
+      };
+
+      xhr.onerror = function() {
+        if (attempt < MAX_CHUNK_RETRIES) {
+          scheduleRetry(chunkIndex, attempt + 1);
+          return;
+        }
+        failUpload('Network error');
+      };
+
+      xhr.ontimeout = function() {
+        if (attempt < MAX_CHUNK_RETRIES) {
+          scheduleRetry(chunkIndex, attempt + 1);
+          return;
+        }
+        failUpload('Request timed out');
+      };
+
+      xhr.timeout = CHUNK_TIMEOUT_MS;
+      xhr.open('POST', '/__agy/api/upload');
+      xhr.send(formData);
+    }
+
+    sendChunk(0, 0);
   }
 
   var handledFiles = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
