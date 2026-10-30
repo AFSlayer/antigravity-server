@@ -895,3 +895,303 @@ assert.strictEqual(partitioned[0].name, "pic.png");
 		t.Fatalf("uploaderScript drop harness failed: %v\n%s", err, out)
 	}
 }
+
+func TestUploaderScriptChunkedUploadAndLexicalInsertion(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+
+	script := strings.TrimSuffix(strings.TrimPrefix(uploaderScript, "<script>"), "</script>")
+	harness := `
+const assert = require("assert");
+const listeners = {};
+const docListeners = {};
+
+global.Event = class Event {
+  constructor(type, init) {
+    this.type = type;
+    this.bubbles = Boolean(init && init.bubbles);
+    this.cancelable = Boolean(init && init.cancelable);
+    this.defaultPrevented = false;
+  }
+  preventDefault() { this.defaultPrevented = true; }
+  stopPropagation() {}
+  stopImmediatePropagation() {}
+};
+global.InputEvent = class InputEvent extends global.Event {
+  constructor(type, init) {
+    super(type, init);
+    this.inputType = init && init.inputType || "";
+    this.data = init && init.data || "";
+  }
+};
+global.MouseEvent = class MouseEvent extends global.Event {};
+global.DragEvent = class DragEvent extends global.Event {};
+
+global.FormData = class FormData {
+  constructor() { this.entries = []; }
+  append(k, v, filename) { this.entries.push({ k, v, filename }); }
+  get(k) {
+    const found = this.entries.find(e => e.k === k);
+    return found ? found.v : null;
+  }
+};
+
+let xhrRequests = [];
+let xhrHandler = null;
+global.XMLHttpRequest = class XMLHttpRequest {
+  constructor() {
+    this.upload = {};
+    this.status = 0;
+    this.responseText = "";
+    this.timeout = 0;
+  }
+  open(method, url) {
+    this.method = method;
+    this.url = url;
+  }
+  send(body) {
+    const req = { method: this.method, url: this.url, body, xhr: this };
+    xhrRequests.push(req);
+    if (xhrHandler) xhrHandler(req);
+  }
+};
+
+let activeEditorEl = null;
+global.window = {
+  __agyChunkSize: 64,
+  __agyRetryDelayMs: 0,
+  location: { search: "?project=firmware", pathname: "/c/convo-origin" },
+  addEventListener(type, fn) {
+    if (!listeners[type]) listeners[type] = [];
+    listeners[type].push(fn);
+  },
+  dispatchEvent(ev) {
+    for (const fn of (listeners[ev.type] || [])) fn(ev);
+    return !ev.defaultPrevented;
+  }
+};
+
+global.document = {
+  hidden: true,
+  hasFocus() { return false; },
+  addEventListener(type, fn) {
+    if (!docListeners[type]) docListeners[type] = [];
+    docListeners[type].push(fn);
+  },
+  execCommand() {
+    // Simulate background / unfocused browser tab where execCommand('insertText') fails
+    return false;
+  },
+  querySelector(sel) {
+    if (sel.includes("contenteditable")) return activeEditorEl;
+    return null;
+  },
+  getElementById() { return null; },
+  createElement() {
+    return {
+      style: {},
+      appendChild() {},
+      remove() {},
+      addEventListener() {}
+    };
+  },
+  body: { appendChild() {} }
+};
+
+// Immediate setTimeout for deterministic synchronous test execution of retries
+const origSetTimeout = global.setTimeout;
+global.setTimeout = (fn, ms) => {
+  if (ms === 0) {
+    fn();
+    return 0;
+  }
+  return origSetTimeout(fn, Math.min(ms, 5));
+};
+
+` + script + `
+
+// Set up a mock Lexical editor on the composer element
+let lexicalBuffer = "";
+function createMockLexicalComposer() {
+  const paragraphNode = {
+    selectEnd() {
+      return {
+        insertText(txt) {
+          lexicalBuffer += txt;
+        }
+      };
+    }
+  };
+  const rootNode = {
+    getTextContent() { return lexicalBuffer; },
+    getLastChild() { return paragraphNode; },
+    selectEnd() { return paragraphNode.selectEnd(); }
+  };
+  const editorState = {
+    _selection: null,
+    _nodeMap: new Map([["root", rootNode]])
+  };
+  return {
+    innerText: "\n",
+    focus() {},
+    dispatchEvent() { return true; },
+    __lexicalEditor: {
+      _pendingEditorState: editorState,
+      getEditorState() { return editorState; },
+      focus() {},
+      update(fn) { fn(); }
+    }
+  };
+}
+
+activeEditorEl = createMockLexicalComposer();
+
+// 1. Test multi-chunk upload (150 bytes with 64-byte chunk size -> 3 chunks: 64, 64, 22)
+//    with a transient 502 error on chunk 1 attempt 0, verifying retry and Lexical insertion while unfocused
+xhrRequests = [];
+let chunk1FailedOnce = false;
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    const idx = Number(req.body.get("chunkIndex"));
+    const total = Number(req.body.get("totalChunks"));
+    if (idx === 1 && !chunk1FailedOnce) {
+      chunk1FailedOnce = true;
+      req.xhr.status = 502;
+      req.xhr.onload();
+      return;
+    }
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "216.30.11.225.rom",
+      relativePath: idx === total - 1 ? "uploads/convo-origin/216.30.11.225.rom" : "",
+      size: (idx + 1) * 64
+    });
+    req.xhr.onload();
+  }
+};
+
+const fakeRomBytes = Buffer.alloc(150, 0x41);
+const fakeRomFile = {
+  name: "216.30.11.225.rom",
+  size: fakeRomBytes.length,
+  type: "application/octet-stream",
+  slice(start, end) {
+    return fakeRomBytes.subarray(start, end);
+  }
+};
+
+window.__agyUpload([fakeRomFile]);
+
+// Expect 4 POST requests: chunk 0, chunk 1 (502), chunk 1 (retry 200), chunk 2 (200)
+assert.strictEqual(xhrRequests.length, 4, "expected 4 XHR requests including 1 retry");
+assert.strictEqual(xhrRequests[0].body.get("chunkIndex"), "0");
+assert.strictEqual(xhrRequests[0].body.get("totalChunks"), "3");
+assert.strictEqual(xhrRequests[0].body.get("chunkOffset"), "0");
+assert.strictEqual(xhrRequests[0].body.get("file").length, 64);
+
+assert.strictEqual(xhrRequests[1].body.get("chunkIndex"), "1");
+assert.strictEqual(xhrRequests[1].body.get("chunkOffset"), "64");
+
+assert.strictEqual(xhrRequests[2].body.get("chunkIndex"), "1");
+assert.strictEqual(xhrRequests[2].body.get("chunkOffset"), "64");
+assert.strictEqual(xhrRequests[2].body.get("file").length, 64);
+
+assert.strictEqual(xhrRequests[3].body.get("chunkIndex"), "2");
+assert.strictEqual(xhrRequests[3].body.get("chunkOffset"), "128");
+assert.strictEqual(xhrRequests[3].body.get("file").length, 22);
+
+assert.strictEqual(
+  lexicalBuffer,
+  "uploads/convo-origin/216.30.11.225.rom ",
+  "Lexical editor must receive uploaded file path even when document.hasFocus() is false and execCommand fails"
+);
+
+// 2. Test cross-conversation navigation during upload: path is queued until user returns to origin conversation
+window.location.pathname = "/c/other-convo";
+let otherConvoBuffer = "";
+activeEditorEl = {
+  innerText: "",
+  focus() {},
+  dispatchEvent() { return true; },
+  __lexicalEditor: {
+    _pendingEditorState: {
+      _nodeMap: new Map([["root", {
+        getTextContent() { return otherConvoBuffer; },
+        getLastChild() { return { selectEnd() { return { insertText(t) { otherConvoBuffer += t; } }; } }; }
+      }]])
+    },
+    update(fn) { fn(); }
+  }
+};
+
+const insertedImmediately = window.__agyInsertPromptPath("uploads/convo-origin/second.rom", "convo-origin");
+assert.strictEqual(insertedImmediately, false, "must not insert into a different active conversation");
+assert.strictEqual(otherConvoBuffer, "", "other conversation composer must remain untouched");
+
+// Navigate back to origin conversation and fire popstate
+window.location.pathname = "/c/convo-origin";
+activeEditorEl = createMockLexicalComposer();
+window.dispatchEvent(new Event("popstate"));
+assert.strictEqual(
+  lexicalBuffer,
+  "uploads/convo-origin/216.30.11.225.rom uploads/convo-origin/second.rom ",
+  "queued path must be flushed into origin conversation composer upon return"
+);
+
+// 3. Test permanent chunked upload failure sends DELETE to clean up server staging file
+xhrRequests = [];
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    req.xhr.status = 400;
+    req.xhr.onload();
+  }
+};
+window.__agyUpload([fakeRomFile]);
+const deleteReqs = xhrRequests.filter(r => r.method === "DELETE");
+assert.strictEqual(deleteReqs.length, 1, "failed chunked upload must send DELETE to clean up staging file");
+assert.ok(deleteReqs[0].url.includes("uploadId="), "DELETE request must include uploadId");
+
+// 4. Test upload started on new conversation view ("/") does not leak into "/c/other-convo"
+window.location.pathname = "/";
+xhrRequests = [];
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    // While upload is in flight, user navigates from "/" to "/c/other-convo"
+    window.location.pathname = "/c/other-convo";
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "home.rom",
+      relativePath: "uploads/temp/home.rom",
+      size: 10
+    });
+    req.xhr.onload();
+  }
+};
+otherConvoBuffer = "";
+activeEditorEl = {
+  innerText: "",
+  focus() {},
+  dispatchEvent() { return true; },
+  __lexicalEditor: {
+    _pendingEditorState: {
+      _nodeMap: new Map([["root", {
+        getTextContent() { return otherConvoBuffer; },
+        getLastChild() { return { selectEnd() { return { insertText(t) { otherConvoBuffer += t; } }; } }; }
+      }]])
+    },
+    update(fn) { fn(); }
+  }
+};
+window.__agyUpload([{ name: "home.rom", size: 10, type: "application/octet-stream" }]);
+assert.strictEqual(otherConvoBuffer, "", "upload started on '/' must not insert into '/c/other-convo'");
+process.exit(0);
+`
+
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("uploaderScript chunked upload harness failed: %v\n%s", err, out)
+	}
+}
