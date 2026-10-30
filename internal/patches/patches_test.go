@@ -1153,6 +1153,41 @@ window.__agyUpload([fakeRomFile]);
 const deleteReqs = xhrRequests.filter(r => r.method === "DELETE");
 assert.strictEqual(deleteReqs.length, 1, "failed chunked upload must send DELETE to clean up staging file");
 assert.ok(deleteReqs[0].url.includes("uploadId="), "DELETE request must include uploadId");
+
+// 4. Test upload started on new conversation view ("/") does not leak into "/c/other-convo"
+window.location.pathname = "/";
+xhrRequests = [];
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    // While upload is in flight, user navigates from "/" to "/c/other-convo"
+    window.location.pathname = "/c/other-convo";
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "home.rom",
+      relativePath: "uploads/temp/home.rom",
+      size: 10
+    });
+    req.xhr.onload();
+  }
+};
+otherConvoBuffer = "";
+activeEditorEl = {
+  innerText: "",
+  focus() {},
+  dispatchEvent() { return true; },
+  __lexicalEditor: {
+    _pendingEditorState: {
+      _nodeMap: new Map([["root", {
+        getTextContent() { return otherConvoBuffer; },
+        getLastChild() { return { selectEnd() { return { insertText(t) { otherConvoBuffer += t; } }; } }; }
+      }]])
+    },
+    update(fn) { fn(); }
+  }
+};
+window.__agyUpload([{ name: "home.rom", size: 10, type: "application/octet-stream" }]);
+assert.strictEqual(otherConvoBuffer, "", "upload started on '/' must not insert into '/c/other-convo'");
 process.exit(0);
 `
 

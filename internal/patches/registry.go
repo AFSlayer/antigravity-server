@@ -2211,15 +2211,27 @@ const uploaderScript = `<script>
     return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
   }
 
+  var activeTempConvoId = '';
+
   function getActiveConversationId() {
     var params = new URLSearchParams(window.location.search);
     var id = params.get('conversationId') || params.get('c');
-    if (id) return id;
+    if (id) {
+      activeTempConvoId = '';
+      return id;
+    }
     var path = window.location.pathname;
     if (path.startsWith('/c/')) {
-      return path.slice(3).split('/')[0];
+      var seg = path.slice(3).split('/')[0];
+      if (seg) {
+        activeTempConvoId = '';
+        return seg;
+      }
     }
-    return 'temp_' + Date.now().toString(36);
+    if (!activeTempConvoId) {
+      activeTempConvoId = 'temp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    }
+    return activeTempConvoId;
   }
 
   function getActiveProjectPath() {
@@ -2229,11 +2241,25 @@ const uploaderScript = `<script>
 
   var pendingPromptPaths = [];
   var pendingFlushTimer = null;
+  var PENDING_PATH_TTL_MS = 30 * 60 * 1000;
 
   function findComposerEditor() {
     if (typeof document.querySelector !== 'function') return null;
     return document.querySelector('[data-testid="agent-input-box"] [contenteditable="true"]') ||
            document.querySelector('[contenteditable="true"]');
+  }
+
+  function readLexicalRootText(editor) {
+    if (!editor) return null;
+    try {
+      var st = editor._pendingEditorState ||
+               (typeof editor.getEditorState === 'function' ? editor.getEditorState() : null);
+      var root = st && st._nodeMap && typeof st._nodeMap.get === 'function' ? st._nodeMap.get('root') : null;
+      if (root && typeof root.getTextContent === 'function') {
+        return root.getTextContent();
+      }
+    } catch (_) {}
+    return null;
   }
 
   function insertIntoComposerElement(el, path) {
@@ -2255,11 +2281,22 @@ const uploaderScript = `<script>
             var lexPrefix = (rootText && !/\s$/.test(rootText)) ? ' ' : '';
             var lexText = lexPrefix + path + ' ';
             var sel = null;
-            var lastChild = typeof root.getLastChild === 'function' ? root.getLastChild() : null;
-            if (lastChild && typeof lastChild.selectEnd === 'function') {
-              sel = lastChild.selectEnd();
-            } else if (typeof root.selectEnd === 'function') {
-              sel = root.selectEnd();
+            var node = typeof root.getLastChild === 'function' ? root.getLastChild() : null;
+            while (node) {
+              if (typeof node.selectEnd === 'function') {
+                var candidate = node.selectEnd();
+                if (candidate && typeof candidate.insertText === 'function') {
+                  sel = candidate;
+                  break;
+                }
+              }
+              node = typeof node.getPreviousSibling === 'function' ? node.getPreviousSibling() : null;
+            }
+            if ((!sel || typeof sel.insertText !== 'function') && typeof root.selectEnd === 'function') {
+              var rootSel = root.selectEnd();
+              if (rootSel && typeof rootSel.insertText === 'function') {
+                sel = rootSel;
+              }
             }
             if (!sel || typeof sel.insertText !== 'function') {
               sel = state._selection;
@@ -2273,6 +2310,7 @@ const uploaderScript = `<script>
       }
 
       if (!inserted) {
+        var beforeText = readLexicalRootText(el.__lexicalEditor);
         try {
           if (typeof el.__lexicalEditor.focus === 'function') {
             el.__lexicalEditor.focus();
@@ -2292,7 +2330,8 @@ const uploaderScript = `<script>
               data: textToInsert
             });
             el.dispatchEvent(bi);
-            if (bi.defaultPrevented) {
+            var afterText = readLexicalRootText(el.__lexicalEditor);
+            if (bi.defaultPrevented && (afterText === null || afterText !== beforeText)) {
               inserted = true;
             }
           } catch (_) {}
@@ -2305,7 +2344,7 @@ const uploaderScript = `<script>
         } catch (_) {}
       }
 
-      if (inserted) return true;
+      return Boolean(inserted);
     }
 
     try {
@@ -2327,6 +2366,10 @@ const uploaderScript = `<script>
   }
 
   function flushPendingPromptPaths() {
+    var now = Date.now();
+    pendingPromptPaths = pendingPromptPaths.filter(function(item) {
+      return !item.createdAt || (now - item.createdAt <= PENDING_PATH_TTL_MS);
+    });
     if (!pendingPromptPaths.length) {
       if (pendingFlushTimer) {
         clearInterval(pendingFlushTimer);
@@ -2341,7 +2384,7 @@ const uploaderScript = `<script>
     var remaining = [];
     for (var i = 0; i < pendingPromptPaths.length; i++) {
       var item = pendingPromptPaths[i];
-      var sameConvo = !item.convoId || item.convoId === currentConvo || item.convoId.indexOf('temp_') === 0;
+      var sameConvo = !item.convoId || item.convoId === currentConvo;
       if (sameConvo) {
         if (!insertIntoComposerElement(el, item.path)) {
           remaining.push(item);
@@ -2358,7 +2401,7 @@ const uploaderScript = `<script>
   }
 
   function enqueuePendingPromptPath(convoId, path) {
-    pendingPromptPaths.push({ convoId: convoId || '', path: path });
+    pendingPromptPaths.push({ convoId: convoId || '', path: path, createdAt: Date.now() });
     if (!pendingFlushTimer && typeof setInterval === 'function') {
       pendingFlushTimer = setInterval(flushPendingPromptPaths, 500);
     }
@@ -2377,7 +2420,7 @@ const uploaderScript = `<script>
   function insertPromptPath(path, targetConvoId) {
     if (!path) return false;
     var currentConvo = getActiveConversationId();
-    if (targetConvoId && targetConvoId !== currentConvo && targetConvoId.indexOf('temp_') !== 0) {
+    if (targetConvoId && targetConvoId !== currentConvo) {
       enqueuePendingPromptPath(targetConvoId, path);
       return false;
     }
@@ -2392,6 +2435,7 @@ const uploaderScript = `<script>
   window.__agyFlushPendingPaths = flushPendingPromptPaths;
 
   var DEFAULT_CHUNK_SIZE = 48 * 1024 * 1024;
+  var MAX_CHUNKS = 10000;
   var MAX_CHUNK_RETRIES = 3;
   var CHUNK_TIMEOUT_MS = 180000;
 
@@ -2450,6 +2494,9 @@ const uploaderScript = `<script>
     var chunkSize = (typeof window.__agyChunkSize === 'number' && window.__agyChunkSize > 0)
       ? window.__agyChunkSize
       : DEFAULT_CHUNK_SIZE;
+    if (file.size > chunkSize * MAX_CHUNKS) {
+      chunkSize = Math.ceil(file.size / MAX_CHUNKS);
+    }
     var totalChunks = (file.size > chunkSize) ? Math.ceil(file.size / chunkSize) : 1;
     var uploadId = 'up_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     var startTime = Date.now();
@@ -2589,8 +2636,18 @@ const uploaderScript = `<script>
         failUpload('Request timed out');
       };
 
+      var postQs = 'conversationId=' + encodeURIComponent(convoId) +
+                   '&projectPath=' + encodeURIComponent(projectPath);
+      if (totalChunks > 1) {
+        postQs += '&uploadId=' + encodeURIComponent(uploadId) +
+                  '&chunkIndex=' + encodeURIComponent(String(chunkIndex)) +
+                  '&totalChunks=' + encodeURIComponent(String(totalChunks)) +
+                  '&chunkOffset=' + encodeURIComponent(String(chunkOffset)) +
+                  '&fileName=' + encodeURIComponent(file.name);
+      }
+
       xhr.timeout = CHUNK_TIMEOUT_MS;
-      xhr.open('POST', '/__agy/api/upload');
+      xhr.open('POST', '/__agy/api/upload?' + postQs);
       xhr.send(formData);
     }
 

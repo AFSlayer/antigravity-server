@@ -261,6 +261,15 @@ func TestChunkedUploadReassemblyAndRetry(t *testing.T) {
 	if _, err := os.Stat(stagingPath); !os.IsNotExist(err) {
 		t.Errorf("staging file still exists after finalization: %v", err)
 	}
+
+	// Retrying the final chunk (e.g. if response was lost in transit) must return the same finalized Response idempotently
+	retryRec, retryResp := sendChunk("up-rom-1", 2, 3, 10, "216.30.11.225.rom", "CCCC")
+	if retryRec.Code != http.StatusOK || !retryResp.Success {
+		t.Fatalf("final chunk retry failed: code=%d body=%s", retryRec.Code, retryRec.Body.String())
+	}
+	if retryResp.RelativePath != wantRel {
+		t.Errorf("retry RelativePath = %q, want %q", retryResp.RelativePath, wantRel)
+	}
 }
 
 func TestChunkedUploadAbortDeletesStagingFile(t *testing.T) {

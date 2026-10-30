@@ -40,11 +40,12 @@ type partLock struct {
 }
 
 type chunkState struct {
-	totalChunks int
-	fileName    string
-	nextChunk   int
-	chunkStart  map[int]int64
-	updatedAt   time.Time
+	totalChunks   int
+	fileName      string
+	nextChunk     int
+	chunkStart    map[int]int64
+	completedResp *Response
+	updatedAt     time.Time
 }
 
 // Uploader handles streaming file uploads to the workspace and periodic cleanup.
@@ -377,6 +378,14 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 	unlock := u.acquirePartLock(partPath)
 	defer unlock()
 
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, nil, http.StatusInternalServerError, fmt.Errorf("cannot create upload directory: %v", err)
+	}
+
+	u.mu.Lock()
+	state := u.chunkStates[partPath]
+	u.mu.Unlock()
+
 	if chunkIndex == 0 {
 		if hasChunkOffset && chunkOffset != 0 {
 			return nil, nil, http.StatusBadRequest, fmt.Errorf("chunk 0 must start at offset 0")
@@ -423,15 +432,18 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 		}, rb, http.StatusOK, nil
 	}
 
+	// Idempotent retry for final chunk if finalization already completed but response was lost in transit
+	if state != nil && state.completedResp != nil && chunkIndex == totalChunks-1 && (state.totalChunks == 0 || state.totalChunks == totalChunks) {
+		_, _ = io.Copy(io.Discard, part)
+		respCopy := *state.completedResp
+		return &respCopy, nil, http.StatusOK, nil
+	}
+
 	info, err := os.Stat(partPath)
 	if err != nil {
 		return nil, nil, http.StatusBadRequest, fmt.Errorf("upload session not found or missing previous chunks")
 	}
 	curSize := info.Size()
-
-	u.mu.Lock()
-	state := u.chunkStates[partPath]
-	u.mu.Unlock()
 
 	startOffset := curSize
 	if state != nil {
@@ -459,6 +471,20 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 		startOffset = chunkOffset
 	}
 
+	rollbackStateToChunk := func() {
+		u.mu.Lock()
+		if state != nil {
+			state.nextChunk = chunkIndex
+			for k := range state.chunkStart {
+				if k > chunkIndex {
+					delete(state.chunkStart, k)
+				}
+			}
+			state.updatedAt = time.Now()
+		}
+		u.mu.Unlock()
+	}
+
 	outFile, err := os.OpenFile(partPath, os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, nil, http.StatusInternalServerError, fmt.Errorf("cannot open staging file: %v", err)
@@ -471,6 +497,7 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 	}
 	if _, err := outFile.Seek(startOffset, io.SeekStart); err != nil {
 		_ = outFile.Close()
+		rollbackStateToChunk()
 		return nil, nil, http.StatusInternalServerError, fmt.Errorf("seek staging file error: %v", err)
 	}
 
@@ -478,6 +505,7 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 	_ = outFile.Close()
 	if err != nil {
 		_ = os.Truncate(partPath, startOffset)
+		rollbackStateToChunk()
 		return nil, nil, http.StatusInternalServerError, fmt.Errorf("write chunk error: %v", err)
 	}
 
@@ -491,11 +519,11 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 				fileName:    fileName,
 				chunkStart:  map[int]int64{chunkIndex: startOffset},
 			}
-			if u.chunkStates == nil {
-				u.chunkStates = make(map[string]*chunkState)
-			}
-			u.chunkStates[partPath] = state
 		}
+		if u.chunkStates == nil {
+			u.chunkStates = make(map[string]*chunkState)
+		}
+		u.chunkStates[partPath] = state
 		state.nextChunk = chunkIndex + 1
 		state.chunkStart[chunkIndex+1] = totalWritten
 		state.updatedAt = time.Now()
@@ -525,27 +553,47 @@ func (u *Uploader) writeChunk(partPath, targetDir, relativePrefix, fileName stri
 	}
 
 	// Final chunk: atomically move staging file into its unique destination name
-	u.mu.Lock()
-	delete(u.chunkStates, partPath)
-	u.mu.Unlock()
-
 	finalName, destPath, err := u.finalizeChunkedFile(targetDir, partPath, fileName)
 	if err != nil {
-		_ = os.Remove(partPath)
+		_ = os.Truncate(partPath, startOffset)
+		rollbackStateToChunk()
 		return nil, nil, http.StatusInternalServerError, fmt.Errorf("cannot finalize file: %v", err)
 	}
 
 	relPath := filepath.Join(relativePrefix, finalName)
-	rb := func() {
-		_ = os.Remove(destPath)
-	}
-	return &Response{
+	finalResp := &Response{
 		Success:      true,
 		FileName:     finalName,
 		RelativePath: relPath,
 		FullPath:     destPath,
 		Size:         totalWritten,
-	}, rb, http.StatusOK, nil
+	}
+
+	u.mu.Lock()
+	if state == nil {
+		state = &chunkState{
+			totalChunks: totalChunks,
+			fileName:    fileName,
+		}
+	}
+	state.completedResp = finalResp
+	state.updatedAt = time.Now()
+	if u.chunkStates == nil {
+		u.chunkStates = make(map[string]*chunkState)
+	}
+	u.chunkStates[partPath] = state
+	u.mu.Unlock()
+
+	rb := func() {
+		unlockRb := u.acquirePartLock(partPath)
+		defer unlockRb()
+		_ = os.Remove(destPath)
+		u.mu.Lock()
+		delete(u.chunkStates, partPath)
+		u.mu.Unlock()
+	}
+	respCopy := *finalResp
+	return &respCopy, rb, http.StatusOK, nil
 }
 
 func (u *Uploader) finalizeChunkedFile(targetDir, partPath, fileName string) (string, string, error) {
@@ -566,6 +614,9 @@ func (u *Uploader) finalizeChunkedFile(targetDir, partPath, fileName string) (st
 }
 
 func createUniqueFile(targetDir, fileName string) (*os.File, string, string, error) {
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, "", "", err
+	}
 	ext := filepath.Ext(fileName)
 	base := strings.TrimSuffix(fileName, ext)
 	if base == "" {
@@ -666,14 +717,25 @@ func (u *Uploader) cleanupOldFiles() {
 		}
 	}
 
-	// 3. Evict any stale in-memory chunk session metadata
+	// 3. Evict any stale in-memory chunk session metadata under partLock
+	var staleKeys []string
 	u.mu.Lock()
 	for k, st := range u.chunkStates {
 		if st.updatedAt.Before(partCutoff) {
-			delete(u.chunkStates, k)
+			staleKeys = append(staleKeys, k)
 		}
 	}
 	u.mu.Unlock()
+
+	for _, k := range staleKeys {
+		unlock := u.acquirePartLock(k)
+		u.mu.Lock()
+		if st, ok := u.chunkStates[k]; ok && st.updatedAt.Before(partCutoff) {
+			delete(u.chunkStates, k)
+		}
+		u.mu.Unlock()
+		unlock()
+	}
 }
 
 func (u *Uploader) cleanUploadDir(dir string, cutoff, partCutoff time.Time) {
@@ -714,7 +776,9 @@ func (u *Uploader) cleanUploadDir(dir string, cutoff, partCutoff time.Time) {
 		return nil
 	})
 
+	u.finalizeMu.Lock()
 	removeEmptyDirs(dir)
+	u.finalizeMu.Unlock()
 }
 
 func removeEmptyDirs(dir string) {
