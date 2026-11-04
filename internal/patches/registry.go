@@ -2282,7 +2282,8 @@ const uploaderScript = `<script>
 
   function getActiveProjectPath() {
     var params = new URLSearchParams(window.location.search);
-    return params.get('project') || params.get('workspace') || '';
+    var p = params.get('project') || params.get('workspace') || '';
+    return p === 'outside-of-project' ? '' : p;
   }
 
   var pendingPromptPaths = [];
