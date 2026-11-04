@@ -1,7 +1,6 @@
 package patches
 
 import (
-	"bytes"
 	"encoding/json"
 	"regexp"
 )
@@ -80,8 +79,8 @@ var (
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\("",a\)!==void 0\}|function [a-zA-Z0-9_$]+\(a,b=""\)\{return [a-zA-Z0-9_$]+\(b,a\)!==void 0\}function [a-zA-Z0-9_$]+\(a,b\)\{a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);if\(a!=="webm")`)
 
-	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`(?:var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+=5\)=>\{[\s\S]{1,180}?if\([a-zA-Z0-9_$]+>=[a-zA-Z0-9_$]+\)[a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\);else if\([a-zA-Z0-9_$]+\.includes\([a-zA-Z0-9_$]+\.type\.toLowerCase\(\)\)\))?if\(([a-zA-Z0-9_$]+)\.size>10485760\)[a-zA-Z0-9_$]+\?\.\("PDF file size exceeds 10MB limit"\)[\s\S]{1,500}?Error\("Document file size exceeds 10MB limit"\)\);[\s\S]{1,500}?Error\("Zip file size exceeds 20MB limit"\)\);[\s\S]{1,500}?Error\("Text file size exceeds 1MB limit"\)\);[\s\S]{1,900}?Error\("Audio file size exceeds 20MB limit"\)\);(?:[\s\S]{1,900}?Error\("File size exceeds 20MB limit"\)\);(?:[\s\S]{1,400}?if\([a-zA-Z0-9_$]+\.length!==0\)\{(?:(?:[a-zA-Z0-9_$]+\?\.\(null\);)?var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+;)?)?)?|if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
-	fileUploadIcbHeaderRe                 = regexp.MustCompile(`(var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+)=5\)=>\{)([\s\S]{1,120}?async ([a-zA-Z0-9_$]+)=>\{[\s\S]{1,80}?)if\(([a-zA-Z0-9_$]+)>=([a-zA-Z0-9_$]+)\)([a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\));`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`(?:var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+=5\)=>\{[\s\S]{1,180}?if\([a-zA-Z0-9_$]+>=[a-zA-Z0-9_$]+\)[a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\);(?:else if\([a-zA-Z0-9_$]+\.includes\([a-zA-Z0-9_$]+\.type\.toLowerCase\(\)\)\)|else\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.name,[a-zA-Z0-9_$]+\.type\);if\([a-zA-Z0-9_$]+\)))?if\(([a-zA-Z0-9_$]+)\.size>10485760\)[a-zA-Z0-9_$]+\?\.\("PDF file size exceeds 10MB limit"\)[\s\S]{1,500}?Error\("Document file size exceeds 10MB limit"\)\);[\s\S]{1,500}?Error\("Zip file size exceeds 20MB limit"\)\);[\s\S]{1,500}?Error\("Text file size exceeds 1MB limit"\)\);[\s\S]{1,900}?Error\("Audio file size exceeds 20MB limit"\)\);(?:[\s\S]{1,900}?Error\("File size exceeds 20MB limit"\)\);(?:[\s\S]{1,400}?if\([a-zA-Z0-9_$]+\.length!==0\)\{(?:(?:[a-zA-Z0-9_$]+\?\.\(null\);)?var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+;)?)?)?|if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadIcbHeaderRe                 = regexp.MustCompile(`(var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+)=5\)=>\{)([\s\S]{1,120}?async ([a-zA-Z0-9_$]+)=>\{[\s\S]{1,120}?)if\(([a-zA-Z0-9_$]+)>=([a-zA-Z0-9_$]+)\)([a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\));`)
 	fileUploadVideoBranchRe               = regexp.MustCompile(`else if\(([a-zA-Z0-9_$]+)\.includes\(([a-zA-Z0-9_$]+)\.type\.toLowerCase\(\)\)\)try\{`)
 	fileUploadSizeLimitBranchRe           = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.size>(10485760|20971520|1048576)\)[a-zA-Z0-9_$]+\?\.\("(?:(?:PDF|Document|Zip|Text|Audio) file|File) size exceeds \d+MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("(?:(?:PDF|Document|Zip|Text|Audio) file|File) size exceeds \d+MB limit"\)\);`)
 	fileUploadBatchEntryRe                = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length!==0\)\{(([a-zA-Z0-9_$]+\?\.\(null\);)?var ([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)-([a-zA-Z0-9_$]+);)?`)
@@ -257,13 +256,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileBackClearsSectionRe,
-			Replace: `${1}${2}({clearSection:!0})${3}`,
-			ReplaceMatch: func(g [][]byte, _ Options) string {
-				if bytes.Contains(g[0], []byte("=>{")) {
-					return string(g[1]) + string(g[2]) + `({clearSection:!0,clearProject:!0})` + string(g[3])
-				}
-				return string(g[1]) + string(g[2]) + `({clearSection:!0})` + string(g[3])
-			},
+			Replace: `${1}${2}({clearSection:!0,clearProject:!0})${3}`,
 		},
 		{
 			ID:      "mobile-new-conversation-button",

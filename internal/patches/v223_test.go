@@ -444,7 +444,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 	t.Run("mobile-back-clears-section", func(t *testing.T) {
 		v228 := `var el=A.createElement(Y1,{iconName:"arrow_back",onClick:()=>c(),"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"});`
 		got := applyOnly(t, "mobile-back-clears-section", v228, Options{MobileUX: true})
-		if !strings.Contains(got, `onClick:()=>c({clearSection:!0}),"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"})`) {
+		if !strings.Contains(got, `onClick:()=>c({clearSection:!0,clearProject:!0}),"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"})`) {
 			t.Errorf("2.28 shape output wrong:\n%s", got)
 		}
 		checkSyntax(t, "mobile-back-clears-section", got)
@@ -888,6 +888,24 @@ func TestAntigravity229PatchShapes(t *testing.T) {
 			}
 		}
 		checkSyntax(t, "file-upload-custom-text-types-229", got)
+	})
+
+	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
+		v229 := `function test(){var bpb=(a,b,c,d,f=5)=>{var g=tB(),h=(0,A.useCallback)(async m=>{var n=e,p=e;try{let x=c?cSa:[];if(b>=f)d?.("Maximum number of attachments reached");else{var r=iSa(m.name,m.type);if(r)if(m.size>10485760)d?.("PDF file size exceeds 10MB limit"),g(Ng.VALIDATION_CHECK_FAILED,Error("PDF file size exceeds 10MB limit"));else a();else{var u=pSa(m.name,m.type);if(u)if(m.size>10485760)d?.("Document file size exceeds 10MB limit"),` + "\n" + `g(Ng.VALIDATION_CHECK_FAILED,Error("Document file size exceeds 10MB limit"));else a();else{var t=sSa(m.name,m.type);if(t)if(m.size>20971520)d?.("Zip file size exceeds 20MB limit"),g(Ng.VALIDATION_CHECK_FAILED,Error("Zip file size exceeds 20MB limit"));else a();else{var v=kSa(m.name,m.type);if(v)if(m.size>1048576)d?.("Text file size exceeds 1MB limit"),g(Ng.VALIDATION_CHECK_FAILED,Error("Text file size exceeds 1MB limit"));` + "\n" + `else a();else if(x.includes(m.type.toLowerCase()))try{a()}catch(y){}else{var w=lSa(m.name,m.type);if(w)if(m.size>20971520)d?.("Audio file size exceeds 20MB limit"),g(Ng.VALIDATION_CHECK_FAILED,Error("Audio file size exceeds 20MB limit"));else a();else if(m.size>20971520)d?.("File size exceeds 20MB limit"),g(Ng.VALIDATION_CHECK_FAILED,Error("File size exceeds 20MB limit"));else a()}}}}}}finally{n()}},[a,b,c,d,g,f]),k=(0,A.useCallback)(async m=>{var n=e,p=e;try{if(m.length!==0){d?.(null);var r=f-b;a()}}finally{n()}},[b,h,d,f]);return{k}}}`
+		got := applyOnly(t, "file-upload-large-file-streaming-fallback", v229, Options{})
+		if count := strings.Count(got, `window.__agyUpload([m])`); count != 8 {
+			t.Errorf("expected all 8 streaming fallback branches (max-slot + video + 6 size limits) to stream via __agyUpload, got %d in:\n%s", count, got)
+		}
+		if want := `window.__agySyncMediaState&&window.__agySyncMediaState(b,f);`; !strings.Contains(got, want) {
+			t.Errorf("expected media state sync %q in:\n%s", want, got)
+		}
+		if want := `if(b>=f||(window.__agyShouldStreamSingle&&window.__agyShouldStreamSingle(m,b,f)))`; !strings.Contains(got, want) {
+			t.Errorf("expected single-file streaming guard %q in:\n%s", want, got)
+		}
+		if want := `m=window.__agyPartitionFiles?window.__agyPartitionFiles(m,f-b,b):Array.from(m).filter(_f=>(!window.__agyHandledFiles||!window.__agyHandledFiles.has(_f))&&(!window.__agyIsFileHandled||!window.__agyIsFileHandled(_f)));if(m.length!==0){d?.(null);var r=f-b;`; !strings.Contains(got, want) {
+			t.Errorf("expected batch entry filter %q in:\n%s", want, got)
+		}
+		checkSyntax(t, "file-upload-large-file-streaming-fallback-229", got)
 	})
 
 	t.Run("question-modal-write-in-radio", func(t *testing.T) {

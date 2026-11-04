@@ -153,7 +153,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`var e=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService`,
 		`isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec)`,
 		`!a.location.search?.section`,
-		`onClick:()=>c({clearSection:!0})`,
+		`onClick:()=>c({clearSection:!0,clearProject:!0})`,
 		`id:"header-__agy_new__",label:"New Conversation"`,
 		`if(true){let za=`,
 		`className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
