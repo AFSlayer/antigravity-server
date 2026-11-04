@@ -64,6 +64,7 @@ var (
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
 	mobileBackClearsSectionRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)([a-zA-Z0-9_$]+)\(\)(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
+	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,variant:"sidebar",surface:)([a-zA-Z0-9_$]+)(,subtitleContext:[a-zA-Z0-9_$]+,onToggleCollapseSection:[a-zA-Z0-9_$]+,onToggleSectionHeader:[a-zA-Z0-9_$]+,onTogglePagination:[a-zA-Z0-9_$]+,customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+,marketingEmailsEnabled:`)
 
@@ -234,7 +235,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
-			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7},`,
+			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{"data-testid":"mobile-new-convo-empty",className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7},`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -256,6 +257,15 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileBackClearsSectionRe,
 			Replace: `${1}${2}({clearSection:!0})${3}`,
+		},
+		{
+			ID:      "mobile-new-conversation-button",
+			Desc:    "Prepend a native New Conversation row to the mobile home conversation list",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileNewConvoButtonRe,
+			Replace: `${1}${2}${3}${7}==="background"?((_m,_a,_r)=>_m.get(_a)||(_r=[{type:"header",id:"header-__agy_new__",label:"New Conversation"},...(_a.length>0?[{type:"spacer",id:"spacer-__agy_new__",height:6},..._a]:[])],_m.set(_a,_r),_r))(window.__agyBgMap||(window.__agyBgMap=new WeakMap),${5}):${5}${6}${7}${8}(window.__agyFocusComposer=window.__agyFocusComposer||(()=>{var _af=0,_t1=0,_t2=0,_clr=()=>{cancelAnimationFrame(_af);clearTimeout(_t1);clearTimeout(_t2);_af=_t1=_t2=0},_f=()=>{var _e=document.querySelector('[data-testid="agent-input-box"] [data-lexical-editor="true"]')||document.querySelector('[data-lexical-editor="true"]');if(_e&&document.activeElement!==_e){var _ev=!1,_h=()=>{_ev=!0};_e.addEventListener?.("focusin",_h,{once:!0});_e.focus({preventScroll:!0});_e.removeEventListener?.("focusin",_h);if(!_ev)_e.dispatchEvent(new FocusEvent("focusin",{bubbles:!0}))}if(_e&&document.activeElement===_e&&document.querySelector('[data-testid="mobile-new-convo-empty"]'))_clr()};document.addEventListener?.("pointerdown",_e=>{if(!_e.target?.closest?.('[data-testid="agent-input-box"]'))_clr()},!0);return()=>{if(!(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))return;_clr();_f();if(document.activeElement?.getAttribute?.("data-lexical-editor")!=="true"||!document.querySelector('[data-testid="mobile-new-convo-empty"]')){_af=requestAnimationFrame(_f);_t1=setTimeout(_f,50);_t2=setTimeout(_f,150)}}})(),${7}==="background"?(${9}.__agyHdr||(${9}.__agyHdr=_h=>_h.id==="header-__agy_new__"?${4}.createElement("button",{type:"button","data-testid":"new-conversation-button","aria-label":"New Conversation",onClick:()=>{window.__agyFocusComposer&&window.__agyFocusComposer();${2}("outside-of-project")},className:"group/headerbtn flex items-center pl-1 pr-2 rounded-lg select-none [-webkit-touch-callout:none] cursor-pointer w-full border-none outline-none text-left text-secondary-foreground hover:bg-muted hover:text-foreground h-11 bg-background"},${4}.createElement("div",{className:"flex-1 min-w-0 flex justify-start h-full items-center"},${4}.createElement("div",{className:"flex items-center gap-0.5 h-full min-w-0"},${4}.createElement("div",{className:"w-6 h-6 shrink-0 flex items-center justify-center"},${4}.createElement("svg",{xmlns:"http://www.w3.org/2000/svg",width:16,height:16,viewBox:"0 -960 960 960",fill:"currentColor",className:"shrink-0","aria-hidden":"true"},${4}.createElement("path",{d:"M450-450H250q-12.75,0-21.37-8.63T220-480.01t8.62-21.37T250-510H450V-710q0-12.75 8.63-21.37T480.01-740t21.37,8.62T510-710v200H710q12.75,0 21.37,8.63T740-479.99t-8.62,21.37T710-450H510v200q0,12.75-8.63,21.37T479.99-220t-21.37-8.62T450-250V-450Z"}))),${4}.createElement("span",{className:"truncate text-base"},"New Conversation")))):${9}(_h))):${9})`,
 		},
 		{
 			ID:       "mobile-project-add-button",
@@ -298,7 +308,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectAddClickCloseSidebarRe,
-			Replace: `onClick:${1}=>{${2}.stopPropagation();${3}(${2})||(function(){try{if(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){var _sb=document.querySelector('[data-testid="sidebar-toggle"], [data-testid="mobile-toggle-sidebar"]');if(_sb&&window.getComputedStyle(_sb).display!=="none"){_sb.click();}}}catch(e){}}(),${2}.preventDefault(),${4}(${2}))}`,
+			Replace: `onClick:${1}=>{${2}.stopPropagation();${3}(${2})||(function(){try{if(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){var _sb=document.querySelector('[data-testid="sidebar-toggle"], [data-testid="mobile-toggle-sidebar"]');if(_sb&&window.getComputedStyle(_sb).display!=="none"){_sb.click();}window.__agyFocusComposer&&window.__agyFocusComposer()}}catch(e){}}(),${2}.preventDefault(),${4}(${2}))}`,
 		},
 		// Antigravity 2.23.0 snapshots projectsOrder into localStorage on mount with
 		// projectsFolderSortBy defaulted to "custom". When projects load before
@@ -962,6 +972,15 @@ div.user-input-buttons-container > * {
   [data-testid="agent-input-box"] div[role="textbox"] {
     min-height: 0 !important;
   }
+  /* Eliminate 300ms grid expansion delay on mobile focus so composer height settles immediately */
+  [data-testid="agent-input-box"] > div.grid {
+    transition: none !important;
+    transition-duration: 0s !important;
+  }
+  body:has([data-testid="mobile-new-convo-empty"]) [data-testid="agent-input-box"] > div.grid {
+    grid-template-rows: 1fr !important;
+    opacity: 1 !important;
+  }
 
   /* Smooth padding-bottom transition to prevent 34px snap/jerk when keyboard dismisses */
   div.relative.w-full.px-4.pb-2.flex-shrink-0,
@@ -987,20 +1006,25 @@ div.user-input-buttons-container > * {
       padding: 0 !important;
       overflow: hidden !important;
     }
-    div.h-\[100dvh\].w-screen.flex.flex-col {
+    div.h-\[100dvh\].w-screen.flex.flex-col,
+    div[data-testid="mobile-layout"],
+    div.agy-shell {
       position: absolute !important;
-      top: var(--agy-top, 0px) !important;
+      top: 0px !important;
       left: 0 !important;
       right: 0 !important;
       bottom: var(--agy-bottom, 0px) !important;
+      align-self: stretch !important;
       height: auto !important;
-      max-height: none !important;
+      max-height: 100% !important;
       padding-top: 0 !important;
       box-sizing: border-box !important;
       will-change: bottom;
     }
     /* Hardware-accelerated smooth transition on keyboard dismiss without JS cubic reflow */
-    body:not(.agy-kb-open) div.h-\[100dvh\].w-screen.flex.flex-col {
+    body:not(.agy-kb-open) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:not(.agy-kb-open) div[data-testid="mobile-layout"],
+    body:not(.agy-kb-open) div.agy-shell {
       transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
     }
     /* Constrain mobile/tablet conversation container so top navbar stays pinned when keyboard opens */
@@ -1036,10 +1060,20 @@ div.user-input-buttons-container > * {
     }
 
     body.agy-has-question div.h-\[100dvh\].w-screen.flex.flex-col,
+    body.agy-has-question div[data-testid="mobile-layout"],
+    body.agy-has-question div.agy-shell,
     body:has([data-testid="ask-question-header-text"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="ask-question-header-text"]) div[data-testid="mobile-layout"],
+    body:has([data-testid="ask-question-header-text"]) div.agy-shell,
     body:has([data-testid="interaction-continue-button"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="interaction-continue-button"]) div[data-testid="mobile-layout"],
+    body:has([data-testid="interaction-continue-button"]) div.agy-shell,
     body:has([data-testid="ask-question-writein"]) div.h-\[100dvh\].w-screen.flex.flex-col,
-    body:has([data-testid="declared-permissions-modal"]) div.h-\[100dvh\].w-screen.flex.flex-col {
+    body:has([data-testid="ask-question-writein"]) div[data-testid="mobile-layout"],
+    body:has([data-testid="ask-question-writein"]) div.agy-shell,
+    body:has([data-testid="declared-permissions-modal"]) div.h-\[100dvh\].w-screen.flex.flex-col,
+    body:has([data-testid="declared-permissions-modal"]) div[data-testid="mobile-layout"],
+    body:has([data-testid="declared-permissions-modal"]) div.agy-shell {
       position: relative !important;
       top: 0 !important;
       left: auto !important;
@@ -1251,12 +1285,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       document.body.classList.add("agy-has-question");
       document.documentElement.classList.add("agy-has-question");
       document.documentElement.style.removeProperty("--agy-bottom");
-      document.documentElement.style.removeProperty("--agy-top");
       document.body.classList.remove("agy-kb-open");
       applied = 0;
-      appliedTop = 0;
       goal = 0;
-      goalTop = 0;
       settled = true;
       holdUntil = 0;
       if (raf) {
@@ -1370,18 +1401,26 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     return window.innerHeight >= window.innerWidth;
   }
 
+  function isMobileDevice() {
+    return isTouch && Math.min(window.innerWidth, window.innerHeight) <= 768;
+  }
+
   function getStorageKey() {
     return isPortrait() ? "agy-kb-p" : "agy-kb-l";
   }
 
   function loadPredicted() {
+    var v = 0;
     try {
-      var v = parseInt(localStorage.getItem(getStorageKey()), 10) || 0;
-      if (v < 100) v = 0;
-      return v;
-    } catch (e) {
+      v = parseInt(localStorage.getItem(getStorageKey()), 10) || 0;
+    } catch (e) {}
+    if (v < 100) {
+      if (isMobileDevice() && isPortrait()) {
+        return Math.min(340, Math.max(260, Math.round(base() * 0.38)));
+      }
       return 0;
     }
+    return v;
   }
 
   function savePredicted(val) {
@@ -1395,11 +1434,16 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   // and has nothing to scroll.
   // In Question Mode, unpan is bypassed so native layout panning and swipe-down scrolling
   // work exactly like original Google Antigravity.
+  function isZoomed() {
+    return vv && (vv.scale || 1) > 1.01;
+  }
+
   function unpan() {
     if (hasActiveQuestion) return;
     var de = document.documentElement;
     var sy = window.scrollY || window.pageYOffset || 0;
-    if (sy !== 0) window.scrollTo(0, 0);
+    var ot = (vv && !isZoomed()) ? (vv.offsetTop || 0) : 0;
+    if (sy !== 0 || ot > 0) window.scrollTo(0, 0);
     if (de && de.scrollTop !== 0) de.scrollTop = 0;
     if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
   }
@@ -1418,32 +1462,25 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var holdUntil = 0;
 
   var applied = 0;
-  var appliedTop = 0;
   var goal = 0;
-  var goalTop = 0;
   var from = 0;
-  var fromTop = 0;
   var moveAt = 0;
   var settled = true;
   var raf = 0;
   var deadline = 0;
 
-  function write(kb, top) {
+  function write(kb) {
     if (hasActiveQuestion) return;
-    if (typeof top !== "number") top = 0;
-    if (Math.abs(kb - applied) < 1 && Math.abs(top - appliedTop) < 1) return;
+    if (Math.abs(kb - applied) < 1) return;
 
     var opening = applied === 0 && kb > 0;
     var closing = applied > 0 && kb === 0;
     applied = kb;
-    appliedTop = top;
-    if (kb > 0 || top > 0) {
+    if (kb > 0) {
       document.documentElement.style.setProperty("--agy-bottom", kb + "px");
-      document.documentElement.style.setProperty("--agy-top", top + "px");
       document.body.classList.add("agy-kb-open");
     } else {
       document.documentElement.style.removeProperty("--agy-bottom");
-      document.documentElement.style.removeProperty("--agy-top");
       document.body.classList.remove("agy-kb-open");
     }
     if (opening) {
@@ -1463,15 +1500,14 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
     unpan();
 
-    var topOffset = Math.round(vv.offsetTop || 0);
-    var rawTarget = Math.max(0, Math.round(base() - vv.height - topOffset));
+    var rawTarget = isZoomed() ? 0 : Math.max(0, Math.round(base() - vv.height));
     var target = rawTarget;
     // Ignore small changes (< 100px) such as iPad Bluetooth shortcut bar (54px)
-    if (target < 100 && topOffset === 0) target = 0;
+    if (target < 100) target = 0;
 
     if (target > 0) {
       holdUntil = 0;
-      if (target !== predicted && topOffset === 0) {
+      if (target !== predicted && Math.round(vv.offsetTop || 0) === 0) {
         predicted = target;
         savePredicted(target);
       }
@@ -1482,11 +1518,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       target = predicted;
     }
 
-    if (target !== goal || topOffset !== goalTop) {
+    if (target !== goal) {
       goal = target;
-      goalTop = topOffset;
       from = applied;
-      fromTop = appliedTop;
       moveAt = performance.now();
       settled = false;
     }
@@ -1494,20 +1528,19 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     if (goal === 0) {
       // Closing: delegate to immediate write and CSS hardware-accelerated transition.
       // Eliminates per-frame JS reflow fighting iOS native spring animation.
-      write(0, goalTop);
+      write(0);
       settled = true;
     } else if (applied > 0) {
       // While keyboard is already active, follow the user's touch gesture immediately
       // without restarting the cubic animation on every frame.
-      write(goal, goalTop);
+      write(goal);
     } else {
       var p = Math.min(1, (performance.now() - moveAt) / OPEN_MS);
       var curKb = Math.round(from + (goal - from) * (1 - Math.pow(1 - p, 3)));
-      var curTop = Math.round(fromTop + (goalTop - fromTop) * (1 - Math.pow(1 - p, 3)));
-      write(curKb, curTop);
+      write(curKb);
     }
 
-    if (!settled && applied === goal && appliedTop === goalTop) {
+    if (!settled && applied === goal) {
       settled = true;
       if (shouldScrollOnOpen && goal > 0) {
         scrollChatToBottom();
@@ -1520,7 +1553,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       return;
     }
     raf = 0;
-    write(goal, goalTop);
+    write(goal);
     if (shouldScrollOnOpen && goal > 0) {
       scrollChatToBottom();
       shouldScrollOnOpen = false;
@@ -1572,7 +1605,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   window.addEventListener("touchmove", function (e) {
     if (hasActiveQuestion) return;
-    if (applied > 0 || appliedTop > 0) {
+    if (applied > 0) {
       unpan();
     }
     if (!e.touches || e.touches.length !== 1) return;
@@ -1592,7 +1625,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   window.addEventListener("touchend", function () {
     if (hasActiveQuestion) return;
-    if (applied > 0 || appliedTop > 0) {
+    if (applied > 0) {
       unpan();
     }
   }, { passive: true });
@@ -1604,14 +1637,25 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     track(500);
   });
 
-  function isMobileDevice() {
-    return isTouch && Math.min(window.innerWidth, window.innerHeight) <= 768;
-  }
-
   var suppressComposerUntil = 0;
   var lastComposerTouchTime = 0;
   var lastDialogBlurAt = -Infinity;
   var DIALOG_CONTAINER_SELECTOR = '[role="dialog"], [role="menu"], [data-radix-popper-content-wrapper], .aux-drawer-popup';
+
+  function hasOpenDialog() {
+    var els = document.querySelectorAll(DIALOG_CONTAINER_SELECTOR);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.getAttribute("aria-hidden") === "true" || el.getAttribute("data-state") === "closed") continue;
+      var cs = window.getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity) === 0 || cs.pointerEvents === "none") continue;
+      var r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   document.addEventListener("touchstart", function (e) {
     var t = e.target;
@@ -1693,9 +1737,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && !returnedFromDialog) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
-        goalTop = fromTop = 0;
         moveAt = performance.now();
-        write(predicted, 0);
+        write(predicted);
       }
       track(900);
     }
@@ -1703,7 +1746,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   document.addEventListener("pointerdown", function (e) {
     var t = e.target;
-    if (document.querySelector(DIALOG_CONTAINER_SELECTOR)) {
+    if (t && (isTextInput(t) || (t.closest && t.closest('[data-lexical-editor="true"]')))) {
+      return;
+    }
+    if (hasOpenDialog()) {
       if (t && (!t.closest || !t.closest(DIALOG_CONTAINER_SELECTOR) || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
         lastDialogBlurAt = performance.now();
       }
@@ -1851,7 +1897,7 @@ const mobileDebug = `<script id="agy-debug">
   // on every sample because a selector that matches nothing, or several nested
   // shells, still reports as "applied" in the patch report.
   var OUTER = ".relative.w-screen.h-\\[100dvh\\]";
-  var INNER = "div.h-\\[100dvh\\].w-screen.flex.flex-col";
+  var INNER = "div.h-\\[100dvh\\].w-screen.flex.flex-col, div[data-testid=\"mobile-layout\"], div.agy-shell";
 
   var session = Math.random().toString(36).slice(2, 8);
   var episodes = 0;

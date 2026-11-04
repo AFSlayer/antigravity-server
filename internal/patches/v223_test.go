@@ -286,14 +286,16 @@ func TestAntigravity224PatchShapes(t *testing.T) {
 		got223 := applyOnly(t, "mobile-new-convo-view", v223, Options{MobileUX: true})
 		if !strings.Contains(got223, `{section:e,replace:!0}`) ||
 			!strings.Contains(got223, `var {section:sec}=oR({strict:!1}),isMobileNew=`) ||
-			!strings.Contains(got223, `,"Start a new conversation")):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},A.createElement(g1b,{surface:"background"})),`) {
+			!strings.Contains(got223, `"data-testid":"mobile-new-convo-empty"`) ||
+			!strings.Contains(got223, `):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},A.createElement(g1b,{surface:"background"})),`) {
 			t.Errorf("2.23 shape output wrong:\n%s", got223)
 		}
 
 		got224 := applyOnly(t, "mobile-new-convo-view", v224, Options{MobileUX: true})
 		if !strings.Contains(got224, `{section:e,replace:!0}`) ||
 			!strings.Contains(got224, `var {section:sec}=FS({strict:!1}),isMobileNew=`) ||
-			!strings.Contains(got224, `,"Start a new conversation")):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pt-3"},c&&A.createElement("div",{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"},A.createElement(b7b,null)),A.createElement(i8b,{surface:"background"})),`) {
+			!strings.Contains(got224, `"data-testid":"mobile-new-convo-empty"`) ||
+			!strings.Contains(got224, `):A.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pt-3"},c&&A.createElement("div",{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"},A.createElement(b7b,null)),A.createElement(i8b,{surface:"background"})),`) {
 			t.Errorf("2.24 shape output wrong:\n%s", got224)
 		}
 		if node, err := exec.LookPath("node"); err == nil {
@@ -593,5 +595,134 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 			t.Errorf("2.28 shape: want %q in\n%s", want, got228)
 		}
 		checkSyntax(t, "settings-restore-customizations-tab-228", got228)
+	})
+
+	t.Run("mobile-new-conversation-button", func(t *testing.T) {
+		v223 := `var cb=d==="project"?x?"New Conversation in Workspace":"New Conversation in Project":d==="environment"?"New Conversation in Workspace":void 0;let Ma=d==="environment"?[]:[],ib=void 0;var hEl=z.createElement(xRb,{item:Ha,sectionId:Oa,onAddClick:Wb=>{Wb.stopPropagation();d==="environment"&&ib?.projectId?` + "\n" + `ka(ib.projectId,ib.environmentId):ka(Oa)},newChatLabel:cb,surface:a});return z.createElement(SKa,{delay:300,timeout:200},z.createElement("div",{ref:Wa,className:"flex-1 min-h-0 h-full w-full relative"},z.createElement(aHb,{items:qb,variant:"sidebar",surface:a,subtitleContext:J,onToggleCollapseSection:ra,onToggleSectionHeader:Q,onTogglePagination:wa,customHeaderRenderer:fa,getItemProps:Da})))`
+		got223 := applyOnly(t, "mobile-new-conversation-button", v223, Options{MobileUX: true})
+		if !strings.Contains(got223, `id:"header-__agy_new__",label:"New Conversation"`) || !strings.Contains(got223, `ka("outside-of-project")`) {
+			t.Errorf("2.23 shape output wrong:\n%s", got223)
+		}
+		checkSyntax(t, "mobile-new-conversation-button-223", got223)
+
+		v228 := `var Lb=f==="project"||f==="repo";if(Lb||f==="status"||f==="location"){let Qb,kb;Lb&&(Qb=G?"New Conversation in Workspace":"New Conversation in Project",kb=Pc=>{Pc.stopPropagation();` + "\n" + `Ma(Lc)});var row=A.createElement(Muc,{onAddClick:kb,newChatLabel:Qb,surface:a})}return A.createElement(bB,{delay:300,timeout:200},A.createElement("div",{ref:Ac.sidebarBoundsRef,className:"flex-1 min-h-0 h-full w-full relative"},Za?A.createElement(Ztc,null):A.createElement(Bfc,{items:Ac.displayedFlatItems,variant:"sidebar",surface:a,subtitleContext:W,onToggleCollapseSection:Fa,onToggleSectionHeader:X,onTogglePagination:eb,customHeaderRenderer:nf,getItemProps:Ge})))`
+		got228 := applyOnly(t, "mobile-new-conversation-button", v228, Options{MobileUX: true})
+		if !strings.Contains(got228, `id:"header-__agy_new__",label:"New Conversation"`) || !strings.Contains(got228, `Ma("outside-of-project")`) {
+			t.Errorf("2.28 shape output wrong:\n%s", got228)
+		}
+		checkSyntax(t, "mobile-new-conversation-button-228", got228)
+
+		if node, err := exec.LookPath("node"); err == nil {
+			harness := `
+const assert = require("assert");
+global.window = {
+  innerWidth: 390,
+  matchMedia: () => ({ matches: true })
+};
+let focusedCount = 0;
+let focusInCount = 0;
+let simulateNativeFocusIn = true;
+const editorListeners = [];
+const fakeEditor = {
+  getAttribute(k) { return k === "data-lexical-editor" ? "true" : null; },
+  addEventListener(type, fn) { if (type === "focusin") editorListeners.push(fn); },
+  removeEventListener(type, fn) {
+    const idx = editorListeners.indexOf(fn);
+    if (idx !== -1) editorListeners.splice(idx, 1);
+  },
+  focus() {
+    focusedCount++;
+    global.document.activeElement = fakeEditor;
+    if (simulateNativeFocusIn) {
+      this.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    }
+  },
+  dispatchEvent(ev) {
+    if (ev.type === "focusin") {
+      focusInCount++;
+      for (const fn of editorListeners.slice()) fn(ev);
+    }
+  }
+};
+global.FocusEvent = class FocusEvent {
+  constructor(type, init) { this.type = type; this.bubbles = Boolean(init && init.bubbles); }
+};
+global.requestAnimationFrame = (fn) => { fn(); return 1; };
+global.cancelAnimationFrame = () => {};
+global.document = {
+  activeElement: null,
+  addEventListener() {},
+  querySelector(sel) {
+    if (sel.includes("agent-input-box")) return fakeEditor;
+    if (sel.includes("mobile-new-convo-empty")) return startedSection ? {} : null;
+    return null;
+  }
+};
+const A = {
+  createElement(tag, props, ...children) {
+    return { tag, props, children };
+  }
+};
+const bB = "TooltipProvider", Ztc = "Skeleton", Bfc = "VirtualList", Muc = "ProjectRow";
+let startedSection = null;
+const Ma = (sec) => { startedSection = sec; };
+const nf = (h) => ({ tag: "origHeader", id: h.id });
+const f = "project", G = false, Lc = "proj-1", Za = false, W = {}, Fa = () => {}, X = () => {}, eb = () => {}, Ge = () => {};
+
+function renderWith(a, displayedFlatItems) {
+  const Ac = { sidebarBoundsRef: null, displayedFlatItems };
+  ` + got228 + `
+}
+
+// 1. Mobile surface ("background") with non-empty items: prepends header + spacer and memoizes via WeakMap
+const rawItems = [{ type: "header", id: "header-p1", label: "Project 1" }];
+const tree1 = renderWith("background", rawItems);
+const tree2 = renderWith("background", rawItems);
+const bfc1 = tree1.children[0].children[0];
+const bfc2 = tree2.children[0].children[0];
+assert.strictEqual(bfc1.props.items, bfc2.props.items, "WeakMap must return stable array reference for identical input array");
+assert.strictEqual(bfc1.props.customHeaderRenderer, bfc2.props.customHeaderRenderer, "customHeaderRenderer wrapper must be cached on nf");
+assert.strictEqual(bfc1.props.items.length, 3, "expected header + spacer + 1 item");
+assert.strictEqual(bfc1.props.items[0].id, "header-__agy_new__");
+assert.strictEqual(bfc1.props.items[1].type, "spacer");
+
+// 2. Mobile surface ("background") with empty items: still renders the New Conversation header
+const emptyTree = renderWith("background", []);
+const emptyBfc = emptyTree.children[0].children[0];
+assert.strictEqual(emptyBfc.props.items.length, 1);
+assert.strictEqual(emptyBfc.props.items[0].id, "header-__agy_new__");
+
+// 3. Desktop surface ("sidebar"): leaves items and customHeaderRenderer untouched
+const desktopTree = renderWith("sidebar", rawItems);
+const desktopBfc = desktopTree.children[0].children[0];
+assert.strictEqual(desktopBfc.props.items, rawItems, "desktop sidebar must receive original items untouched");
+assert.strictEqual(desktopBfc.props.customHeaderRenderer, nf, "desktop sidebar must receive original customHeaderRenderer untouched");
+
+// 4. customHeaderRenderer renders button for header-__agy_new__ and delegates others to nf
+const btnEl = bfc1.props.customHeaderRenderer({ id: "header-__agy_new__" });
+assert.strictEqual(btnEl.props["data-testid"], "new-conversation-button");
+const otherEl = bfc1.props.customHeaderRenderer({ id: "header-p1" });
+assert.strictEqual(otherEl.tag, "origHeader");
+
+// 5. Clicking New Conversation button when native focus() fires focusin: must NOT fire duplicate synthetic focusin
+btnEl.props.onClick();
+assert.strictEqual(startedSection, "outside-of-project");
+assert.strictEqual(focusedCount, 1, "already-focused composer must not be re-focused on subsequent ticks");
+assert.strictEqual(focusInCount, 1, "native focusin must not be duplicated by synthetic FocusEvent");
+
+// 6. When native focus() does not fire focusin, synthetic FocusEvent fires once as fallback
+global.document.activeElement = null;
+focusedCount = 0;
+focusInCount = 0;
+simulateNativeFocusIn = false;
+btnEl.props.onClick();
+assert.strictEqual(focusedCount, 1);
+assert.strictEqual(focusInCount, 1, "synthetic FocusEvent must fire once when native focusin did not fire");
+process.exit(0);
+`
+			if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+				t.Fatalf("mobile-new-conversation-button runtime harness failed: %v\n%s", err, out)
+			}
+		}
 	})
 }
