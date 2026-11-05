@@ -54,7 +54,7 @@ const element = (elements, text, media = [], tagName = "DIV") => ({
   querySelectorAll: selector => media.filter(m => selector.split(",").includes(m.tagName.toLowerCase())),
   getElementsByTagName: () => ({ length: elements }),
 });
-const image = naturalHeight => ({ tagName: "IMG", naturalHeight });
+const image = (naturalHeight, complete = true) => ({ tagName: "IMG", naturalHeight, complete });
 // The sizes seen in the app: a status icon while a reply streams, and rows when the window changes.
 const ICON = element(2, 7);
 const ROWS = element(143, 14382);
@@ -186,8 +186,8 @@ for (const [what, node, guess] of [
 
 // Anything without a size yet could have been any height, and so could a frame.
 for (const [what, node] of [
-  ["image not loaded", element(2, 0, [image(0)])],
-  ["image not loaded, removed directly", Object.assign(element(0, 0, [], "IMG"), { naturalHeight: 0 })],
+  ["image not loaded", element(2, 0, [image(0, false)])],
+  ["image not loaded, removed directly", Object.assign(element(0, 0, [], "IMG"), { naturalHeight: 0, complete: false })],
   ["video not loaded", element(2, 0, [{ tagName: "VIDEO", videoHeight: 0 }])],
   ["empty canvas", element(2, 0, [{ tagName: "CANVAS", height: 0 }])],
   ["frame", element(2, 0, [{ tagName: "IFRAME", height: "300" }])],
@@ -199,6 +199,17 @@ for (const [what, node] of [
   el.scrollTop -= 8000;
   fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, what);
+  frame();
+}
+
+// An image that failed to load adds nothing, so it cannot explain a fall its element does not.
+for (const [fall, expected] of [[3 * 48, true], [3 * 48 + 1, false]]) {
+  settle();
+  const el = viewport();
+  remove(el, element(2, 0, [image(0)]));
+  el.scrollTop -= fall;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "fall of " + fall);
   frame();
 }
 
@@ -268,7 +279,7 @@ for (const [top, expected] of [[298, false], [299, true], [300, true], [398, tru
 }
 
 // Back where it was, the collapse is over, and a scroll with no input afterwards is left alone.
-for (const [top, over] of [[8998, false], [8999, true], [9000, true], [9500, true]]) {
+for (const [top, over] of [[8998, false], [8999, false], [9000, true], [9500, true]]) {
   settle();
   const el = viewport();
   collapse(el);

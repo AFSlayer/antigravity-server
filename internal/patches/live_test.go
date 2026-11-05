@@ -17,6 +17,9 @@ import (
 // statement that assigns onopen.
 var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url\);\s*[a-zA-Z0-9_$]+\.binaryType="arraybuffer";\s*var [a-zA-Z0-9_$]+=(?:!1|Date\.now\(\),[\s\S]{0,1000}?);[a-zA-Z0-9_$]+\.onopen=`)
 
+// findBarInputRe matches the input scroll-input-tracker looks for. The bundle can wrap lines between any two tokens.
+var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Find"`)
+
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
 // so CI skips it and no part of Antigravity's bundle needs to live in this
@@ -63,10 +66,11 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 
 	// scroll-input-tracker finds these by name, and nothing else would notice them going away. Its scrollbar selectors
 	// are not listed because older bundles have no overlay scrollbar.
-	for _, name := range []string{`"aria-label":"Find"`, `autoscroll-viewport`} {
-		if !bytes.Contains(mainJS, []byte(name)) {
-			t.Errorf("the bundle no longer has %s; scroll-input-tracker may stop working", name)
-		}
+	if !findBarInputRe.Match(mainJS) {
+		t.Error("the bundle no longer has the find bar's input; scroll-input-tracker may stop working")
+	}
+	if !bytes.Contains(mainJS, []byte("autoscroll-viewport")) {
+		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}

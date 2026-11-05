@@ -2013,11 +2013,13 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     return height;
   }
 
-  // Images, videos and canvases keep their own size once removed, scaled up here in case CSS stretched them. Anything
-  // without a size yet, and any frame, could have been any height.
+  // Images, videos and canvases keep their own size once removed, scaled up here in case CSS stretched them. An image
+  // that finished without a size failed to load and adds nothing. Anything else without a size yet, and any frame, could
+  // have been any height.
   function mediaHeight(media) {
     var own = media.naturalHeight || media.videoHeight || (media.tagName === "CANVAS" ? media.height : 0);
-    return own ? own * 4 : Infinity;
+    if (own) return own * 4;
+    return media.complete ? 0 : Infinity;
   }
 
   // Removed rows can only clamp the position by as much as they shortened the conversation. They may be back by the
@@ -2031,7 +2033,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     removedHeight.delete(el);
     // Back where it was, the collapse is over, so a later scroll has nothing to do with it.
     var collapse = collapses.get(el);
-    if (collapse && top >= collapse.from - 1) collapses.delete(el);
+    if (collapse && top >= collapse.from) collapses.delete(el);
     if (seen && removed !== undefined) {
       var drop = seen.top - top;
       if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
