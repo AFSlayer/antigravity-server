@@ -112,7 +112,7 @@ const conversation = () => {
   const J = new Function("n", "r", "t", "v", "C", "y", "H", "tT", "F", hookSource + "return J;")(n, r, t, v, C, y, H, tT, F);
   const event = () => { fire("scroll", { target: el }); J(); };
   event();
-  return { el, r, event, remove: node => observer([{ target: el, removedNodes: [node] }]) };
+  return { el, r, t, event, remove: node => observer([{ target: el, removedNodes: [node] }]) };
 };
 const onConversation = c => ({ target: { closest: () => c.el } });
 
@@ -153,6 +153,22 @@ const onConversation = c => ({ target: { closest: () => c.el } });
   c.el.scrollTop = 8999;
   c.event();
   assert.strictEqual(c.el.scrollTop, 9000);
+  assert.strictEqual(c.r.current, true);
+}
+
+// The bundle moved its own idea of the last position on ahead while following, and the position comes back past where
+// the tracker last saw it but short of that. The hook sees a fall and asks on the same event that ended the collapse.
+{
+  const c = conversation();
+  c.remove(ROWS);
+  c.el.scrollHeight = 1000;
+  c.el.scrollTop = 0;
+  frame();
+  c.t.current = 9500;
+  c.el.scrollHeight = 10300;
+  c.el.scrollTop = 9150;
+  c.event();
+  assert.strictEqual(c.el.scrollTop, 9300);
   assert.strictEqual(c.r.current, true);
 }
 

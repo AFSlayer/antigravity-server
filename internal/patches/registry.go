@@ -1971,7 +1971,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var NAV_KEYS = { PageUp: 1, PageDown: 1, Home: 1, End: 1 };
   // In a text box these type or move the caret instead.
   var PLAIN_KEYS = { ArrowUp: 1, ArrowDown: 1, " ": 1 };
-  var MEDIA = "img,video,canvas,iframe";
+  // Tall for reasons other than how much is in them. Rows are given a height relative to the conversation's own in cqh.
+  var OWN_HEIGHT = 'img,video,canvas,iframe,[style*="cqh"]';
   var collapses = new WeakMap();
   var lastSeen = new WeakMap();
   var removedHeight = new Map();
@@ -2007,19 +2008,19 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   function guessHeight(node) {
     if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
     var height = (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
-    if (node.matches(MEDIA)) height += mediaHeight(node);
-    var media = node.querySelectorAll(MEDIA);
-    for (var i = 0; i < media.length; i++) height += mediaHeight(media[i]);
+    if (node.matches(OWN_HEIGHT)) height += ownHeight(node);
+    var tall = node.querySelectorAll(OWN_HEIGHT);
+    for (var i = 0; i < tall.length; i++) height += ownHeight(tall[i]);
     return height;
   }
 
   // Images, videos and canvases keep their own size once removed, scaled up here in case CSS stretched them. An image
-  // that finished without a size failed to load and adds nothing. Anything else without a size yet, and any frame, could
-  // have been any height.
-  function mediaHeight(media) {
-    var own = media.naturalHeight || media.videoHeight || (media.tagName === "CANVAS" ? media.height : 0);
+  // that finished without a size failed to load and adds nothing. Anything else without a size yet, and any frame or
+  // row sized in cqh, could have been any height.
+  function ownHeight(node) {
+    var own = node.naturalHeight || node.videoHeight || (node.tagName === "CANVAS" ? node.height : 0);
     if (own) return own * 4;
-    return media.complete ? 0 : Infinity;
+    return node.complete ? 0 : Infinity;
   }
 
   // Removed rows can only clamp the position by as much as they shortened the conversation. They may be back by the
@@ -2031,9 +2032,11 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var top = el.scrollTop;
     var height = el.scrollHeight;
     removedHeight.delete(el);
-    // Back where it was, the collapse is over, so a later scroll has nothing to do with it.
+    // Back where it was, the collapse is over, so a later scroll has nothing to do with it. The event that brought it
+    // back is still part of it: the hook runs next and has its own idea of the last position, which can be further on.
     var collapse = collapses.get(el);
-    if (collapse && top >= collapse.from) collapses.delete(el);
+    if (collapse && collapse.over) collapses.delete(el);
+    else if (collapse && top >= collapse.from) collapse.over = true;
     if (seen && removed !== undefined) {
       var drop = seen.top - top;
       if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {

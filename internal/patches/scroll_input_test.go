@@ -51,7 +51,7 @@ const element = (elements, text, media = [], tagName = "DIV") => ({
   tagName,
   textContent: "x".repeat(text),
   matches: selector => selector.split(",").includes(tagName.toLowerCase()),
-  querySelectorAll: selector => media.filter(m => selector.split(",").includes(m.tagName.toLowerCase())),
+  querySelectorAll: selector => media.filter(m => selector.split(",").includes(m.selector || m.tagName.toLowerCase())),
   getElementsByTagName: () => ({ length: elements }),
 });
 const image = (naturalHeight, complete = true) => ({ tagName: "IMG", naturalHeight, complete });
@@ -213,6 +213,20 @@ for (const [fall, expected] of [[3 * 48, true], [3 * 48 + 1, false]]) {
   frame();
 }
 
+// A row sized in cqh can be tall with almost nothing in it, as the latest turn's is, removed directly or inside something.
+for (const node of [
+  Object.assign(element(2, 0), { matches: selector => selector.split(",").includes('[style*="cqh"]') }),
+  element(2, 0, [{ tagName: "DIV", selector: '[style*="cqh"]' }]),
+]) {
+  settle();
+  const el = viewport();
+  remove(el, node);
+  el.scrollTop -= 8000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  frame();
+}
+
 // Removing something with no height at all still counts as a removal when the conversation visibly got shorter.
 {
   settle();
@@ -285,8 +299,24 @@ for (const [top, over] of [[8998, false], [8999, false], [9000, true], [9500, tr
   collapse(el);
   el.scrollTop = top;
   fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "on the event reaching " + top);
   el.scrollTop = 8000;
+  fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), !over, "after reaching " + top);
+}
+
+// A second collapse before the first has ended replaces it, including where it left the position.
+{
+  settle();
+  const el = viewport();
+  collapse(el);
+  el.scrollTop = 300;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  el.scrollTop = 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  frame();
 }
 
 // A small shrink while following: the next follow ends it, so a short scroll with no input after that is left alone.
