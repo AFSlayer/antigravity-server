@@ -689,8 +689,8 @@ func All() []Patch {
 		// Rows remounting can collapse the content for a moment, which clamps scrollTop without anyone touching
 		// the screen, and the scroll event only arrives once the content is back. The hook then stays where the
 		// clamp left it, far above the bottom. A drop right after rows shortened the conversation, with no input, is
-		// put back instead. The app's own upward scrolls come with a key, a focus change or the find bar, and jumping
-		// from the navigator stops following explicitly first.
+		// put back instead. The app's own upward scrolls found so far come with a key, a focus change or the find bar,
+		// and jumping from the navigator stops following explicitly first.
 		{
 			ID:      "scroll-input-tracker",
 			Desc:    "Record recent scroll input so a position change can be told apart from the user scrolling",
@@ -2002,9 +2002,12 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     }
     if (removedFrom.size > 0 && !frameRequested) {
       frameRequested = true;
+      // After the frame's own layout, so that this forces none.
       requestAnimationFrame(function () {
-        frameRequested = false;
-        removedFrom.forEach(compare);
+        setTimeout(function () {
+          frameRequested = false;
+          removedFrom.forEach(compare);
+        });
       });
     }
   }).observe(document, { childList: true, subtree: true });
@@ -2032,7 +2035,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   window.__agyIsSpontaneousScroll = function (el) {
     if (!el || !collapsedAt.has(el) || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt.get(el) < 500;
+    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have.
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt.get(el) < 2000;
   };
 })();
 </script>`

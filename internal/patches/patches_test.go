@@ -311,6 +311,7 @@ func TestHTMLInjection(t *testing.T) {
 		`id="agy-safe-area"`,
 		`id="agy-keyboard-detect"`,
 		`id="agy-scroll-input"`,
+		`div[data-testid^="conversation-row-"] div.absolute.top-0::before`,
 		`var DIALOG_CONTAINER_SELECTOR = '[role="dialog"], [role="menu"]`,
 		`var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500)`,
 		`isPortrait() && !returnedFromDialog`,

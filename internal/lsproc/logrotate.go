@@ -20,6 +20,9 @@ const (
 	rotatedLogLayout = "2006-01-02"
 )
 
+// truncateLog is replaced in tests: a truncate failing on a file that opened for writing is hard to arrange.
+var truncateLog = func(file *os.File) error { return file.Truncate(0) }
+
 // KeepLogRotated rotates the log at path now and whenever the day changes, until ctx ends.
 func KeepLogRotated(ctx context.Context, path string) {
 	ticker := time.NewTicker(logRotationCheck)
@@ -73,7 +76,7 @@ func rotateLog(path string, now time.Time) error {
 	if err := copyLog(path, rotated); err != nil {
 		return err
 	}
-	if err := file.Truncate(0); err != nil {
+	if err := truncateLog(file); err != nil {
 		// Left behind, the copy would stop the retries, and the next day's would repeat all of it.
 		_ = os.Remove(rotated)
 		return err

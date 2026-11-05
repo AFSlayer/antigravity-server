@@ -112,6 +112,43 @@ const THUMB = 800;
   assert.ok(Math.abs(el.scrollTop - 43000) < 110, "stayed near the reader, at " + el.scrollTop);
 }
 
+// A small correction is kept as well as a large one.
+{
+  const el = element(90000);
+  const drag = { startScrollPos: 0, startCoord: 100 };
+  window.__agyDragScrollbar(drag, el, false, 200, THUMB, 90000);
+  el.scrollTop -= 50;
+  const corrected = el.scrollTop;
+  window.__agyDragScrollbar(drag, el, false, 200, THUMB, 90000);
+  assert.strictEqual(el.scrollTop, corrected);
+}
+
+// A horizontal drag works on the other axis and leaves this one alone.
+{
+  let left = 0;
+  const el = {
+    max: 90000,
+    scrollTop: 77,
+    get scrollLeft() { return left; },
+    set scrollLeft(v) { left = Math.round(Math.min(this.max, Math.max(0, v))); },
+  };
+  const drag = { startScrollPos: 0, startCoord: 100 };
+  window.__agyDragScrollbar(drag, el, true, 200, THUMB, 90000);
+  assert.strictEqual(el.scrollLeft, 11250);
+  el.max = 83000;
+  el.scrollLeft -= 7000;
+  window.__agyDragScrollbar(drag, el, true, 201, THUMB, 83000);
+  assert.ok(Math.abs(el.scrollLeft - 4250) < 110, "stayed near the reader, at " + el.scrollLeft);
+  assert.strictEqual(el.scrollTop, 77);
+
+  // A short overflow keeps its sub-pixel mapping on this axis too.
+  left = 0;
+  el.max = 80;
+  const short = { startScrollPos: 0, startCoord: 0 };
+  for (let x = 1; x <= 400; x++) window.__agyDragScrollbar(short, el, true, x, THUMB, 80);
+  assert.strictEqual(el.scrollLeft, 40);
+}
+
 // Rows added above do the same in the other direction, and so does a range change with no position change.
 {
   const el = element(20000);

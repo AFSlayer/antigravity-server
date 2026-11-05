@@ -2,6 +2,7 @@ package lsproc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -206,6 +207,42 @@ func TestRotateLogDoesNotCopyALogItCannotEmpty(t *testing.T) {
 	}
 	if got := readLog(t, path); got != "line\n" {
 		t.Errorf("log changed to %q", got)
+	}
+}
+
+func TestRotateLogDropsTheCopyWhenTheTruncateFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.log")
+	if err := os.WriteFile(path, []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	working := truncateLog
+	t.Cleanup(func() { truncateLog = working })
+	truncateLog = func(*os.File) error { return errors.New("refused") }
+
+	if err := RotateLog(path, rotationDay, rotationKeep); err == nil {
+		t.Error("the failure was not reported")
+	}
+	matches, err := filepath.Glob(path + ".*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("copies were left behind: %v", matches)
+	}
+	if got := readLog(t, path); got != "line\n" {
+		t.Errorf("log changed to %q", got)
+	}
+
+	// Having left no copy, a later check the same day tries again.
+	truncateLog = working
+	if err := RotateLog(path, rotationDay.Add(time.Hour), rotationKeep); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLog(t, path+".2026-11-04"); got != "line\n" {
+		t.Errorf("rotated copy = %q", got)
+	}
+	if got := readLog(t, path); got != "" {
+		t.Errorf("log after rotation = %q", got)
 	}
 }
 

@@ -30,11 +30,12 @@ global.addEventListener = (name, fn) => { (listeners[name] = listeners[name] || 
 global.document = { querySelector: () => (findBarOpen ? {} : null) };
 global.MutationObserver = class { constructor(fn) { observer = fn; } observe() {} };
 global.requestAnimationFrame = fn => { frames.push(fn); };
+global.setTimeout = fn => { frames.push(fn); };
 Object.defineProperty(global, "performance", { value: { now: () => now } });
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
-const frame = () => { const due = frames; frames = []; due.forEach(fn => fn()); };
+const frame = () => { while (frames.length > 0) { const due = frames; frames = []; due.forEach(fn => fn()); } };
 const viewport = () => {
   const el = {
     scrollTop: 9000,
@@ -85,14 +86,92 @@ const settle = () => { now += 2000; };
   frame();
 }
 
-// A collapse with no input is spontaneous, for that conversation and only for a moment.
+// A collapse with no input is spontaneous, for that conversation and only for a while.
 {
   settle();
   const el = viewport();
   collapse(el);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
   assert.strictEqual(window.__agyIsSpontaneousScroll(viewport()), false);
-  now += 600;
+  now += 1999;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  now += 1;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// The conversation getting shorter is enough, and so is the position moving, by more than rounding.
+{
+  settle();
+  let el = viewport();
+  removeRows(el);
+  el.scrollHeight = 9000;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "shorter");
+  settle();
+  el = viewport();
+  removeRows(el);
+  el.scrollTop = 8500;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "moved");
+  settle();
+  el = viewport();
+  removeRows(el);
+  el.scrollTop = 8999.5;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "rounding");
+}
+
+// Removals outside a conversation are not looked at.
+{
+  settle();
+  const el = viewport();
+  observer([{ target: { closest: () => null }, removedNodes: [{}] }, { target: {}, removedNodes: [{}] }]);
+  assert.strictEqual(frames.length, 0);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// Input on the conversation or its scrollbars counts, for a second, and the same input elsewhere does not.
+for (const part of [
+  '[data-testid="autoscroll-viewport"]',
+  "[data-overlay-scrollbar-track]",
+  '[data-testid="overlay-scrollbar"]',
+  '[data-testid="vertical-scrollbar"]',
+  '[data-testid="vertical-scrollbar-thumb"]',
+]) {
+  const target = { closest: selector => (selector.split(",").includes(part) ? {} : null) };
+  for (const name of ["wheel", "touchstart", "touchmove", "pointerdown"]) {
+    settle();
+    let el = viewport();
+    fire(name, { target });
+    fire("pointerup", { target: body });
+    now += 999;
+    collapse(el);
+    assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, name + " on " + part);
+    now += 1;
+    assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, name + " a second later");
+    settle();
+    el = viewport();
+    fire(name, { target: body });
+    fire("pointerup", { target: body });
+    collapse(el);
+    assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, name + " elsewhere");
+  }
+}
+
+// Moving the pointer counts only while pressing.
+{
+  settle();
+  let el = viewport();
+  fire("pointermove", { target: body });
+  collapse(el);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  settle();
+  el = viewport();
+  fire("pointerdown", { target: { closest: () => el } });
+  settle();
+  fire("pointermove", { target: body });
+  fire("pointerup", { target: body });
+  collapse(el);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
