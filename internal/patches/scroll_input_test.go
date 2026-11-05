@@ -27,7 +27,7 @@ let observer;
 let frames = [];
 global.window = global;
 global.addEventListener = (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); };
-global.document = { querySelector: () => (findBarOpen ? {} : null) };
+global.document = { querySelector: selector => (findBarOpen && selector === 'input[aria-label="Find"]' ? {} : null) };
 global.MutationObserver = class { constructor(fn) { observer = fn; } observe() {} };
 global.requestAnimationFrame = fn => { frames.push(fn); };
 global.setTimeout = fn => { frames.push(fn); };
@@ -46,17 +46,27 @@ const viewport = () => {
   fire("scroll", { target: el });
   return el;
 };
-const removeRows = el => observer([{ target: el, removedNodes: [{}] }]);
-const collapse = el => { removeRows(el); el.scrollHeight = 1000; el.scrollTop = 300; frame(); el.scrollHeight = 10000; };
+const element = (elements, text, media) => ({
+  nodeType: 1,
+  textContent: "x".repeat(text),
+  matches: () => false,
+  querySelector: selector => (media && selector.includes("img") ? {} : null),
+  getElementsByTagName: () => ({ length: elements }),
+});
+// The sizes seen in the app: a status icon while a reply streams, and rows when the window changes.
+const ICON = element(2, 7);
+const ROWS = element(143, 14382);
+const remove = (el, ...nodes) => observer([{ target: el, removedNodes: nodes }]);
+const collapse = el => { remove(el, ROWS); el.scrollHeight = 1000; el.scrollTop = 300; frame(); el.scrollHeight = 10000; };
 const prompt = { isContentEditable: true, closest: () => null };
 const body = { closest: () => null };
 const settle = () => { now += 2000; };
 
-// A row swapped for one of the same height says nothing.
+// A row swapped for one of the same height says nothing, even with rows that size.
 {
   settle();
   const el = viewport();
-  removeRows(el);
+  remove(el, ROWS);
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
@@ -65,11 +75,99 @@ const settle = () => { now += 2000; };
 {
   settle();
   const el = viewport();
-  removeRows(el);
+  remove(el, ROWS);
   frame();
   el.scrollTop = 300;
   fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// A scroll with no input in the same frame as a small swap: the swap cannot explain the fall.
+{
+  settle();
+  const el = viewport();
+  remove(el, ICON);
+  el.scrollTop -= 800;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  frame();
+}
+
+// Nor can a small shrink explain a large fall in the same frame.
+{
+  settle();
+  const el = viewport();
+  remove(el, ICON);
+  el.scrollHeight -= 30;
+  el.scrollTop -= 800;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  frame();
+}
+
+// Small removals add up, whatever kind of node they are.
+{
+  settle();
+  let el = viewport();
+  remove(el, element(10, 0), element(10, 0));
+  el.scrollTop -= 1000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "elements add up");
+  frame();
+  settle();
+  el = viewport();
+  remove(el, element(10, 0));
+  remove(el, element(10, 0));
+  el.scrollTop -= 1000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "commits add up");
+  frame();
+  settle();
+  el = viewport();
+  remove(el, { nodeType: 3, textContent: "x".repeat(800) });
+  el.scrollTop -= 1500;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "text counts");
+  frame();
+  settle();
+  el = viewport();
+  remove(el, { nodeType: 8, textContent: null });
+  el.scrollTop -= 1500;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "a comment has no height");
+  frame();
+}
+
+// Media has no size to read in a detached node, so it could explain anything.
+{
+  settle();
+  const el = viewport();
+  remove(el, element(2, 0, true));
+  el.scrollTop -= 8000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  frame();
+}
+
+// Falling with nothing removed is left to the bundle, which handles the content being short when the event arrives.
+{
+  settle();
+  const el = viewport();
+  el.scrollHeight = 1000;
+  el.scrollTop = 300;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// A scroll that ends away from where the collapse left the position came from something else.
+{
+  settle();
+  const el = viewport();
+  collapse(el);
+  el.scrollTop = 150;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  el.scrollTop = 300;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
 }
 
 // The observer leaves the layout alone: reading it there could clamp the position in a gap between two commits.
@@ -79,8 +177,8 @@ const settle = () => { now += 2000; };
   const el = viewport();
   Object.defineProperty(el, "scrollHeight", { get() { reads++; return 10000; } });
   Object.defineProperty(el, "scrollTop", { get() { reads++; return 9000; } });
-  removeRows(el);
-  removeRows(el);
+  remove(el, ROWS);
+  remove(el, ICON);
   assert.strictEqual(reads, 0);
   assert.strictEqual(frames.length, 1, "one frame for any number of commits");
   frame();
@@ -99,23 +197,24 @@ const settle = () => { now += 2000; };
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
-// The conversation getting shorter is enough, and so is the position moving, by more than rounding.
+// A small removal explains a fall as far as the conversation visibly got shorter, and no further.
 {
   settle();
   let el = viewport();
-  removeRows(el);
+  remove(el, ICON);
+  el.scrollHeight = 9000;
+  el.scrollTop = 8000;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "fell by what it shrank");
+  settle();
+  el = viewport();
+  remove(el, ICON);
   el.scrollHeight = 9000;
   frame();
-  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "shorter");
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "shrank without falling");
   settle();
   el = viewport();
-  removeRows(el);
-  el.scrollTop = 8500;
-  frame();
-  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "moved");
-  settle();
-  el = viewport();
-  removeRows(el);
+  remove(el, ROWS);
   el.scrollTop = 8999.5;
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "rounding");
@@ -125,7 +224,7 @@ const settle = () => { now += 2000; };
 {
   settle();
   const el = viewport();
-  observer([{ target: { closest: () => null }, removedNodes: [{}] }, { target: {}, removedNodes: [{}] }]);
+  observer([{ target: { closest: () => null }, removedNodes: [ROWS] }, { target: {}, removedNodes: [ROWS] }]);
   assert.strictEqual(frames.length, 0);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
@@ -179,7 +278,7 @@ for (const part of [
 {
   settle();
   const el = viewport();
-  removeRows(el);
+  remove(el, ROWS);
   el.scrollTop = 300;
   fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
@@ -190,7 +289,7 @@ for (const part of [
 {
   settle();
   const el = viewport();
-  removeRows(el);
+  remove(el, ROWS);
   el.scrollTop = 300;
   now += 600000;
   fire("scroll", { target: el });

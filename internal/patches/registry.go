@@ -1971,9 +1971,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var NAV_KEYS = { PageUp: 1, PageDown: 1, Home: 1, End: 1 };
   // In a text box these type or move the caret instead.
   var PLAIN_KEYS = { ArrowUp: 1, ArrowDown: 1, " ": 1 };
-  var collapsedAt = new WeakMap();
+  var MEDIA = "img,video,canvas,iframe";
+  var collapses = new WeakMap();
   var lastSeen = new WeakMap();
-  var removedFrom = new Set();
+  var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
   window.__agyLastScrollInputAt = -Infinity;
@@ -2000,12 +2001,30 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // Moving focus scrolls the focused row into view.
   window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
 
+  // A generous guess at how tall removed content was. A detached node has no layout left to ask, and the guess only
+  // has to tell a status icon from whole rows, which differ by hundreds of times.
+  function tallestItCouldBe(node) {
+    if (node.nodeType !== 1) return (node.textContent || "").length * 2;
+    if (node.matches(MEDIA) || node.querySelector(MEDIA)) return Infinity;
+    return (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
+  }
+
+  // Removed rows can only clamp the position by as much as they shortened the conversation. They may be back by the
+  // time anything can look, so what was removed counts as well as the height that can be seen. A fall neither explains
+  // is a scroll with no input that happened to land next to a removal, such as the browser's find-in-page.
   function compare(el) {
     var seen = lastSeen.get(el);
-    if (removedFrom.delete(el) && seen && (el.scrollHeight < seen.height || el.scrollTop < seen.top - 1)) {
-      collapsedAt.set(el, performance.now());
+    var removed = removedHeight.get(el);
+    var top = el.scrollTop;
+    var height = el.scrollHeight;
+    removedHeight.delete(el);
+    if (seen && removed !== undefined) {
+      var drop = seen.top - top;
+      if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
+        collapses.set(el, { at: performance.now(), top: top });
+      }
     }
-    lastSeen.set(el, { top: el.scrollTop, height: el.scrollHeight });
+    lastSeen.set(el, { top: top, height: height });
   }
   // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
   window.addEventListener("scroll", function (e) {
@@ -2022,15 +2041,18 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       var el = records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT);
-      if (el) removedFrom.add(el);
+      if (!el) continue;
+      var height = removedHeight.get(el) || 0;
+      for (var j = 0; j < records[i].removedNodes.length; j++) height += tallestItCouldBe(records[i].removedNodes[j]);
+      removedHeight.set(el, height);
     }
-    if (removedFrom.size > 0 && !frameRequested) {
+    if (removedHeight.size > 0 && !frameRequested) {
       frameRequested = true;
       // After the frame's own layout, so that this forces none.
       requestAnimationFrame(function () {
         setTimeout(function () {
           frameRequested = false;
-          removedFrom.forEach(compare);
+          removedHeight.forEach(function (_, el) { compare(el); });
         });
       });
     }
@@ -2057,10 +2079,12 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   };
 
   window.__agyIsSpontaneousScroll = function (el) {
-    if (!el || !collapsedAt.has(el) || pressed || document.querySelector(FIND_BAR)) return false;
+    var collapse = el && collapses.get(el);
+    if (!collapse || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have.
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt.get(el) < 2000;
+    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Until
+    // then the position stays where the collapse left it, so a scroll that ends anywhere else came from something else.
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && Math.abs(el.scrollTop - collapse.top) <= 1;
   };
 })();
 </script>`
