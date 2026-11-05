@@ -46,13 +46,15 @@ const viewport = () => {
   fire("scroll", { target: el });
   return el;
 };
-const element = (elements, text, self, inside) => ({
+const element = (elements, text, media = [], tagName = "DIV") => ({
   nodeType: 1,
+  tagName,
   textContent: "x".repeat(text),
-  matches: selector => selector.split(",").includes(self),
-  querySelector: selector => (selector.split(",").includes(inside) ? {} : null),
+  matches: selector => selector.split(",").includes(tagName.toLowerCase()),
+  querySelectorAll: selector => media.filter(m => selector.split(",").includes(m.tagName.toLowerCase())),
   getElementsByTagName: () => ({ length: elements }),
 });
+const image = naturalHeight => ({ tagName: "IMG", naturalHeight });
 // The sizes seen in the app: a status icon while a reply streams, and rows when the window changes.
 const ICON = element(2, 7);
 const ROWS = element(143, 14382);
@@ -162,17 +164,54 @@ for (const [fall, expected] of [[1001, true], [1002, false]]) {
   frame();
 }
 
-// Media has no size to read in a detached node, so it could explain anything, removed directly or inside something.
-for (const media of ["img", "video", "canvas", "iframe"]) {
-  for (const node of [element(2, 0, media, null), element(2, 0, null, media)]) {
+// Media reports its own size once removed, scaled up in case CSS stretched it. A small image explains a small fall only.
+for (const [what, node, guess] of [
+  ["image inside", element(2, 0, [image(16)]), 3 * 48 + 16 * 4],
+  ["image removed directly", Object.assign(element(0, 0, [], "IMG"), { naturalHeight: 16 }), 48 + 16 * 4],
+  ["two images", element(2, 0, [image(16), image(100)]), 3 * 48 + 116 * 4],
+  ["canvas", element(2, 0, [{ tagName: "CANVAS", height: 400 }]), 3 * 48 + 400 * 4],
+  ["canvas removed directly", Object.assign(element(0, 0, [], "CANVAS"), { height: 400 }), 48 + 400 * 4],
+  ["video", element(2, 0, [{ tagName: "VIDEO", videoHeight: 720 }]), 3 * 48 + 720 * 4],
+]) {
+  for (const [fall, expected] of [[guess, true], [guess + 1, false]]) {
     settle();
     const el = viewport();
     remove(el, node);
-    el.scrollTop -= 8000;
+    el.scrollTop -= fall;
     fire("scroll", { target: el });
-    assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, media);
+    assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, what + ", fall of " + fall);
     frame();
   }
+}
+
+// Anything without a size yet could have been any height, and so could a frame.
+for (const [what, node] of [
+  ["image not loaded", element(2, 0, [image(0)])],
+  ["image not loaded, removed directly", Object.assign(element(0, 0, [], "IMG"), { naturalHeight: 0 })],
+  ["video not loaded", element(2, 0, [{ tagName: "VIDEO", videoHeight: 0 }])],
+  ["empty canvas", element(2, 0, [{ tagName: "CANVAS", height: 0 }])],
+  ["frame", element(2, 0, [{ tagName: "IFRAME", height: "300" }])],
+  ["frame removed directly", Object.assign(element(0, 0, [], "IFRAME"), { height: "300" })],
+]) {
+  settle();
+  const el = viewport();
+  remove(el, node);
+  el.scrollTop -= 8000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, what);
+  frame();
+}
+
+// Removing something with no height at all still counts as a removal when the conversation visibly got shorter.
+{
+  settle();
+  const el = viewport();
+  remove(el, { nodeType: 8, textContent: "" });
+  el.scrollHeight -= 1000;
+  el.scrollTop -= 1000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  frame();
 }
 
 // What a scroll event reports is what the next fall is measured from, for the position and the height alike.
@@ -202,7 +241,7 @@ for (const media of ["img", "video", "canvas", "iframe"]) {
   collapse(el);
   now += 3000;
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
-  el.scrollTop = 9000;
+  el.scrollTop = 5000;
   fire("scroll", { target: el });
   collapse(el);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
@@ -218,13 +257,42 @@ for (const media of ["img", "video", "canvas", "iframe"]) {
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
-// A scroll that ends away from where the collapse left the position, either way, came from something else.
-for (const [top, expected] of [[298, false], [299, true], [300, true], [301, true], [302, false]]) {
+// Rows coming back can push the position down the conversation, as Safari was seen to, but a scroll that ends further up
+// than the collapse left it came from something else.
+for (const [top, expected] of [[298, false], [299, true], [300, true], [398, true], [8000, true]]) {
   settle();
   const el = viewport();
   collapse(el);
   el.scrollTop = top;
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "at " + top);
+}
+
+// Back where it was, the collapse is over, and a scroll with no input afterwards is left alone.
+for (const [top, over] of [[8998, false], [8999, true], [9000, true], [9500, true]]) {
+  settle();
+  const el = viewport();
+  collapse(el);
+  el.scrollTop = top;
+  fire("scroll", { target: el });
+  el.scrollTop = 8000;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), !over, "after reaching " + top);
+}
+
+// A small shrink while following: the next follow ends it, so a short scroll with no input after that is left alone.
+{
+  settle();
+  const el = viewport();
+  remove(el, ICON);
+  el.scrollHeight -= 30;
+  el.scrollTop -= 30;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "the clamp itself");
+  el.scrollHeight += 400;
+  el.scrollTop = el.scrollHeight - 1000;
+  fire("scroll", { target: el });
+  el.scrollTop -= 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "after following again");
 }
 
 // The observer leaves the layout alone: reading it there could clamp the position in a gap between two commits.

@@ -2006,8 +2006,18 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // 20,000 px for rows the window removed.
   function tallestItCouldBe(node) {
     if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
-    if (node.matches(MEDIA) || node.querySelector(MEDIA)) return Infinity;
-    return (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
+    var height = (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
+    if (node.matches(MEDIA)) height += mediaHeight(node);
+    var media = node.querySelectorAll(MEDIA);
+    for (var i = 0; i < media.length; i++) height += mediaHeight(media[i]);
+    return height;
+  }
+
+  // Images, videos and canvases keep their own size once removed, scaled up here in case CSS stretched them. Anything
+  // without a size yet, and any frame, could have been any height.
+  function mediaHeight(media) {
+    var own = media.naturalHeight || media.videoHeight || (media.tagName === "CANVAS" ? media.height : 0);
+    return own ? own * 4 : Infinity;
   }
 
   // Removed rows can only clamp the position by as much as they shortened the conversation. They may be back by the
@@ -2019,10 +2029,13 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var top = el.scrollTop;
     var height = el.scrollHeight;
     removedHeight.delete(el);
+    // Back where it was, the collapse is over, so a later scroll has nothing to do with it.
+    var collapse = collapses.get(el);
+    if (collapse && top >= collapse.from - 1) collapses.delete(el);
     if (seen && removed !== undefined) {
       var drop = seen.top - top;
       if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
-        collapses.set(el, { at: performance.now(), top: top });
+        collapses.set(el, { at: performance.now(), top: top, from: seen.top });
       }
     }
     lastSeen.set(el, { top: top, height: height });
@@ -2083,9 +2096,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var collapse = el && collapses.get(el);
     if (!collapse || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Nothing
-    // is expected to move the position until then, so a scroll that ends elsewhere is taken to come from something else.
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && Math.abs(el.scrollTop - collapse.top) <= 1;
+    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Rows
+    // coming back can push the position down the conversation, but only something else takes it further up than the
+    // collapse left it.
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && el.scrollTop >= collapse.top - 1;
   };
 })();
 </script>`
