@@ -2004,7 +2004,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // A generous guess at how tall removed content was. A detached node has no layout left to ask, and the guess only
   // has to tell a status icon from whole rows: at most about 630 px for what a reply was seen to remove, and over
   // 20,000 px for rows the window removed.
-  function tallestItCouldBe(node) {
+  function guessHeight(node) {
     if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
     var height = (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
     if (node.matches(MEDIA)) height += mediaHeight(node);
@@ -2057,7 +2057,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       var el = records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT);
       if (!el) continue;
       var height = removedHeight.get(el) || 0;
-      for (var j = 0; j < records[i].removedNodes.length; j++) height += tallestItCouldBe(records[i].removedNodes[j]);
+      for (var j = 0; j < records[i].removedNodes.length; j++) height += guessHeight(records[i].removedNodes[j]);
       removedHeight.set(el, height);
     }
     if (removedHeight.size > 0 && !frameRequested) {

@@ -340,7 +340,7 @@ for (const [top, over] of [[8998, false], [8999, true], [9000, true], [9500, tru
   settle();
   el = viewport();
   remove(el, ROWS);
-  el.scrollTop = 8999.5;
+  el.scrollTop = 8999;
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "rounding");
   settle();
@@ -358,6 +358,27 @@ for (const [top, over] of [[8998, false], [8999, true], [9000, true], [9500, tru
   remove(el, ROWS);
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// A record from outside a conversation does not hide the ones after it, as the observer gets the whole document's.
+{
+  settle();
+  const el = viewport();
+  observer([{ target: { closest: () => null }, removedNodes: [ROWS] }, { target: el, removedNodes: [ROWS] }]);
+  el.scrollTop = 300;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+}
+
+// What removed text comes to on its own.
+for (const [fall, expected] of [[1600, true], [1601, false]]) {
+  settle();
+  const el = viewport();
+  remove(el, { nodeType: 3, textContent: "x".repeat(800) });
+  el.scrollTop -= fall;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "fall of " + fall);
+  frame();
 }
 
 // Removals outside a conversation are not looked at.
@@ -414,7 +435,8 @@ for (const part of [
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
-// The position moving is enough: the scroll event can arrive before the frame, with the content already back.
+// Whole rows explain a fall with the height unchanged: the scroll event can arrive before the frame, with the content
+// already back.
 {
   settle();
   const el = viewport();
