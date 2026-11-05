@@ -2003,8 +2003,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
 
   // A generous guess at how tall removed content was. A detached node has no layout left to ask, and the guess only
-  // has to tell a status icon from whole rows: at most about 630 px for what a reply was seen to remove, and over
-  // 20,000 px for rows the window removed.
+  // has to tell a status icon from whole rows: at most about 630 px for the status changes seen during a reply, and
+  // over 20,000 px for rows the window removed.
   function guessHeight(node) {
     if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
     var height = (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
