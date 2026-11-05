@@ -100,6 +100,10 @@ func (r *runner) start() error {
 	}
 	step("Connected to Antigravity language server on port %d", instance.Port)
 
+	logCtx, stopLogRotation := context.WithCancel(context.Background())
+	defer stopLogRotation()
+	go lsproc.KeepLogRotated(logCtx, r.cfg.Path("language-server.log"))
+
 	r.syncRemoteControlSetting()
 
 	patchOpts := patches.Options{
