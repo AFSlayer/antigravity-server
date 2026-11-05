@@ -1261,6 +1261,9 @@ div.user-input-buttons-container > * {
     background: transparent !important;
     margin-right: 0.25rem !important;
   }
+  div[data-testid^="conversation-row-"] div.absolute.top-0::before {
+    display: none !important;
+  }
   div[data-testid^="conversation-row-"] [data-testid="conversation-kebab"] {
     display: inline-flex !important;
     opacity: 1 !important;
