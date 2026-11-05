@@ -1942,14 +1942,15 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var VIEWPORT = '[data-testid="autoscroll-viewport"]';
   var SCROLL_TARGETS = VIEWPORT + ',[data-overlay-scrollbar-track],[data-testid="overlay-scrollbar"],' +
     '[data-testid="vertical-scrollbar"],[data-testid="vertical-scrollbar-thumb"]';
-  var FIND_BAR = '[data-testid="find-bar-match-count"]';
+  var FIND_BAR = 'input[aria-label="Find"]';
   // The conversation takes these wherever focus is, including the prompt.
   var NAV_KEYS = { PageUp: 1, PageDown: 1, Home: 1, End: 1 };
   // In a text box these type or move the caret instead.
   var PLAIN_KEYS = { ArrowUp: 1, ArrowDown: 1, " ": 1 };
-  var collapsedViewport = null;
-  var collapsedAt = -Infinity;
+  var collapsedAt = new WeakMap();
   var lastSeen = new WeakMap();
+  var removedFrom = new Set();
+  var frameRequested = false;
   var pressed = false;
   window.__agyLastScrollInputAt = -Infinity;
 
@@ -1963,7 +1964,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (onConversation(e)) { pressed = true; mark(); }
   }, opts);
   ["pointerup", "pointercancel", "contextmenu", "dragstart", "blur"].forEach(function (name) {
-    window.addEventListener(name, function () { pressed = false; }, opts);
+    // Capturing on the window also sees every element losing focus, which a press often causes.
+    window.addEventListener(name, function (e) { if (name !== "blur" || e.target === window) pressed = false; }, opts);
   });
   window.addEventListener("pointermove", function () { if (pressed) mark(); }, opts);
   window.addEventListener("keydown", function (e) {
@@ -1974,28 +1976,36 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // Moving focus scrolls the focused row into view.
   window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
 
-  function remember(el) { lastSeen.set(el, { top: el.scrollTop, height: el.scrollHeight }); }
+  function compare(el) {
+    var seen = lastSeen.get(el);
+    if (removedFrom.delete(el) && seen && (el.scrollHeight < seen.height || el.scrollTop < seen.top - 1)) {
+      collapsedAt.set(el, performance.now());
+    }
+    lastSeen.set(el, { top: el.scrollTop, height: el.scrollHeight });
+  }
+  // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
   window.addEventListener("scroll", function (e) {
     var el = e.target;
-    if (el && el.matches && el.matches(VIEWPORT)) remember(el);
+    if (el && el.matches && el.matches(VIEWPORT)) compare(el);
   }, opts);
 
   // Removing rows is what collapses the content and clamps the scroll position, but only if it shortened the
   // conversation. Swapping a row for one of the same height happens all the time while a reply streams and says
-  // nothing about the next scroll. Reading the layout here costs little because removals are rare.
+  // nothing about the next scroll. The comparison waits for the next frame or scroll event, because reading the
+  // layout here could clamp the position in a gap between two commits that would otherwise never have shown, and
+  // a hidden tab has neither until the reader returns.
   new MutationObserver(function (records) {
-    var checked = null;
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       var el = records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT);
-      if (!el || el === checked) continue;
-      checked = el;
-      var seen = lastSeen.get(el);
-      if (seen && (el.scrollHeight < seen.height || el.scrollTop < seen.top - 1)) {
-        collapsedViewport = el;
-        collapsedAt = performance.now();
-      }
-      remember(el);
+      if (el) removedFrom.add(el);
+    }
+    if (removedFrom.size > 0 && !frameRequested) {
+      frameRequested = true;
+      requestAnimationFrame(function () {
+        frameRequested = false;
+        removedFrom.forEach(compare);
+      });
     }
   }).observe(document, { childList: true, subtree: true });
 
@@ -2020,9 +2030,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   };
 
   window.__agyIsSpontaneousScroll = function (el) {
-    if (!el || el !== collapsedViewport || pressed || document.querySelector(FIND_BAR)) return false;
+    if (!el || !collapsedAt.has(el) || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt < 500;
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt.get(el) < 500;
   };
 })();
 </script>`

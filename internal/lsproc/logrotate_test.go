@@ -1,6 +1,7 @@
 package lsproc
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,41 @@ func readLog(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestKeepLogRotatedRotatesAtOnceAndStopsWithTheContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.log")
+	if err := os.WriteFile(path, []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		KeepLogRotated(ctx, path)
+		close(done)
+	}()
+
+	rotated := path + "." + time.Now().AddDate(0, 0, -1).Format(rotatedLogLayout)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && len(data) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the log was not rotated")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := readLog(t, rotated); got != "line\n" {
+		t.Errorf("rotated copy = %q", got)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("it did not stop with the context")
+	}
 }
 
 func TestRotateLogMovesContentsAsideOnceADay(t *testing.T) {
