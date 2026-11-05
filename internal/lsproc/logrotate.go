@@ -2,6 +2,7 @@ package lsproc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -44,9 +45,11 @@ func KeepLogRotated(ctx context.Context, path string) {
 // next write land at the new end after the truncate. A line written between the copy and the
 // truncate is lost.
 func RotateLog(path string, now time.Time, keep time.Duration) error {
-	if err := pruneRotatedLogs(path, now.Add(-keep)); err != nil {
-		return err
-	}
+	// A copy that cannot be removed is no reason to let the log itself keep growing.
+	return errors.Join(pruneRotatedLogs(path, now.Add(-keep)), rotateLog(path, now))
+}
+
+func rotateLog(path string, now time.Time) error {
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -61,10 +64,21 @@ func RotateLog(path string, now time.Time, keep time.Duration) error {
 	if _, err := os.Stat(rotated); err == nil {
 		return nil
 	}
+	// Opened before copying, so a log that cannot be emptied is not copied every time this runs.
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 	if err := copyLog(path, rotated); err != nil {
 		return err
 	}
-	return os.Truncate(path, 0)
+	if err := file.Truncate(0); err != nil {
+		// Left behind, the copy would stop the retries, and the next day's would repeat all of it.
+		_ = os.Remove(rotated)
+		return err
+	}
+	return nil
 }
 
 // copyLog goes through a temporary file, so a copy that is cut short never reads as finished.
@@ -79,7 +93,12 @@ func copyLog(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	_, err = io.Copy(out, in)
+	if err == nil {
+		// The original is about to be emptied, so the copy has to be on disk first.
+		err = out.Sync()
+	}
+	if err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return err
@@ -103,18 +122,21 @@ func pruneRotatedLogs(path string, before time.Time) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, entry := range entries {
 		day, ok := strings.CutPrefix(entry.Name(), base+".")
 		if !ok {
 			continue
 		}
+		// A temporary copy here was left by an interrupted rotation, whatever its date.
+		day, abandoned := strings.CutSuffix(day, ".tmp")
 		// Anything else beside the log, such as a backup someone made, is not this code's to remove.
 		date, err := time.ParseInLocation(rotatedLogLayout, day, before.Location())
-		if err == nil && date.Before(before) {
+		if err == nil && (abandoned || date.Before(before)) {
 			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

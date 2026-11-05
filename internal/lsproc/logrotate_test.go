@@ -95,6 +95,84 @@ func TestRotateLogRemovesOnlyOldRotatedCopies(t *testing.T) {
 	}
 }
 
+func TestRotateLogRemovesAbandonedTemporaryCopies(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.log")
+	abandoned := path + ".2026-11-01.tmp"
+	unrelated := path + ".backup.tmp"
+	for _, name := range []string{abandoned, unrelated} {
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := RotateLog(path, rotationDay, rotationKeep); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(abandoned); err == nil {
+		t.Error("abandoned temporary copy is still there")
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Errorf("unrelated file: %v", err)
+	}
+}
+
+func TestRotateLogStillRotatesWhenAnOldCopyCannotBeRemoved(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.log")
+	if err := os.WriteFile(path, []byte("line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory with something in it stands in for a copy that cannot be removed.
+	stuck := path + ".2020-01-01"
+	if err := os.Mkdir(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "keep"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RotateLog(path, rotationDay, rotationKeep); err == nil {
+		t.Error("the failed removal was not reported")
+	}
+
+	if got := readLog(t, path+".2026-11-04"); got != "line\n" {
+		t.Errorf("rotated copy = %q", got)
+	}
+	if got := readLog(t, path); got != "" {
+		t.Errorf("log after rotation = %q", got)
+	}
+}
+
+func TestRotateLogDoesNotCopyALogItCannotEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.log")
+	if err := os.WriteFile(path, []byte("line\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+		_ = f.Close()
+		t.Skip("permissions are not enforced for this user")
+	}
+
+	for day := 0; day < 3; day++ {
+		if err := RotateLog(path, rotationDay.AddDate(0, 0, day), rotationKeep); err == nil {
+			t.Error("the failure was not reported")
+		}
+	}
+
+	matches, err := filepath.Glob(path + ".*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("copies were left behind: %v", matches)
+	}
+	if got := readLog(t, path); got != "line\n" {
+		t.Errorf("log changed to %q", got)
+	}
+}
+
 func TestRotateLogLeavesNothingToDoAlone(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "missing.log")
