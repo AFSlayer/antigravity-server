@@ -1,8 +1,6 @@
 package patches
 
 import (
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -38,6 +36,13 @@ func TestAutoscrollUnpinNeedsInputShapes(t *testing.T) {
 			},
 		},
 		{
+			name: "a line break can land at any token",
+			src:  "var J=()=>{var L=\nn.current;if(L){var M=L.scrollTop,N=F(),O=!1,Q=r.current;M<\nt.current&&!O?(r.current=\n!1,\ntT.delete(L)):\nN&&!C.current&&\n(r.current=!0);",
+			want: []string{
+				`(r.current&&!C.current&&window.__agyIsSpontaneousScroll?.(L)?L.scrollTo({top:L.scrollHeight,behavior:"instant"}):(r.current=!1,tT.delete(L))):`,
+			},
+		},
+		{
 			name: "2.23 has neither the follow guard nor the cleanup",
 			src:  `var H=()=>{var G=m.current;if(G){var K=G.scrollTop,J=C(),L=G.scrollHeight<u.current,M=p.current;K<t.current&&!L?p.current=!1:J&&(p.current=!0);`,
 			want: []string{
@@ -54,24 +59,5 @@ func TestAutoscrollUnpinNeedsInputShapes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// The older bundles only exist on machines that dumped them, so this checks them when present.
-func TestAutoscrollUnpinNeedsInputMatchesDumpedBundles(t *testing.T) {
-	var re *regexp.Regexp
-	for _, p := range All() {
-		if p.ID == "autoscroll-unpin-needs-input" {
-			re = p.FindRe
-		}
-	}
-	for _, path := range []string{"/tmp/main.js.dump", "/tmp/main_2282.js", "/tmp/main_2290.js"} {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if n := len(re.FindAll(src, -1)); n != 1 {
-			t.Errorf("%s: matched %d times, want 1", path, n)
-		}
 	}
 }

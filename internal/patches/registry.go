@@ -89,8 +89,8 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+===void 0\|\|[a-zA-Z0-9_$]+\.isMultiSelect\|\|!document\.hasFocus\(\)\|\|[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)&&[a-zA-Z0-9_$]+!==[a-zA-Z0-9_$]+\.current)(\|\|[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
-	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\.current;if\([a-zA-Z0-9_$]+\)\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<[a-zA-Z0-9_$]+\.current&&![a-zA-Z0-9_$]+\?)(?:\(([a-zA-Z0-9_$]+)\.current=!1,([a-zA-Z0-9_$]+\.delete\([a-zA-Z0-9_$]+\))\)|([a-zA-Z0-9_$]+)\.current=!1):((?:[a-zA-Z0-9_$]+&&!([a-zA-Z0-9_$]+)\.current&&)?)`)
-	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\.current\.startScrollPos\+\s*\(\(([a-zA-Z0-9_$]+)\?\s*[a-zA-Z0-9_$]+\.clientX:\s*([a-zA-Z0-9_$]+)\.clientY\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+)\.current\.maxScrollPos,\s*[a-zA-Z0-9_$]+\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=[a-zA-Z0-9_$]+:\s*[a-zA-Z0-9_$]+\.scrollTop=[a-zA-Z0-9_$]+,`)
+	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*[a-zA-Z0-9_$]+\.current\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*)?)`)
+	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+)\.current\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
@@ -688,8 +688,9 @@ func All() []Patch {
 		// The hook treats any drop in scrollTop as the user scrolling up and stops following the conversation.
 		// Rows remounting can collapse the content for a moment, which clamps scrollTop without anyone touching
 		// the screen, and the scroll event only arrives once the content is back. The hook then stays where the
-		// clamp left it, far above the bottom. A drop with no input is put back instead. The one scroll the app
-		// makes upward, jumping from the navigator, stops following explicitly first.
+		// clamp left it, far above the bottom. A drop right after rows shortened the conversation, with no input, is
+		// put back instead. The app's own upward scrolls come with a key, a focus change or the find bar, and jumping
+		// from the navigator stops following explicitly first.
 		{
 			ID:      "scroll-input-tracker",
 			Desc:    "Record recent scroll input so a position change can be told apart from the user scrolling",
@@ -1941,8 +1942,14 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var VIEWPORT = '[data-testid="autoscroll-viewport"]';
   var SCROLL_TARGETS = VIEWPORT + ',[data-overlay-scrollbar-track],[data-testid="overlay-scrollbar"],' +
     '[data-testid="vertical-scrollbar"],[data-testid="vertical-scrollbar-thumb"]';
-  var SCROLL_KEYS = { ArrowUp: 1, ArrowDown: 1, PageUp: 1, PageDown: 1, Home: 1, End: 1, " ": 1 };
-  var lastRowRemovalAt = -Infinity;
+  var FIND_BAR = '[data-testid="find-bar-match-count"]';
+  // The conversation takes these wherever focus is, including the prompt.
+  var NAV_KEYS = { PageUp: 1, PageDown: 1, Home: 1, End: 1 };
+  // In a text box these type or move the caret instead.
+  var PLAIN_KEYS = { ArrowUp: 1, ArrowDown: 1, " ": 1 };
+  var collapsedViewport = null;
+  var collapsedAt = -Infinity;
+  var lastSeen = new WeakMap();
   var pressed = false;
   window.__agyLastScrollInputAt = -Infinity;
 
@@ -1955,31 +1962,52 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   window.addEventListener("pointerdown", function (e) {
     if (onConversation(e)) { pressed = true; mark(); }
   }, opts);
-  ["pointerup", "pointercancel"].forEach(function (name) {
+  ["pointerup", "pointercancel", "contextmenu", "dragstart", "blur"].forEach(function (name) {
     window.addEventListener(name, function () { pressed = false; }, opts);
   });
   window.addEventListener("pointermove", function () { if (pressed) mark(); }, opts);
   window.addEventListener("keydown", function (e) {
     var t = e.target;
-    if (SCROLL_KEYS[e.key] && !(t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA"))) mark();
+    var editing = t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA");
+    if (NAV_KEYS[e.key] || (PLAIN_KEYS[e.key] && !editing)) mark();
+  }, opts);
+  // Moving focus scrolls the focused row into view.
+  window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
+
+  function remember(el) { lastSeen.set(el, { top: el.scrollTop, height: el.scrollHeight }); }
+  window.addEventListener("scroll", function (e) {
+    var el = e.target;
+    if (el && el.matches && el.matches(VIEWPORT)) remember(el);
   }, opts);
 
-  // Removing rows is what collapses the content and clamps the scroll position. Requiring it keeps other movement
-  // with no pointer input, such as the browser's find-in-page or moving focus, counted as the user's own.
+  // Removing rows is what collapses the content and clamps the scroll position, but only if it shortened the
+  // conversation. Swapping a row for one of the same height happens all the time while a reply streams and says
+  // nothing about the next scroll. Reading the layout here costs little because removals are rare.
   new MutationObserver(function (records) {
+    var checked = null;
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
-      if (records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT)) {
-        lastRowRemovalAt = performance.now();
-        return;
+      var el = records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT);
+      if (!el || el === checked) continue;
+      checked = el;
+      var seen = lastSeen.get(el);
+      if (seen && (el.scrollHeight < seen.height || el.scrollTop < seen.top - 1)) {
+        collapsedViewport = el;
+        collapsedAt = performance.now();
       }
+      remember(el);
     }
   }).observe(document, { childList: true, subtree: true });
 
   // Continues a scrollbar drag from the current position whenever something other than the drag moved it.
   window.__agyDragScrollbar = function (drag, el, horizontal, coord, maxThumbOffset, maxScrollPos) {
     var pos = horizontal ? el.scrollLeft : el.scrollTop;
-    if (drag.lastPos !== undefined && (Math.abs(pos - drag.lastPos) > 1 || maxScrollPos !== drag.lastMax)) {
+    if (drag.lastPos === undefined) {
+      drag.lastPos = drag.startScrollPos;
+      drag.lastCoord = drag.startCoord;
+      drag.lastMax = maxScrollPos;
+    }
+    if (Math.abs(pos - drag.lastPos) > 1 || maxScrollPos !== drag.lastMax) {
       drag.startScrollPos = pos;
       drag.startCoord = drag.lastCoord;
     }
@@ -1992,9 +2020,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   };
 
   window.__agyIsSpontaneousScroll = function (el) {
-    if (!el || el.getAttribute("data-testid") !== "autoscroll-viewport" || pressed) return false;
+    if (!el || el !== collapsedViewport || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    return now - window.__agyLastScrollInputAt >= 1000 && now - lastRowRemovalAt < 500;
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt < 500;
   };
 })();
 </script>`

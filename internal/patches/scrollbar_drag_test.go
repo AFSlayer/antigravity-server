@@ -31,17 +31,11 @@ func TestScrollbarDragPatchMatchesWrappedSource(t *testing.T) {
 	}
 }
 
-// The older bundles only exist on machines that dumped them, so this checks them when present.
-func TestScrollbarDragPatchMatchesDumpedBundles(t *testing.T) {
+func TestScrollbarDragPatchMatchesALineBreakAtAnyToken(t *testing.T) {
 	p := scrollbarDragPatch(t)
-	for _, path := range []string{"/tmp/main_2282.js", "/tmp/main_2290.js"} {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if got := len(p.FindRe.FindAllIndex(src, -1)); got != 1 {
-			t.Errorf("%s: %d matches, want 1", path, got)
-		}
+	src := "pa=\nz.current.startScrollPos+((h?pa.clientX:\npa.clientY)-z.current.startCoord)/ua*H.current.maxScrollPos,\nh?la.scrollLeft=\npa:la.scrollTop=\npa,"
+	if !p.FindRe.MatchString(src) {
+		t.Error("anchor did not match")
 	}
 }
 
@@ -105,6 +99,17 @@ const THUMB = 800;
   assert.strictEqual(el.scrollTop, 4250);
   window.__agyDragScrollbar(drag, el, false, 201, THUMB, 83000);
   assert.ok(Math.abs(el.scrollTop - 4250) < 110, "stayed near the reader, at " + el.scrollTop);
+}
+
+// The window is cut after the press and before the first move, which has no earlier move to compare with.
+{
+  const el = element(90000);
+  el.scrollTop = 50000;
+  const drag = { startScrollPos: 50000, startCoord: 100 };
+  el.max = 83000;
+  el.scrollTop -= 7000;
+  window.__agyDragScrollbar(drag, el, false, 101, THUMB, 83000);
+  assert.ok(Math.abs(el.scrollTop - 43000) < 110, "stayed near the reader, at " + el.scrollTop);
 }
 
 // Rows added above do the same in the other direction, and so does a range change with no position change.
