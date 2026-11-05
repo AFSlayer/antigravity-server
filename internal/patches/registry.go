@@ -689,9 +689,9 @@ func All() []Patch {
 		// The hook treats any drop in scrollTop as the user scrolling up and stops following the conversation.
 		// Rows remounting can collapse the content for a moment, which clamps scrollTop without anyone touching
 		// the screen, and the scroll event only arrives once the content is back. The hook then stays where the
-		// clamp left it, far above the bottom. A drop right after rows shortened the conversation, with no input, is
-		// put back instead. The app's own upward scrolls found so far come with a key, a focus change or the find bar,
-		// and jumping from the navigator stops following explicitly first.
+		// clamp left it, far above the bottom. A drop that removed rows can explain, with no input, is put back instead.
+		// The app's own upward scrolls found so far come with a key, a focus change or the find bar, and jumping from the
+		// navigator stops following explicitly first.
 		{
 			ID:      "scroll-input-tracker",
 			Desc:    "Record recent scroll input so a position change can be told apart from the user scrolling",
@@ -2002,9 +2002,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
 
   // A generous guess at how tall removed content was. A detached node has no layout left to ask, and the guess only
-  // has to tell a status icon from whole rows, which differ by hundreds of times.
+  // has to tell a status icon from whole rows: at most about 630 px for what a reply was seen to remove, and over
+  // 20,000 px for rows the window removed.
   function tallestItCouldBe(node) {
-    if (node.nodeType !== 1) return (node.textContent || "").length * 2;
+    if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
     if (node.matches(MEDIA) || node.querySelector(MEDIA)) return Infinity;
     return (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
   }
@@ -2082,8 +2083,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var collapse = el && collapses.get(el);
     if (!collapse || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Until
-    // then the position stays where the collapse left it, so a scroll that ends anywhere else came from something else.
+    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Nothing
+    // is expected to move the position until then, so a scroll that ends elsewhere is taken to come from something else.
     return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && Math.abs(el.scrollTop - collapse.top) <= 1;
   };
 })();

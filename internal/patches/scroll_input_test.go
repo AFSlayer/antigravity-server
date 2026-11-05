@@ -46,11 +46,11 @@ const viewport = () => {
   fire("scroll", { target: el });
   return el;
 };
-const element = (elements, text, media) => ({
+const element = (elements, text, self, inside) => ({
   nodeType: 1,
   textContent: "x".repeat(text),
-  matches: () => false,
-  querySelector: selector => (media && selector.includes("img") ? {} : null),
+  matches: selector => selector.split(",").includes(self),
+  querySelector: selector => (selector.split(",").includes(inside) ? {} : null),
   getElementsByTagName: () => ({ length: elements }),
 });
 // The sizes seen in the app: a status icon while a reply streams, and rows when the window changes.
@@ -131,22 +131,81 @@ const settle = () => { now += 2000; };
   frame();
   settle();
   el = viewport();
-  remove(el, { nodeType: 8, textContent: null });
+  remove(el, { nodeType: 8, textContent: "x".repeat(5000) });
   el.scrollTop -= 1500;
   fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "a comment has no height");
   frame();
 }
 
-// Media has no size to read in a detached node, so it could explain anything.
+// What the guess comes to, using the largest removal seen during a reply. A fall within it is still put back, which is
+// accepted because it takes a scroll with no input in the same frame.
+for (const [fall, expected] of [[630, true], [631, false]]) {
+  settle();
+  const el = viewport();
+  remove(el, element(11, 27));
+  el.scrollTop -= fall;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "fall of " + fall);
+  frame();
+}
+
+// A shrink explains a fall of the same size, give or take a pixel of rounding.
+for (const [fall, expected] of [[1001, true], [1002, false]]) {
+  settle();
+  const el = viewport();
+  remove(el, ICON);
+  el.scrollHeight -= 1000;
+  el.scrollTop -= fall;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "fall of " + fall);
+  frame();
+}
+
+// Media has no size to read in a detached node, so it could explain anything, removed directly or inside something.
+for (const media of ["img", "video", "canvas", "iframe"]) {
+  for (const node of [element(2, 0, media, null), element(2, 0, null, media)]) {
+    settle();
+    const el = viewport();
+    remove(el, node);
+    el.scrollTop -= 8000;
+    fire("scroll", { target: el });
+    assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, media);
+    frame();
+  }
+}
+
+// What a scroll event reports is what the next fall is measured from, for the position and the height alike.
+{
+  settle();
+  let el = viewport();
+  el.scrollTop = 5000;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "moved before the removal");
+  settle();
+  el = viewport();
+  el.scrollHeight = 20000;
+  fire("scroll", { target: el });
+  remove(el, ICON);
+  el.scrollHeight = 19000;
+  el.scrollTop -= 1000;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "grew before the removal");
+}
+
+// A later collapse replaces an earlier one that has run out.
 {
   settle();
   const el = viewport();
-  remove(el, element(2, 0, true));
-  el.scrollTop -= 8000;
+  collapse(el);
+  now += 3000;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  el.scrollTop = 9000;
   fire("scroll", { target: el });
+  collapse(el);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
-  frame();
 }
 
 // Falling with nothing removed is left to the bundle, which handles the content being short when the event arrives.
@@ -159,15 +218,13 @@ const settle = () => { now += 2000; };
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
-// A scroll that ends away from where the collapse left the position came from something else.
-{
+// A scroll that ends away from where the collapse left the position, either way, came from something else.
+for (const [top, expected] of [[298, false], [299, true], [300, true], [301, true], [302, false]]) {
   settle();
   const el = viewport();
   collapse(el);
-  el.scrollTop = 150;
-  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
-  el.scrollTop = 300;
-  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+  el.scrollTop = top;
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), expected, "at " + top);
 }
 
 // The observer leaves the layout alone: reading it there could clamp the position in a gap between two commits.
@@ -218,6 +275,21 @@ const settle = () => { now += 2000; };
   el.scrollTop = 8999.5;
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false, "rounding");
+  settle();
+  el = viewport();
+  remove(el, ROWS);
+  el.scrollTop = 8998;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true, "more than rounding");
+}
+
+// A conversation that has not scrolled yet has nothing to compare with.
+{
+  settle();
+  const el = { scrollTop: 300, scrollHeight: 1000, matches: () => true, closest: () => el };
+  remove(el, ROWS);
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
 }
 
 // Removals outside a conversation are not looked at.

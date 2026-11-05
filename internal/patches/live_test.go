@@ -61,7 +61,8 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Errorf("the bundle builds its RPC socket in an unexpected way (%d matches); connection-prewarm may stop working", n)
 	}
 
-	// scroll-input-tracker finds these by name, and nothing else would notice them going away.
+	// scroll-input-tracker finds these by name, and nothing else would notice them going away. Its scrollbar selectors
+	// are not listed because older bundles have no overlay scrollbar.
 	for _, name := range []string{`"aria-label":"Find"`, `autoscroll-viewport`} {
 		if !bytes.Contains(mainJS, []byte(name)) {
 			t.Errorf("the bundle no longer has %s; scroll-input-tracker may stop working", name)
