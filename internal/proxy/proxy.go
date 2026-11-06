@@ -143,6 +143,9 @@ func (p *Proxy) Handler() http.Handler {
 
 		// Fast-path: Serve pre-warmed / cached main.js immediately from memory (0ms latency)
 		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			if p.redirectStaleBundle(w, r) {
+				return
+			}
 			cached, tag := p.cachedBundle()
 			if cached != nil {
 				setBundleValidators(w.Header(), tag)
@@ -366,6 +369,22 @@ func transportPatchMissing(report patches.Report) bool {
 		}
 	}
 	return false
+}
+
+// redirectStaleBundle answers a bundle URL from an earlier deploy with a redirect
+// to the current one. The HTML only ever names the current key, so an old key comes
+// from the browser replaying what it loaded last time. iPhones do this alongside the
+// real request after a deploy, and sending the whole bundle to both means two
+// multi-megabyte downloads while the page is still blank.
+func (p *Proxy) redirectStaleBundle(w http.ResponseWriter, r *http.Request) bool {
+	current := p.opts.Patch.CacheKey
+	requested := r.URL.Query().Get("agy")
+	if current == "" || requested == "" || requested == current {
+		return false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, "/main.js?agy="+current, http.StatusFound)
+	return true
 }
 
 func (p *Proxy) cachedBundle() ([]byte, string) {
