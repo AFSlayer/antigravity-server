@@ -79,6 +79,17 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
+	// mobile-back-clears-section also tells the titlebar's home hook to treat a selected project as away from home, so
+	// the back button shows there. That part is optional for older bundles and would fail without a word, so check
+	// that it matches and that the hook it flags is the one mobile-new-convo-header rewrites.
+	if header := mobileNewConvoHeaderRe.FindSubmatch(mainJS); header == nil {
+		t.Error("mobile-new-convo-header: the home hook was not found")
+	} else if back := mobileBackClearsSectionRe.FindSubmatch(mainJS); back == nil || len(back[1]) == 0 {
+		t.Error("mobile-back-clears-section: the titlebar around the back button was not found; the back button will not show for a selected project")
+	} else if hook := regexp.MustCompile(`b=([a-zA-Z0-9_$]+)\($`).FindSubmatch(back[1]); hook == nil || !bytes.Equal(hook[1], header[1]) {
+		t.Errorf("mobile-back-clears-section: the titlebar flags %q, not the home hook %q", hook, header[1])
+	}
+
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
 	opts.CacheKey = CacheKey("test", opts)
 
