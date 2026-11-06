@@ -32,6 +32,8 @@ global.MutationObserver = class { constructor(fn) { observer = fn; } observe() {
 global.requestAnimationFrame = fn => { frames.push(fn); };
 global.setTimeout = fn => { frames.push(fn); };
 Object.defineProperty(global, "performance", { value: { now: () => now } });
+let coarse = false;
+global.matchMedia = () => ({ matches: coarse });
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
@@ -851,6 +853,87 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   el.scrollTop = -30000;
   fire("scroll", { target: el });
   assert.strictEqual(el.scrollTop, 9000);
+}
+
+// On a touch screen, a bounce at the bottom that ends tens of thousands of pixels up, where the bottom was before the
+// conversation grew, goes back to the bottom, also when the bounce lands there again.
+{
+  settle();
+  coarse = true;
+  const tall = () => {
+    const el = viewport();
+    el.clientHeight = 666;
+    el.scrollHeight = 103856;
+    el.scrollTop = 103190;
+    fire("scroll", { target: el });
+    now += 16;
+    return el;
+  };
+  let el = tall();
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190);
+  now += 100;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "again within the second");
+
+  // Script asking for that spot, or for any spot by bringing a row into view, is the app's own doing.
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 39242);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "asked for that spot");
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(null, null);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "a row brought into view");
+
+  // A pin to the bottom in the same frame does not cover a jump somewhere else, and a request ages out.
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 1e9);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "asked for the bottom");
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 39242);
+  now += 151;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "asked too long ago");
+
+  // The conversation getting that much shorter explains the move, and smaller moves are left alone.
+  settle();
+  el = tall();
+  el.scrollHeight = 39908;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "shorter by as much");
+  for (const [to, want] of [[103190 - 31000, 103190 - 31000], [103190 - 32000, 103190]]) {
+    settle();
+    el = tall();
+    el.scrollTop = to;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, want, "moved " + (103190 - to));
+  }
+  settle();
+  el = viewport();
+  el.scrollTop = 4900;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 4900, "under 5000 px");
+
+  // Away from touch screens the browser moves the conversation by itself.
+  coarse = false;
+  settle();
+  el = tall();
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "not a touch screen");
 }
 
 // The ordinary overscroll of a finger or a fling stays alone.

@@ -1979,6 +1979,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var FLUNG_ABOVE_TOP = -1000;
   var FLING_HOLD_MS = 1000;
   var NEAR_BOTTOM = 100;
+  var JUMP_MIN = 5000;
+  var JUMP_SHARE = 0.3;
+  var SCRIPT_GRACE_MS = 150;
   var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
@@ -2054,17 +2057,17 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     }
     lastSeen.set(el, { top: top, height: height });
   }
-  // An iPhone has been seen putting a long conversation tens of thousands of pixels above its top right after a
-  // re-render, and its bounce then carries the reader all the way up. A finger overscrolls by a few hundred at most
-  // and script cannot set a negative position, so this is not the reader. Setting the position may not end the bounce,
-  // so it is held until the bounce has had time to finish. A reader at the bottom stays at the bottom, whatever the
-  // re-render did to the height. Anyone else goes back to the position they had.
+  // An iPhone has been seen moving a long conversation that had just re-rendered, with nothing asking it to. Once it put
+  // the conversation tens of thousands of pixels above its top, and its bounce carried the reader to the top. Once a
+  // bounce at the bottom ended 64,000 px up, at what had been the bottom before the conversation grew. A finger moves
+  // a few hundred pixels at a time and script cannot set a negative position, so neither is the reader. The position
+  // is held until the bounce has had time to finish. A reader at the bottom stays at the bottom, whatever the re-render
+  // did to the height. Anyone else goes back to the position they had.
   //
-  // The bounce only ever pulls toward the top, so a position further down than the one set here, and further down than
-  // the last one set, came from something else, such as the reader or the button that jumps to the latest message, and
-  // ends the hold. So does
-  // input on the conversation. A hold that ends with the bounce still going leaves no position to go back to, so the
-  // rest of that bounce is not held again.
+  // The bounce only pulls toward where it was going, so a position further down than the one set here, and further
+  // down than the last one set, came from something else, such as the reader or the button that jumps to the latest
+  // message, and ends the hold. So does input on the conversation. A hold that ends with the bounce still going above
+  // the top leaves no position to go back to, so the rest of that bounce is not held again.
   function holdAgainstFling(el) {
     var now = performance.now();
     var hold = holds.get(el);
@@ -2080,7 +2083,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       return true;
     }
     var seen = lastSeen.get(el);
-    if (pressed || !seen || seen.top < 0 || el.scrollTop >= FLUNG_ABOVE_TOP) return false;
+    if (pressed || !seen || seen.top < 0) return false;
+    if (el.scrollTop >= FLUNG_ABOVE_TOP && !unaskedJump(el, seen, now)) return false;
     // A collapse still being undone left a clamped position behind, and the reader belongs where it started.
     var collapse = collapses.get(el);
     if (collapse && !collapse.over) seen = { top: collapse.from, height: collapse.fromHeight };
@@ -2089,8 +2093,64 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
     holds.set(el, hold);
     setHeld(el, hold, atBottom ? el.scrollHeight - hold.gap : hold.top);
-    try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: flungTo, back: atBottom ? "bottom" : seen.top } })); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: flungTo, back: atBottom ? "bottom" : seen.top, from: seen.top } })); } catch (e) {}
     return true;
+  }
+
+  // A jump across a large part of the conversation in one event, which its height does not explain and no script asked
+  // for. Only on touch screens: a desktop browser moves the conversation by itself for find-in-page and its keys.
+  function unaskedJump(el, seen, now) {
+    if (!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches)) return false;
+    var top = el.scrollTop;
+    var height = el.scrollHeight;
+    var jump = Math.abs(top - seen.top);
+    if (jump < JUMP_MIN || jump < JUMP_SHARE * Math.max(seen.height, height)) return false;
+    if (Math.abs(height - seen.height) * 2 >= jump) return false;
+    return !askedFor(el, top, now);
+  }
+
+  // Script moving the conversation is the app's own doing. Where it asked to go is kept, because a pin to the bottom
+  // can land in the same frame as a jump somewhere else. Scrolling a row into view moves whatever contains it.
+  var scripted = null;
+  function askedFor(el, top, now) {
+    if (!scripted || now - scripted.at > SCRIPT_GRACE_MS) return false;
+    if (scripted.el === null || scripted.top === null) return true;
+    if (scripted.el !== el) return false;
+    var wanted = Math.max(0, Math.min(scripted.top, el.scrollHeight - el.clientHeight));
+    return Math.abs(wanted - top) <= el.clientHeight;
+  }
+  window.__agyScrolledByScript = function (el, top) {
+    scripted = { at: performance.now(), el: el, top: typeof top === "number" && isFinite(top) ? top : null };
+  };
+  if (typeof Element !== "undefined") {
+    var topSetter = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    if (topSetter && topSetter.set && topSetter.configurable) {
+      Object.defineProperty(Element.prototype, "scrollTop", {
+        configurable: true,
+        enumerable: topSetter.enumerable,
+        get: topSetter.get,
+        set: function (v) {
+          window.__agyScrolledByScript(this, Number(v));
+          topSetter.set.call(this, v);
+        }
+      });
+    }
+    ["scrollTo", "scroll"].forEach(function (name) {
+      var native = Element.prototype[name];
+      if (typeof native !== "function") return;
+      Element.prototype[name] = function (a, b) {
+        window.__agyScrolledByScript(this, a && typeof a === "object" ? a.top : b);
+        return native.apply(this, arguments);
+      };
+    });
+    ["scrollBy", "scrollIntoView", "scrollIntoViewIfNeeded"].forEach(function (name) {
+      var native = Element.prototype[name];
+      if (typeof native !== "function") return;
+      Element.prototype[name] = function () {
+        window.__agyScrolledByScript(null, null);
+        return native.apply(this, arguments);
+      };
+    });
   }
 
   // The position a hold sets is the last one seen, so a hold that runs out with no event after it leaves that behind.
