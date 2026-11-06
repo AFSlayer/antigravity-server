@@ -594,10 +594,11 @@ for (const end of ["pointerup", "pointercancel", "contextmenu", "dragstart", "bl
   fire("pointerup", { target: body });
 }
 
-// A position far above the top goes back to where it was, measured from the bottom, and stays for the bounce.
+// A reader at the bottom flung far above the top goes back to the bottom, and stays there for the bounce.
 {
   settle();
   const el = viewport();
+  el.clientHeight = 1000;
   el.scrollTop = -34601;
   fire("scroll", { target: el });
   assert.strictEqual(el.scrollTop, 9000);
@@ -613,6 +614,54 @@ for (const end of ["pointerup", "pointercancel", "contextmenu", "dragstart", "bl
   now += 800;
   fire("scroll", { target: el });
   assert.strictEqual(el.scrollTop, 0, "released once the bounce has had time to finish");
+}
+
+// A reader further up goes back to the position they had, whatever the height does.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 500;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+}
+
+// The frame after a removal can be the first to see the fling, and it holds just the same.
+{
+  settle();
+  const el = viewport();
+  remove(el, ROWS);
+  el.scrollTop = -34601;
+  frame();
+  assert.strictEqual(el.scrollTop, 9000);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// A hold that ran out with no event to end it does not hide the next collapse.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 5000;
+  collapse(el);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+}
+
+// From an overscroll already under way there is no position to go back to.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -300;
+  fire("scroll", { target: el });
+  el.scrollTop = -1500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -1500);
 }
 
 // Rows removed during the bounce are not taken for a collapse, then or once it is over.

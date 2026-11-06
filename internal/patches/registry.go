@@ -1978,6 +1978,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var holds = new WeakMap();
   var FLUNG_ABOVE_TOP = -1000;
   var FLING_HOLD_MS = 1000;
+  var NEAR_BOTTOM = 100;
   var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
@@ -2030,8 +2031,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // time anything can look, so what was removed counts as well as the height that can be seen. A fall neither explains
   // is a scroll with no input that happened to land next to a removal, such as the browser's find-in-page.
   function compare(el) {
-    // While a fling is held the position is the hold's, not something to learn from.
-    if (holds.has(el)) {
+    // A fling, held or not, is not a position to learn from. The frame after a removal can be the first to see one.
+    if (holdAgainstFling(el) || el.scrollTop < FLUNG_ABOVE_TOP) {
       removedHeight.delete(el);
       return;
     }
@@ -2056,29 +2057,30 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // An iPhone has been seen putting a long conversation tens of thousands of pixels above its top right after a
   // re-render, and its bounce then carries the reader all the way up. A finger overscrolls by a few hundred at most
   // and script cannot set a negative position, so this is not the reader. Setting the position may not end the bounce,
-  // so it is held, at the same distance from the bottom, until the reader touches the conversation or the bounce has
-  // had time to finish.
+  // so it is held until input on the conversation or until the bounce has had time to finish. A reader at the bottom
+  // stays at the bottom, whatever the re-render did to the height. Anyone else goes back to the position they had.
   function holdAgainstFling(el) {
     var now = performance.now();
     var hold = holds.get(el);
-    var seen = lastSeen.get(el);
-    if (!hold && !pressed && seen && seen.top >= 0 && el.scrollTop < FLUNG_ABOVE_TOP) {
-      hold = { gap: seen.height - seen.top, at: now };
-      holds.set(el, hold);
-    }
-    if (!hold) return false;
-    if (pressed || window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS) {
+    if (hold && (window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS)) {
       holds.delete(el);
       return false;
     }
-    el.scrollTop = el.scrollHeight - hold.gap;
+    var seen = lastSeen.get(el);
+    if (!hold && !pressed && seen && seen.top >= 0 && el.scrollTop < FLUNG_ABOVE_TOP) {
+      var atBottom = seen.height - seen.top - el.clientHeight <= NEAR_BOTTOM;
+      hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
+      holds.set(el, hold);
+    }
+    if (!hold) return false;
+    el.scrollTop = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
     return true;
   }
 
   // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
   window.addEventListener("scroll", function (e) {
     var el = e.target;
-    if (el && el.matches && el.matches(VIEWPORT) && !holdAgainstFling(el)) compare(el);
+    if (el && el.matches && el.matches(VIEWPORT)) compare(el);
   }, opts);
 
   // Removing rows is what collapses the content and clamps the scroll position, but only if it shortened the
@@ -2287,11 +2289,12 @@ const mobileDebug = `<script id="agy-debug">
   var last = "";
 
   function push(ev) {
+    // Safari drops a keepalive body over 64KB, so stay well inside one request. A full episode also skips the
+    // state, which reads the whole page's layout.
+    if (lines.length > 120) return;
     var s = state();
     if (ev === "raf" && s === last) return;
     last = s;
-    // Safari drops a keepalive body over 64KB, so stay well inside one request.
-    if (lines.length > 120) return;
     lines.push("  t=" + pad(n(performance.now() - startedAt), 5) + " ev=" + padR(ev, 13) + " " + s);
   }
 
@@ -2370,7 +2373,9 @@ const mobileDebug = `<script id="agy-debug">
     // A row that stayed on screen shows what the reader saw, whatever the scroll position did to keep it there.
     if (anchor && anchor.isConnected && el === prevEl) {
       var moved = anchorTop - anchor.getBoundingClientRect().top;
-      if (idleMs > 3000 && Math.abs(moved) > 40) trigger = "visual-shift";
+      // Rows rise past a reader who is following a reply, and that is the point of following it.
+      var following = prevHeight - prevTop - el.clientHeight <= 50;
+      if (idleMs > 3000 && Math.abs(moved) > 40 && !following) trigger = "visual-shift";
       else if (idleMs <= 3000 && lastWheelDir && moved * lastWheelDir < -40) trigger = "visual-back";
     }
     // Momentum carries a flick for a few seconds after the finger lifts, so only longer quiet counts as no input.
@@ -2379,8 +2384,8 @@ const mobileDebug = `<script id="agy-debug">
       else if (Math.abs(top - prevTop) <= 4 && Math.abs(height - prevHeight) > 80) trigger = "content-shift";
     }
     // Too far for one sample to be a finger on the conversation, so this is recorded even right after a touch, with
-    // how long ago that touch was.
-    if (!trigger && el === prevEl && (Math.abs(top - prevTop) > 3000 || top < -200)) trigger = "jump+" + Math.round(idleMs);
+    // how long ago that touch was. The position bound is the one the scroll tracker holds against.
+    if (!trigger && el === prevEl && (Math.abs(top - prevTop) > 3000 || top < -1000)) trigger = "jump+" + Math.round(idleMs);
     if (trigger) begin(trigger, 1500);
     var hit = document.elementFromPoint(rect.left + rect.width / 2 - 100, rect.top + rect.height / 2);
     anchor = hit && el.contains(hit) ? hit : null;
