@@ -63,7 +63,7 @@ var (
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
-	mobileBackClearsSectionRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
+	mobileBackClearsSectionRe         = regexp.MustCompile(`(?:(function [a-zA-Z0-9_$]+\(\)\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
 	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,variant:"sidebar",surface:)([a-zA-Z0-9_$]+)((?:,scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+)?,subtitleContext:[a-zA-Z0-9_$]+,onToggleCollapseSection:[a-zA-Z0-9_$]+,onToggleSectionHeader:[a-zA-Z0-9_$]+,onTogglePagination:[a-zA-Z0-9_$]+,customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
@@ -250,7 +250,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoHeaderRe,
-			Replace: `$1=()=>$2({select:a=>a.location.pathname==="/"&&!a.location.search?.section&&!a.location.search?.project})`,
+			Replace: `$1=(_agyTb)=>$2({select:a=>a.location.pathname==="/"&&(!_agyTb||(!a.location.search?.section&&!a.location.search?.project))})`,
 		},
 		{
 			ID:      "mobile-back-clears-section",
@@ -259,7 +259,14 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileBackClearsSectionRe,
-			Replace: `${1}${2}({clearSection:!0,clearProject:!0})${3}`,
+			Replace: `${1}!0${2}${3}${4}({clearSection:!0,clearProject:!0})${5}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				prefix := ""
+				if len(g[1]) > 0 {
+					prefix = string(g[1]) + `!0` + string(g[2])
+				}
+				return prefix + string(g[3]) + string(g[4]) + `({clearSection:!0,clearProject:!0})` + string(g[5])
+			},
 		},
 		{
 			ID:      "mobile-new-conversation-button",
@@ -1860,7 +1867,9 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     lastScrollTop = sc.scrollTop;
     lastScrollHeight = sc.scrollHeight;
     // Track if user actively scrolled near top (< 120px) after initial mount
-    if (sc.scrollTop <= 120 && performance.now() - convoNavigatedAt >= 2500) {
+    // Momentum can carry a flick for a few seconds after the finger lifts.
+    if (sc.scrollTop <= 120 && performance.now() - convoNavigatedAt >= 2500 &&
+        performance.now() - (window.__agyLastScrollInputAt || 0) < 4000) {
       userScrolledNearTop = true;
     } else if (sc.scrollTop > 150) {
       userScrolledNearTop = false;

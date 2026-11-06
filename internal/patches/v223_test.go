@@ -764,10 +764,36 @@ func TestAntigravity229PatchShapes(t *testing.T) {
 		checkSyntax(t, "mobile-new-convo-view-229", got)
 	})
 
+	// Only the mobile titlebar asks the header hook to treat a selected project as away from home. Its other callers,
+	// such as the home view and the new conversation route, keep the plain answer, or a project's new conversation
+	// shows nothing on a wide screen.
+	t.Run("mobile-back-clears-section-titlebar-only", func(t *testing.T) {
+		v229 := `function hCc(){var a=hk(),b=pG(),c=kG(),{product:d}=iJ(),f=qW(),g=a.get("settingsFeature"),h=zE(),k=yE(),l=Pl(),m=OX(),n=OG(),p=bCc(),r=A.useCallback(()=>{n&&l(Vr({treeId:n,isOpen:!m}))},[l,n,m]),u=a.get("remoteControlInstanceSelector"),{runtimeEnvironment:t}=nk(),v=a.get("environmentFeature"),w=a.get("remoteControlReload");a=a.get("avatarSpacer")??!1;return A.createElement("div",{className:` + "`" + `flex items-center justify-between w-full pl-2 gap-2 border-b border-border ${a?"":"pr-4"}` + "`" + `,style:{height:"calc(48px + env(safe-area-inset-top))",
+paddingTop:"env(safe-area-inset-top)"}},A.createElement("div",{className:"flex items-center min-w-0 flex-1 gap-1"},b?A.createElement(A.Fragment,null,d.isGoogleInternal?A.createElement("span",{className:"text-sm font-medium text-foreground px-1"},"Jetski"):A.createElement(qAa,{className:"!h-[18px] !w-[18px] shrink-0 mx-1"}),u?A.createElement("div",{className:"min-w-0 flex-1 max-w-[220px]"},A.createElement(u)):t.isInIframe&&v&&A.createElement(fCc,{environmentFeature:v})):A.createElement(A.Fragment,
+null,A.createElement(YT,{iconName:"arrow_back",onClick:()=>{c()},"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"})`
+		got := applyOnly(t, "mobile-back-clears-section", v229, Options{MobileUX: true})
+		for _, want := range []string{
+			`function hCc(){var a=hk(),b=pG(!0),c=kG(),`,
+			`onClick:()=>c({clearSection:!0,clearProject:!0}),"aria-label":"Back to home"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.29 shape missing %q", want)
+			}
+		}
+		if strings.Count(got, "(!0)") != 1 {
+			t.Errorf("only the titlebar's hook call may change, got %d", strings.Count(got, "(!0)"))
+		}
+
+		older := `A.createElement(YT,{iconName:"arrow_back",onClick:()=>{c()},"aria-label":"Back to home",dataTestId:"mobile-back-to-home",size:"icon-touch"})`
+		if got := applyOnly(t, "mobile-back-clears-section", older, Options{MobileUX: true}); !strings.Contains(got, `onClick:()=>c({clearSection:!0,clearProject:!0}),"aria-label"`) || strings.Contains(got, "(!0)") {
+			t.Errorf("a back button with no titlebar function around it must still clear the section, and change nothing else:\n%s", got)
+		}
+	})
+
 	t.Run("mobile-new-convo-header", func(t *testing.T) {
 		v229 := `var xHc=()=>hG({select:a=>a.location.pathname==="/"});`
 		got := applyOnly(t, "mobile-new-convo-header", v229, Options{MobileUX: true})
-		if want := `xHc=()=>hG({select:a=>a.location.pathname==="/"&&!a.location.search?.section&&!a.location.search?.project})`; !strings.Contains(got, want) {
+		if want := `xHc=(_agyTb)=>hG({select:a=>a.location.pathname==="/"&&(!_agyTb||(!a.location.search?.section&&!a.location.search?.project))})`; !strings.Contains(got, want) {
 			t.Errorf("2.29 shape missing %q in:\n%s", want, got)
 		}
 		checkSyntax(t, "mobile-new-convo-header-229", got)
