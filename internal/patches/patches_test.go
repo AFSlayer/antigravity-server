@@ -322,6 +322,7 @@ func TestHTMLInjection(t *testing.T) {
 		`src="/main.js?agy=testkey"`,
 		`div[data-testid="user-input-step"] div.bg-card:has(.user-input-buttons-container)`,
 		`div[data-testid="user-input-step"] div.bg-card:has([data-testid="queued-decorators"])`,
+		`[data-testid="user-message-actions"] {`,
 		`div[data-testid="conversation-view"]`,
 		`div[data-testid="mobile-layout"]`,
 		`div.agy-shell`,

@@ -958,6 +958,14 @@ div.user-input-buttons-container > * {
   align-items: center !important;
   flex-shrink: 0 !important;
 }
+/* Bubble-style user messages keep their actions (Undo, Copy) in a row of their own that shows only on hover, which a
+   touch screen does not have. It keeps its space while hidden, so showing it moves nothing. */
+@media (pointer: coarse) {
+  [data-testid="user-message-actions"] {
+    opacity: 0.85 !important;
+    pointer-events: auto !important;
+  }
+}
 
 /* Tablet (iPad) and desktop (screens > 768px): Ensure sidebar padding to prevent truncation */
 @media (min-width: 769px) {
