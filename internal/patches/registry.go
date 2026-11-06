@@ -245,7 +245,7 @@ func All() []Patch {
 		// and ensure back navigation always clears the active section.
 		{
 			ID:      "mobile-new-convo-header",
-			Desc:    "Show the back button in the titlebar when in new conversation mode and clear section on back",
+			Desc:    "Let the home hook treat a selected project as away from home when asked to, for the mobile titlebar",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
@@ -254,7 +254,7 @@ func All() []Patch {
 		},
 		{
 			ID:      "mobile-back-clears-section",
-			Desc:    "Ensure the mobile back button always clears the selected section to return to the root conversation list",
+			Desc:    "Show the mobile titlebar's back button for a selected project, and make it clear the project to return to the conversation list",
 			Target:  MainJS,
 			Kind:    Regexp,
 			Enabled: mobile,
@@ -1867,9 +1867,12 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     lastScrollTop = sc.scrollTop;
     lastScrollHeight = sc.scrollHeight;
     // Track if user actively scrolled near top (< 120px) after initial mount
-    // Momentum can carry a flick for a few seconds after the finger lifts.
-    if (sc.scrollTop <= 120 && performance.now() - convoNavigatedAt >= 2500 &&
-        performance.now() - (window.__agyLastScrollInputAt || 0) < 4000) {
+    // Only the reader's own scrolling counts, including momentum for a few seconds after the finger lifts. A position
+    // the app or the browser set does not, nor one above the top. Without the scroll tracker there is no input to go
+    // by, so any position near the top counts, as before.
+    var lastInput = window.__agyLastScrollInputAt;
+    if (sc.scrollTop >= 0 && sc.scrollTop <= 120 && performance.now() - convoNavigatedAt >= 2500 &&
+        (lastInput === undefined || performance.now() - lastInput < 4000)) {
       userScrolledNearTop = true;
     } else if (sc.scrollTop > 150) {
       userScrolledNearTop = false;
