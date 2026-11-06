@@ -2049,7 +2049,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (seen && removed !== undefined) {
       var drop = seen.top - top;
       if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
-        collapses.set(el, { at: performance.now(), top: top, from: seen.top });
+        collapses.set(el, { at: performance.now(), top: top, from: seen.top, fromHeight: seen.height });
       }
     }
     lastSeen.set(el, { top: top, height: height });
@@ -2060,8 +2060,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // so it is held until the bounce has had time to finish. A reader at the bottom stays at the bottom, whatever the
   // re-render did to the height. Anyone else goes back to the position they had.
   //
-  // The bounce only ever pulls toward the top, so a position below it, other than the one set here, came from
-  // something else, such as the reader or the button that jumps to the latest message, and ends the hold. So does
+  // The bounce only ever pulls toward the top, so a position further down than the one set here, and further down than
+  // the last one set, came from something else, such as the reader or the button that jumps to the latest message, and
+  // ends the hold. So does
   // input on the conversation. A hold that ends with the bounce still going leaves no position to go back to, so the
   // rest of that bounce is not held again.
   function holdAgainstFling(el) {
@@ -2069,25 +2070,34 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var hold = holds.get(el);
     if (hold) {
       var target = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
-      var movedOn = el.scrollTop > 0 && Math.abs(el.scrollTop - target) > 1 && Math.abs(el.scrollTop - hold.last) > 1;
+      var movedOn = el.scrollTop > target + 1 && el.scrollTop > hold.last + 1;
       if (movedOn || window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS) {
         holds.delete(el);
         if (el.scrollTop < 0) lastSeen.delete(el);
         return false;
       }
-      el.scrollTop = target;
-      hold.last = el.scrollTop;
+      setHeld(el, hold, target);
       return true;
     }
     var seen = lastSeen.get(el);
     if (pressed || !seen || seen.top < 0 || el.scrollTop >= FLUNG_ABOVE_TOP) return false;
+    // A collapse still being undone left a clamped position behind, and the reader belongs where it started.
+    var collapse = collapses.get(el);
+    if (collapse && !collapse.over) seen = { top: collapse.from, height: collapse.fromHeight };
+    var flungTo = el.scrollTop;
     var atBottom = seen.height - seen.top - el.clientHeight <= NEAR_BOTTOM;
     hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
     holds.set(el, hold);
-    try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: el.scrollTop, back: atBottom ? "bottom" : seen.top } })); } catch (e) {}
-    el.scrollTop = atBottom ? el.scrollHeight - hold.gap : hold.top;
-    hold.last = el.scrollTop;
+    setHeld(el, hold, atBottom ? el.scrollHeight - hold.gap : hold.top);
+    try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: flungTo, back: atBottom ? "bottom" : seen.top } })); } catch (e) {}
     return true;
+  }
+
+  // The position a hold sets is the last one seen, so a hold that runs out with no event after it leaves that behind.
+  function setHeld(el, hold, top) {
+    el.scrollTop = top;
+    hold.last = el.scrollTop;
+    lastSeen.set(el, { top: hold.last, height: el.scrollHeight });
   }
 
   // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.

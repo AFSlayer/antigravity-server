@@ -765,6 +765,58 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   }
 }
 
+// A bounce that keeps pulling up from the position just set is still the bounce.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 500;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  for (const top of [6000, 2000, 20]) {
+    now += 16;
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, 9000, "pulled up to " + top);
+  }
+}
+
+// A fling right after a collapse goes back to where the reader was before it, not to where it left them.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 600;
+  el.scrollTop = 9400;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  el.scrollHeight = 2000;
+  el.scrollTop = 0;
+  frame();
+  el.scrollHeight = 82650;
+  el.scrollTop = -34601;
+  now += 50;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 82050);
+}
+
+// A hold that ran out with no event after it leaves its own position as the last one seen. Otherwise a re-render that
+// shortened the conversation looks, at the next small removal, like a collapse of that size.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 1000;
+  el.scrollHeight = 12000;
+  el.scrollTop = 11000;
+  fire("scroll", { target: el });
+  el.scrollHeight = 10000;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 5000;
+  remove(el, ICON);
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
 // Something else moving the conversation, such as the jump to the latest message, ends the hold. A fling after
 // that is a new one, back to where that left the reader.
 {
