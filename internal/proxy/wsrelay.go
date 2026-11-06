@@ -22,11 +22,14 @@ import (
 const relayPath = "/connect-websocket"
 
 // Read limits per direction. The language server sends a whole conversation as
-// one JSON message, which reaches a couple of megabytes for a long one, and the
-// library's default limit of 32 KiB would cut it off. Requests from the browser
-// are small RPC calls, so that direction gets a much lower ceiling.
+// one JSON message. That is a couple of megabytes for a long one and has passed
+// 64 MiB with its sub-agents loaded, and a socket closed over the limit reconnects
+// and hits it again, so the browser never gets past its spinner. The relay holds a
+// whole message and its compressed copy at once, several times its size, so the
+// ceiling stays at a size this has been seen to need with room to spare. Requests
+// from the browser are small RPC calls, so that direction gets a much lower ceiling.
 const (
-	upstreamReadLimit = 64 << 20
+	upstreamReadLimit = 256 << 20
 	clientReadLimit   = 16 << 20
 )
 
@@ -90,10 +93,11 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	var lastActivity atomic.Pointer[time.Time]
 	now := time.Now()
 	lastActivity.Store(&now)
-	recordActivity := func() {
+	recordActivity := func(int) {
 		t := time.Now()
 		lastActivity.Store(&t)
 	}
+	var stats relayStats
 
 	// result names the end that outlived the failure, so it can be told how the
 	// connection ended.
@@ -111,7 +115,10 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 		done <- result{err, upstream}
 	}()
 	go func() {
-		writeFailed, err := pump(ctx, client, upstream, recordActivity)
+		writeFailed, err := pump(ctx, client, upstream, func(size int) {
+			recordActivity(size)
+			stats.add(size, started)
+		})
 		if writeFailed {
 			done <- result{err, upstream}
 			return
@@ -134,7 +141,40 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	if code == websocket.StatusInternalError {
 		log.Printf("[proxy] websocket relay closed after %s: %v", time.Since(started).Round(time.Millisecond), res.err)
 	}
+	if p.opts.Patch.Debug {
+		log.Printf("[proxy] websocket closed after %s with %v: %s", time.Since(started).Round(time.Millisecond), code, stats.String())
+	}
 	_ = res.peer.Close(code, reason)
+}
+
+// relayStats records what the language server sent over one socket. Messages reach
+// neither nginx's log nor the proxy's, so this is the only record of a socket that
+// stalled, and it is only kept with AGY_DEBUG.
+type relayStats struct {
+	messages, bytes, largest, firstNanos atomic.Int64
+}
+
+// add counts a message read from the language server. A negative size is the
+// write of that message finishing, not a message.
+func (s *relayStats) add(size int, started time.Time) {
+	if size < 0 {
+		return
+	}
+	if s.messages.Add(1) == 1 {
+		s.firstNanos.Store(int64(time.Since(started)))
+	}
+	s.bytes.Add(int64(size))
+	if int64(size) > s.largest.Load() {
+		s.largest.Store(int64(size))
+	}
+}
+
+func (s *relayStats) String() string {
+	first := "none"
+	if s.messages.Load() > 0 {
+		first = "after " + time.Duration(s.firstNanos.Load()).Round(time.Millisecond).String()
+	}
+	return fmt.Sprintf("%d messages, %d bytes, largest %d, first %s", s.messages.Load(), s.bytes.Load(), s.largest.Load(), first)
 }
 
 // pingInterval and pingTimeout bound how long a browser that vanished without a
@@ -254,15 +294,16 @@ func truncateReason(s string) string {
 // pump copies whole messages from src to dst, preserving their text or binary
 // type, until either side fails or ctx is canceled. writeFailed tells whether
 // the failure was on dst, in which case src is still healthy.
-// onActivity is invoked whenever a message is read or written.
-func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func()) (writeFailed bool, err error) {
+// onActivity is invoked with the message size when one is read, and with -1 when
+// its write finishes.
+func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func(size int)) (writeFailed bool, err error) {
 	for {
 		typ, data, err := src.Read(ctx)
 		if err != nil {
 			return false, err
 		}
 		if onActivity != nil {
-			onActivity()
+			onActivity(len(data))
 		}
 		wctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
 		err = dst.Write(wctx, typ, data)
@@ -271,7 +312,7 @@ func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func()) (wri
 			return true, err
 		}
 		if onActivity != nil {
-			onActivity()
+			onActivity(-1)
 		}
 	}
 }

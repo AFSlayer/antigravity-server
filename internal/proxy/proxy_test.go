@@ -2,17 +2,20 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -261,6 +264,103 @@ func TestProxyRevalidatesBundleWithETagAndNeverCachesHTML(t *testing.T) {
 	html := get(t, front.URL, "/", "text/html")
 	if html.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("HTML must not be cached, got %q", html.Header.Get("Cache-Control"))
+	}
+}
+
+func noRedirects(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+// After a deploy an iPhone also asks for the bundle URL it loaded last time, and
+// that request must not cost a second copy of the bundle.
+func TestProxyRedirectsStaleBundleKeyToCurrent(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+	client := &http.Client{CheckRedirect: noRedirects}
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		req, err := http.NewRequest(method, front.URL+"/main.js?agy=old", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/main.js?agy=k1" {
+			t.Errorf("%s stale key: want redirect to the current key, got %d %q", method, resp.StatusCode, resp.Header.Get("Location"))
+		}
+		if resp.Header.Get("Cache-Control") != "no-store" {
+			t.Errorf("%s stale key: a redirect must not outlive the deploy, got %q", method, resp.Header.Get("Cache-Control"))
+		}
+		if len(data) > 1024 {
+			t.Errorf("%s stale key: redirect carried %d bytes", method, len(data))
+		}
+	}
+
+	// Following it ends at the real bundle, for a page that genuinely names the old key.
+	followed := get(t, front.URL, "/main.js?agy=old", "")
+	if followed.StatusCode != http.StatusOK || followed.Request.URL.RawQuery != "agy=k1" {
+		t.Errorf("following the redirect: got %d at %q", followed.StatusCode, followed.Request.URL)
+	}
+
+	for _, path := range []string{"/main.js?agy=k1", "/main.js"} {
+		resp, err := client.Get(front.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: want the bundle, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
+// A deploy that changed only the HTML patches changes the key but not the bundle,
+// and a browser still holding that bundle under the old URL needs nothing new.
+func TestProxyRevalidatesStaleBundleKeyWhoseCopyIsCurrent(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+	tag := get(t, front.URL, "/main.js?agy=k1", "").Header.Get("ETag")
+	if tag == "" {
+		t.Fatal("bundle response must carry an ETag")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, front.URL+"/main.js?agy=old", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", "W/"+tag)
+	resp, err := (&http.Client{CheckRedirect: noRedirects}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Errorf("current copy under an old key: want 304, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	req.Header.Set("If-None-Match", `"stale"`)
+	resp, err = (&http.Client{CheckRedirect: noRedirects}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("outdated copy under an old key: want 302, got %d", resp.StatusCode)
+	}
+}
+
+// With no key configured the HTML names no key either, so nothing counts as stale.
+func TestProxyServesAnyBundleKeyWithoutCacheKey(t *testing.T) {
+	front, _ := newTestProxyWith(t, upstream(t), func(o *Options) { o.Patch.CacheKey = "" })
+	client := &http.Client{CheckRedirect: noRedirects}
+
+	resp, err := client.Get(front.URL + "/main.js?agy=anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want the bundle, got %d", resp.StatusCode)
 	}
 }
 
@@ -986,6 +1086,98 @@ func TestProxyRelayRejectsOversizedBrowserMessage(t *testing.T) {
 	_, _, err := c.Read(ctx)
 	if got := websocket.CloseStatus(err); got != websocket.StatusMessageTooBig {
 		t.Errorf("oversized message ended with status %d (%v), want %d", got, err, websocket.StatusMessageTooBig)
+	}
+}
+
+// sendingUpstream sends message to whoever connects and stays open until they leave.
+func sendingUpstream(t *testing.T, message []byte) *httptest.Server {
+	t.Helper()
+
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := c.Write(ctx, websocket.MessageText, message); err != nil {
+			return
+		}
+		_, _, _ = c.Read(ctx)
+	}))
+	t.Cleanup(ls.Close)
+	return ls
+}
+
+// A socket closed over the limit reconnects and meets the same message again, so
+// the browser is stuck for as long as the conversation stays that size.
+func TestProxyRelayCarriesConversationOverSixtyFourMegabytes(t *testing.T) {
+	message := bytes.Repeat([]byte("conversation step "), (64<<20)/18+1024)
+	front, _ := newTestProxy(t, sendingUpstream(t, message))
+	c, _ := dialRelay(t, front, nil)
+	c.SetReadLimit(-1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("a %d byte message ended the socket: %v", len(message), err)
+	}
+	if !bytes.Equal(data, message) {
+		t.Errorf("got %d bytes, want %d", len(data), len(message))
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func relaySummaryLogged(t *testing.T, debug bool) string {
+	t.Helper()
+
+	var logged lockedBuffer
+	prev := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	front, _ := newTestProxyWith(t, sendingUpstream(t, []byte("0123456789")), func(o *Options) { o.Patch.Debug = debug })
+	c, _ := dialRelay(t, front, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close(websocket.StatusGoingAway, "")
+
+	// The relay logs after its pumps notice the close, which happens off this goroutine.
+	deadline := time.Now().Add(2 * time.Second)
+	for debug && time.Now().Before(deadline) && !strings.Contains(logged.String(), "websocket closed") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return logged.String()
+}
+
+func TestProxyRelayLogsWhatASocketCarriedOnlyWithDebug(t *testing.T) {
+	if got := relaySummaryLogged(t, true); !strings.Contains(got, "1 messages, 10 bytes, largest 10") {
+		t.Errorf("summary missing with debug on: %q", got)
+	}
+	if got := relaySummaryLogged(t, false); strings.Contains(got, "websocket closed") {
+		t.Errorf("summary logged with debug off: %q", got)
 	}
 }
 
