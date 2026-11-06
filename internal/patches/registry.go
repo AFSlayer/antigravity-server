@@ -2057,23 +2057,36 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // An iPhone has been seen putting a long conversation tens of thousands of pixels above its top right after a
   // re-render, and its bounce then carries the reader all the way up. A finger overscrolls by a few hundred at most
   // and script cannot set a negative position, so this is not the reader. Setting the position may not end the bounce,
-  // so it is held until input on the conversation or until the bounce has had time to finish. A reader at the bottom
-  // stays at the bottom, whatever the re-render did to the height. Anyone else goes back to the position they had.
+  // so it is held until the bounce has had time to finish. A reader at the bottom stays at the bottom, whatever the
+  // re-render did to the height. Anyone else goes back to the position they had.
+  //
+  // The bounce only ever pulls toward the top, so a position below it, other than the one set here, came from
+  // something else, such as the reader or the button that jumps to the latest message, and ends the hold. So does
+  // input on the conversation. A hold that ends with the bounce still going leaves no position to go back to, so the
+  // rest of that bounce is not held again.
   function holdAgainstFling(el) {
     var now = performance.now();
     var hold = holds.get(el);
-    if (hold && (window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS)) {
-      holds.delete(el);
-      return false;
+    if (hold) {
+      var target = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
+      var movedOn = el.scrollTop > 0 && Math.abs(el.scrollTop - target) > 1 && Math.abs(el.scrollTop - hold.last) > 1;
+      if (movedOn || window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS) {
+        holds.delete(el);
+        if (el.scrollTop < 0) lastSeen.delete(el);
+        return false;
+      }
+      el.scrollTop = target;
+      hold.last = el.scrollTop;
+      return true;
     }
     var seen = lastSeen.get(el);
-    if (!hold && !pressed && seen && seen.top >= 0 && el.scrollTop < FLUNG_ABOVE_TOP) {
-      var atBottom = seen.height - seen.top - el.clientHeight <= NEAR_BOTTOM;
-      hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
-      holds.set(el, hold);
-    }
-    if (!hold) return false;
-    el.scrollTop = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
+    if (pressed || !seen || seen.top < 0 || el.scrollTop >= FLUNG_ABOVE_TOP) return false;
+    var atBottom = seen.height - seen.top - el.clientHeight <= NEAR_BOTTOM;
+    hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
+    holds.set(el, hold);
+    try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: el.scrollTop, back: atBottom ? "bottom" : seen.top } })); } catch (e) {}
+    el.scrollTop = atBottom ? el.scrollHeight - hold.gap : hold.top;
+    hold.last = el.scrollTop;
     return true;
   }
 
@@ -2395,6 +2408,10 @@ const mobileDebug = `<script id="agy-debug">
     prevHeight = height;
   }, 150);
 
+  // The scroll tracker puts a fling back before any sample can see it, so it reports one here.
+  window.addEventListener("agy-fling-hold", function (e) {
+    begin("fling-hold" + (e.detail ? ":" + Math.round(e.detail.top) + ">" + e.detail.back : ""), 1500);
+  });
   vv.addEventListener("resize", function () { begin("vv-resize", 700); });
   vv.addEventListener("scroll", function () { begin("vv-scroll", 400); });
   window.addEventListener("focusin", function (e) {

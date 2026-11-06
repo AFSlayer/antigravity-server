@@ -675,9 +675,130 @@ for (const end of ["pointerup", "pointercancel", "contextmenu", "dragstart", "bl
   frame();
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
   now += 1000;
-  el.scrollTop = 9000;
+  el.scrollTop = 0;
   fire("scroll", { target: el });
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// The bounce settling at the top is still the bounce.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  el.scrollTop = 0;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+}
+
+// It holds for the whole second, and only past a fling.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 999;
+  el.scrollTop = -500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000, "still held at 999 ms");
+  settle();
+  const near = viewport();
+  near.scrollTop = -999;
+  fire("scroll", { target: near });
+  assert.strictEqual(near.scrollTop, -999, "-999 is left alone");
+}
+
+// The re-render that flings the conversation usually grows it too, as in the trace (18,331 to 82,650 px).
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 1000;
+  el.scrollHeight = 82650;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 81650);
+}
+
+// Within 100 px of the bottom counts as the bottom, and further up does not.
+for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
+  settle();
+  const el = viewport();
+  el.clientHeight = clientHeight;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, want, "client height " + clientHeight);
+}
+
+// Once input on the conversation ends a hold, the bounce that follows is the reader's, event after event.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 100;
+  fire("touchstart", { target: { closest: () => el } });
+  now += 1;
+  for (const top of [-20000, -19000, -5000]) {
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, top);
+    now += 16;
+  }
+}
+
+// Nor is a hold that ran out started again by the bounce still going.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 1000;
+  for (const top of [-15000, -14000]) {
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, top);
+    now += 16;
+  }
+}
+
+// Something else moving the conversation, such as the jump to the latest message, ends the hold. A fling after
+// that is a new one, back to where that left the reader.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 100;
+  el.scrollTop = 9500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9500);
+  now += 100;
+  el.scrollTop = 9400;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9400, "no longer held");
+  el.scrollTop = -30000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9400);
+}
+
+// A fling seen while pressed is not held, and is not kept as the position to go back to either.
+{
+  settle();
+  const el = viewport();
+  fire("pointerdown", { target: { closest: () => el } });
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -34601);
+  fire("pointerup", { target: body });
+  settle();
+  el.scrollTop = -30000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
 }
 
 // The ordinary overscroll of a finger or a fling stays alone.
