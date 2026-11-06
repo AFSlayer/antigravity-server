@@ -593,6 +593,83 @@ for (const end of ["pointerup", "pointercancel", "contextmenu", "dragstart", "bl
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
   fire("pointerup", { target: body });
 }
+
+// A position far above the top goes back to where it was, measured from the bottom, and stays for the bounce.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  el.scrollTop = -500;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000, "the bounce keeps pulling toward the top");
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 11000, "the reader keeps their distance from the bottom");
+  el.scrollTop = 0;
+  now += 800;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 0, "released once the bounce has had time to finish");
+}
+
+// Rows removed during the bounce are not taken for a collapse, then or once it is over.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  el.scrollTop = -20000;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  now += 1000;
+  el.scrollTop = 9000;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// The ordinary overscroll of a finger or a fling stays alone.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -300;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -300);
+}
+
+// Nor is the first thing a page shows a position to go back to.
+{
+  settle();
+  const el = { scrollTop: -34601, scrollHeight: 10000, matches: () => true, closest: () => el };
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -34601);
+}
+
+// Touching the conversation hands it back, and a held press is never overridden.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 100;
+  fire("touchstart", { target: { closest: () => el } });
+  now += 1;
+  el.scrollTop = 200;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 200);
+
+  settle();
+  const held = viewport();
+  fire("pointerdown", { target: { closest: () => held } });
+  held.scrollTop = -34601;
+  fire("scroll", { target: held });
+  assert.strictEqual(held.scrollTop, -34601);
+  fire("pointerup", { target: body });
+}
 process.exit(0);
 `
 	scriptPath := filepath.Join(t.TempDir(), "tracker.js")
