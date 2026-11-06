@@ -35,7 +35,8 @@ type Config struct {
 	IDEVersion      string   `json:"ide_version,omitempty"`
 
 	// Debug comes from AGY_DEBUG only, and is deliberately not persisted: it turns
-	// on the mobile geometry tracer, which is meant for one session at a time.
+	// on the mobile geometry tracer, which is meant for one session at a time, and
+	// a log line for every closed RPC socket.
 	Debug bool `json:"-"`
 
 	// DisableWSRelay comes from AGY_WS_RELAY=off only. It returns the RPC

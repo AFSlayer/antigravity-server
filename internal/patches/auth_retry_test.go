@@ -21,7 +21,7 @@ func TestAuthStartupRetryOutlastsASlowLink(t *testing.T) {
 	if patched == authCheck {
 		t.Fatal("anchor not found in the 2.29.0 check")
 	}
-	if !strings.Contains(patched, "if(n){let p=Math.min(4-b,3);") {
+	if !strings.Contains(patched, "k0a(a,b>1?b-1:Date.now()<(a.__agyAuthRetryUntil??=Date.now()+3E5)?1:0)") {
 		t.Fatalf("unexpected rewrite: %s", patched)
 	}
 
@@ -36,12 +36,15 @@ class yh extends Error { constructor(code) { super("rpc failed"); this.code = co
 const e = x => x;
 const Ng = {};
 const waits = [];
-global.setTimeout = (fn, ms) => { waits.push(ms); fn(); };
+// Each request takes its full 10 second timeout before failing, and each wait takes as long as it says.
+let clock = 0;
+Date.now = () => clock;
+global.setTimeout = (fn, ms) => { waits.push(ms); clock += ms; fn(); };
 const l0a = async () => {};
 eval(fs.readFileSync(process.argv[1], "utf8") + "; globalThis.check = k0a;");
 
-// Fails the token check failures times with the given code, then succeeds.
-async function run(failures, code) {
+// Fails the token check failures times with the given code, then succeeds. onCall runs before each request.
+async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
   let calls = 0;
   const sent = [];
   const app = {
@@ -51,20 +54,26 @@ async function run(failures, code) {
     _authActor: { send: ev => sent.push(ev.type) },
     recordError() {},
     _lsClient: {
-      hasAuthToken: async () => { calls++; if (calls <= failures) throw new yh(code); return { hasToken: true }; },
+      hasAuthToken: async () => {
+        calls++;
+        onCall(app, calls);
+        if (calls <= failures) { clock += 10000; throw new yh(code); }
+        return { hasToken: true };
+      },
       getAuthStatus: async () => ({ authResult: { hasValidAuth: true, grantedScopes: [] } }),
     },
   };
   waits.length = 0;
-  await check(app, 4);
-  return { calls, sent, waits: waits.slice() };
+  clock = 0;
+  await check(app, retries);
+  return { calls, sent, waits: waits.slice(), elapsed: clock };
 }
 
 (async () => {
-  const mode = process.argv[2];
-  // Twelve timeouts in a row, about two minutes on a real link.
+  const patched = process.argv[2] === "patched";
+  // Twelve timeouts in a row, about three minutes on a real link.
   const slow = await run(12, 4);
-  if (mode === "patched") {
+  if (patched) {
     assert.deepStrictEqual(slow.sent, ["AUTH_SUCCESS"]);
     assert.strictEqual(slow.calls, 13);
     assert.deepStrictEqual(slow.waits, [1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000]);
@@ -72,10 +81,36 @@ async function run(failures, code) {
     assert.deepStrictEqual(slow.sent, ["SIGN_OUT"], "upstream gives up after five tries");
     assert.strictEqual(slow.calls, 5);
   }
+
+  // A link that never recovers still ends at the sign-in screen, five minutes after upstream would have.
+  const dead = await run(Infinity, 4);
+  assert.deepStrictEqual(dead.sent, ["SIGN_OUT"]);
+  if (patched) {
+    assert.ok(dead.elapsed >= 65000 + 300000 && dead.elapsed < 65000 + 330000, "gave up after " + dead.elapsed + "ms");
+  } else {
+    assert.strictEqual(dead.calls, 5);
+  }
+
   // A failure the bundle does not count as transient still signs out at once.
   const refused = await run(1, 16);
   assert.deepStrictEqual(refused.sent, ["SIGN_OUT"]);
   assert.strictEqual(refused.calls, 1);
+
+  // A caller that asks for no retries gets none.
+  const once = await run(1, 4, { retries: 0 });
+  assert.deepStrictEqual(once.sent, ["SIGN_OUT"]);
+  assert.strictEqual(once.calls, 1);
+
+  // A new session or a sign-out in progress ends the loop without signing out.
+  if (patched) {
+    const replaced = await run(Infinity, 4, { onCall: (app, n) => { if (n === 7) app._currentSessionId = 2; } });
+    assert.deepStrictEqual(replaced.sent, []);
+    assert.strictEqual(replaced.calls, 7);
+    const leaving = await run(Infinity, 4, { onCall: (app, n) => { if (n === 7) app.isLoggingOut = true; } });
+    assert.deepStrictEqual(leaving.sent, []);
+    assert.strictEqual(leaving.calls, 7);
+  }
+
   // A quick success is untouched.
   assert.deepStrictEqual((await run(0, 4)).sent, ["AUTH_SUCCESS"]);
 })().catch(err => { console.error(err); process.exit(1); });

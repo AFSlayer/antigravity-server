@@ -94,7 +94,7 @@ var (
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
-	authStartupRetryRe                    = regexp.MustCompile(`(_authState\.state==="uninitialized"\)\{let [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);if\()[a-zA-Z0-9_$]+>0&&([a-zA-Z0-9_$]+\)\{let [a-zA-Z0-9_$]+=)(4-[a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\(await [a-zA-Z0-9_$]+\(new Promise\([a-zA-Z0-9_$]+=>\{setTimeout\([a-zA-Z0-9_$]+,1E3\*2\*\*[a-zA-Z0-9_$]+\)\}\)\)\);return [a-zA-Z0-9_$]+\.isLoggingOut)`)
+	authStartupRetryRe                    = regexp.MustCompile(`(_authState\.state==="uninitialized"\)\{let [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);if\(([a-zA-Z0-9_$]+)>0&&[a-zA-Z0-9_$]+\)\{let [a-zA-Z0-9_$]+=4-[a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+\(await [a-zA-Z0-9_$]+\(new Promise\([a-zA-Z0-9_$]+=>\{setTimeout\([a-zA-Z0-9_$]+,1E3\*2\*\*[a-zA-Z0-9_$]+\)\}\)\)\);return ([a-zA-Z0-9_$]+)\.isLoggingOut\|\|[a-zA-Z0-9_$]+\._currentSessionId!==[a-zA-Z0-9_$]+\?void 0:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,)[a-zA-Z0-9_$]+-1(\)\})`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -798,19 +798,19 @@ func All() []Patch {
 			Replace: `async function $1(a){var b=$2,c=$2;try{let $3;for(let _i=0;_i<3;_i++)try{$3=c(await b(a.lsClient.getLocalUserInfo($4)));break}catch(_e){c();if(_i===2)return{homeDirUri:$5("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=$3.username;return{homeDirUri:$5($3.homeDirUri),username:f}}finally{b()}}`,
 		},
 
-		// The first sign-in check gives each request 10 seconds and signs out after five failures in a row. All requests
-		// share one socket, so on a slow link they wait behind the conversation the page is loading, and the check can fail
-		// for a whole minute with nothing wrong with the account. The app then shows Google as signed out until it is
-		// restarted. Failures the bundle itself counts as transient now retry for as long as they last, at most 8 seconds
-		// apart, and any other failure still signs out.
+		// The first sign-in check gives each request 10 seconds and signs out after four retries, about a minute. All
+		// requests share one socket, so on a slow link they wait behind the conversation the page is loading, and the check
+		// can fail for that long with nothing wrong with the account. The app then shows Google as signed out until it is
+		// restarted. Failures the bundle itself counts as transient now keep retrying 8 seconds apart for five more
+		// minutes before it signs out. Other failures, and the other callers that never retried, are as they were.
 		{
 			ID:       "auth-startup-retry",
-			Desc:     "Keep retrying the startup sign-in check on a slow link instead of signing out after a minute",
+			Desc:     "Keep retrying the startup sign-in check on a slow link for five more minutes before signing out",
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
 			FindRe:   authStartupRetryRe,
-			Replace:  `${1}${2}Math.min(${3},3)${4}`,
+			Replace:  `${1}${2}>1?${2}-1:Date.now()<(${3}.__agyAuthRetryUntil??=Date.now()+3E5)?1:0${4}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only

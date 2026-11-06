@@ -24,12 +24,12 @@ const relayPath = "/connect-websocket"
 // Read limits per direction. The language server sends a whole conversation as
 // one JSON message. That is a couple of megabytes for a long one and has passed
 // 64 MiB with its sub-agents loaded, and a socket closed over the limit reconnects
-// and hits it again, so the browser never gets past its spinner. The language
-// server is trusted and already holds the message in memory, so this ceiling only
-// guards against a runaway. Requests from the browser are small RPC calls, so that
-// direction gets a much lower ceiling.
+// and hits it again, so the browser never gets past its spinner. The relay holds a
+// whole message and its compressed copy at once, several times its size, so the
+// ceiling stays at a size this has been seen to need with room to spare. Requests
+// from the browser are small RPC calls, so that direction gets a much lower ceiling.
 const (
-	upstreamReadLimit = 1 << 30
+	upstreamReadLimit = 256 << 20
 	clientReadLimit   = 16 << 20
 )
 
@@ -154,10 +154,10 @@ type relayStats struct {
 	messages, bytes, largest, firstNanos atomic.Int64
 }
 
-// add counts a message read from the language server. A size of 0 is the write of
-// that message finishing, not a message.
+// add counts a message read from the language server. A negative size is the
+// write of that message finishing, not a message.
 func (s *relayStats) add(size int, started time.Time) {
-	if size == 0 {
+	if size < 0 {
 		return
 	}
 	if s.messages.Add(1) == 1 {
@@ -170,7 +170,11 @@ func (s *relayStats) add(size int, started time.Time) {
 }
 
 func (s *relayStats) String() string {
-	return fmt.Sprintf("%d messages, %d bytes, largest %d, first after %s", s.messages.Load(), s.bytes.Load(), s.largest.Load(), time.Duration(s.firstNanos.Load()).Round(time.Millisecond))
+	first := "none"
+	if s.messages.Load() > 0 {
+		first = "after " + time.Duration(s.firstNanos.Load()).Round(time.Millisecond).String()
+	}
+	return fmt.Sprintf("%d messages, %d bytes, largest %d, first %s", s.messages.Load(), s.bytes.Load(), s.largest.Load(), first)
 }
 
 // pingInterval and pingTimeout bound how long a browser that vanished without a
@@ -290,7 +294,7 @@ func truncateReason(s string) string {
 // pump copies whole messages from src to dst, preserving their text or binary
 // type, until either side fails or ctx is canceled. writeFailed tells whether
 // the failure was on dst, in which case src is still healthy.
-// onActivity is invoked with the message size when one is read, and with 0 when
+// onActivity is invoked with the message size when one is read, and with -1 when
 // its write finishes.
 func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func(size int)) (writeFailed bool, err error) {
 	for {
@@ -308,7 +312,7 @@ func pump(ctx context.Context, dst, src *websocket.Conn, onActivity func(size in
 			return true, err
 		}
 		if onActivity != nil {
-			onActivity(0)
+			onActivity(-1)
 		}
 	}
 }

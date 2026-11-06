@@ -375,11 +375,16 @@ func transportPatchMissing(report patches.Report) bool {
 // to the current one. The HTML only ever names the current key, so an old key comes
 // from the browser replaying what it loaded last time. iPhones do this alongside the
 // real request after a deploy, and sending the whole bundle to both means two
-// multi-megabyte downloads while the page is still blank.
+// multi-megabyte downloads while the page is still blank. The key also changes when
+// only the HTML patches do, so a copy whose tag still matches gets its 304 instead,
+// rather than a redirect to a URL the browser has nothing cached for.
 func (p *Proxy) redirectStaleBundle(w http.ResponseWriter, r *http.Request) bool {
 	current := p.opts.Patch.CacheKey
 	requested := r.URL.Query().Get("agy")
 	if current == "" || requested == "" || requested == current {
+		return false
+	}
+	if _, tag := p.cachedBundle(); etagMatches(r.Header.Get("If-None-Match"), tag) {
 		return false
 	}
 	w.Header().Set("Cache-Control", "no-store")

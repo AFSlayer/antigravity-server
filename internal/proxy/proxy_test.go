@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -313,6 +312,40 @@ func TestProxyRedirectsStaleBundleKeyToCurrent(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("%s: want the bundle, got %d", path, resp.StatusCode)
 		}
+	}
+}
+
+// A deploy that changed only the HTML patches changes the key but not the bundle,
+// and a browser still holding that bundle under the old URL needs nothing new.
+func TestProxyRevalidatesStaleBundleKeyWhoseCopyIsCurrent(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+	tag := get(t, front.URL, "/main.js?agy=k1", "").Header.Get("ETag")
+	if tag == "" {
+		t.Fatal("bundle response must carry an ETag")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, front.URL+"/main.js?agy=old", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", "W/"+tag)
+	resp, err := (&http.Client{CheckRedirect: noRedirects}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Errorf("current copy under an old key: want 304, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	req.Header.Set("If-None-Match", `"stale"`)
+	resp, err = (&http.Client{CheckRedirect: noRedirects}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("outdated copy under an old key: want 302, got %d", resp.StatusCode)
 	}
 }
 
@@ -1117,8 +1150,9 @@ func relaySummaryLogged(t *testing.T, debug bool) string {
 	t.Helper()
 
 	var logged lockedBuffer
+	prev := log.Writer()
 	log.SetOutput(&logged)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Cleanup(func() { log.SetOutput(prev) })
 
 	front, _ := newTestProxyWith(t, sendingUpstream(t, []byte("0123456789")), func(o *Options) { o.Patch.Debug = debug })
 	c, _ := dialRelay(t, front, nil)
