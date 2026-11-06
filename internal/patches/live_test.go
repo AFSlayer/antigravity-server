@@ -17,6 +17,12 @@ import (
 // statement that assigns onopen.
 var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url\);\s*[a-zA-Z0-9_$]+\.binaryType="arraybuffer";\s*var [a-zA-Z0-9_$]+=(?:!1|Date\.now\(\),[\s\S]{0,1000}?);[a-zA-Z0-9_$]+\.onopen=`)
 
+// findBarInputRe matches the input scroll-input-tracker looks for. The bundle can wrap lines between any two tokens.
+var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Find"`)
+
+// rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by.
+var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh`)
+
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
 // so CI skips it and no part of Antigravity's bundle needs to live in this
@@ -59,6 +65,18 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// straight after, so check the shape it relies on.
 	if n := len(socketConstructionRe.FindAll(mainJS, -1)); n != 1 {
 		t.Errorf("the bundle builds its RPC socket in an unexpected way (%d matches); connection-prewarm may stop working", n)
+	}
+
+	// scroll-input-tracker finds these by name, and nothing else would notice them going away. Its scrollbar selectors
+	// are not listed because older bundles have no overlay scrollbar.
+	if !findBarInputRe.Match(mainJS) {
+		t.Error("the bundle no longer has the find bar's input; scroll-input-tracker may stop working")
+	}
+	if !rowSizedInCqhRe.Match(mainJS) {
+		t.Error("the bundle no longer sizes rows with an inline cqh height; scroll-input-tracker may stop following after a collapse")
+	}
+	if !bytes.Contains(mainJS, []byte("autoscroll-viewport")) {
+		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}

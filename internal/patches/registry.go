@@ -689,9 +689,9 @@ func All() []Patch {
 		// The hook treats any drop in scrollTop as the user scrolling up and stops following the conversation.
 		// Rows remounting can collapse the content for a moment, which clamps scrollTop without anyone touching
 		// the screen, and the scroll event only arrives once the content is back. The hook then stays where the
-		// clamp left it, far above the bottom. A drop right after rows shortened the conversation, with no input, is
-		// put back instead. The app's own upward scrolls found so far come with a key, a focus change or the find bar,
-		// and jumping from the navigator stops following explicitly first.
+		// clamp left it, far above the bottom. A drop that removed rows can explain, with no input, is put back instead.
+		// The app's own upward scrolls found so far come with a key, a focus change or the find bar, and jumping from the
+		// navigator stops following explicitly first.
 		{
 			ID:      "scroll-input-tracker",
 			Desc:    "Record recent scroll input so a position change can be told apart from the user scrolling",
@@ -1971,9 +1971,11 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var NAV_KEYS = { PageUp: 1, PageDown: 1, Home: 1, End: 1 };
   // In a text box these type or move the caret instead.
   var PLAIN_KEYS = { ArrowUp: 1, ArrowDown: 1, " ": 1 };
-  var collapsedAt = new WeakMap();
+  // Tall for reasons other than how much is in them. Rows are given a height relative to the conversation's own in cqh.
+  var OWN_HEIGHT = 'img,video,canvas,iframe,[style*="cqh"]';
+  var collapses = new WeakMap();
   var lastSeen = new WeakMap();
-  var removedFrom = new Set();
+  var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
   window.__agyLastScrollInputAt = -Infinity;
@@ -2000,12 +2002,48 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // Moving focus scrolls the focused row into view.
   window.addEventListener("focusin", function (e) { if (onConversation(e)) mark(); }, opts);
 
+  // A generous guess at how tall removed content was. A detached node has no layout left to ask, and the guess only
+  // has to tell a status icon from whole rows: at most about 630 px for the status changes seen during a reply, and
+  // over 20,000 px for rows the window removed.
+  function guessHeight(node) {
+    if (node.nodeType !== 1) return node.nodeType === 3 ? node.textContent.length * 2 : 0;
+    var height = (1 + node.getElementsByTagName("*").length) * 48 + node.textContent.length * 2;
+    if (node.matches(OWN_HEIGHT)) height += ownHeight(node);
+    var tall = node.querySelectorAll(OWN_HEIGHT);
+    for (var i = 0; i < tall.length; i++) height += ownHeight(tall[i]);
+    return height;
+  }
+
+  // Images, videos and canvases keep their own size once removed, scaled up here in case CSS stretched them. An image
+  // that finished without a size failed to load and adds nothing. Anything else without a size yet, and any frame or
+  // row sized in cqh, could have been any height.
+  function ownHeight(node) {
+    var own = node.naturalHeight || node.videoHeight || (node.tagName === "CANVAS" ? node.height : 0);
+    if (own) return own * 4;
+    return node.complete ? 0 : Infinity;
+  }
+
+  // Removed rows can only clamp the position by as much as they shortened the conversation. They may be back by the
+  // time anything can look, so what was removed counts as well as the height that can be seen. A fall neither explains
+  // is a scroll with no input that happened to land next to a removal, such as the browser's find-in-page.
   function compare(el) {
     var seen = lastSeen.get(el);
-    if (removedFrom.delete(el) && seen && (el.scrollHeight < seen.height || el.scrollTop < seen.top - 1)) {
-      collapsedAt.set(el, performance.now());
+    var removed = removedHeight.get(el);
+    var top = el.scrollTop;
+    var height = el.scrollHeight;
+    removedHeight.delete(el);
+    // Back where it was, the collapse is over, so a later scroll has nothing to do with it. The event that brought it
+    // back is still part of it: the hook runs next and has its own idea of the last position, which can be further on.
+    var collapse = collapses.get(el);
+    if (collapse && collapse.over) collapses.delete(el);
+    else if (collapse && top >= collapse.from) collapse.over = true;
+    if (seen && removed !== undefined) {
+      var drop = seen.top - top;
+      if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
+        collapses.set(el, { at: performance.now(), top: top, from: seen.top });
+      }
     }
-    lastSeen.set(el, { top: el.scrollTop, height: el.scrollHeight });
+    lastSeen.set(el, { top: top, height: height });
   }
   // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
   window.addEventListener("scroll", function (e) {
@@ -2022,15 +2060,18 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       var el = records[i].removedNodes.length > 0 && t.closest && t.closest(VIEWPORT);
-      if (el) removedFrom.add(el);
+      if (!el) continue;
+      var height = removedHeight.get(el) || 0;
+      for (var j = 0; j < records[i].removedNodes.length; j++) height += guessHeight(records[i].removedNodes[j]);
+      removedHeight.set(el, height);
     }
-    if (removedFrom.size > 0 && !frameRequested) {
+    if (removedHeight.size > 0 && !frameRequested) {
       frameRequested = true;
       // After the frame's own layout, so that this forces none.
       requestAnimationFrame(function () {
         setTimeout(function () {
           frameRequested = false;
-          removedFrom.forEach(compare);
+          removedHeight.forEach(function (_, el) { compare(el); });
         });
       });
     }
@@ -2057,10 +2098,13 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   };
 
   window.__agyIsSpontaneousScroll = function (el) {
-    if (!el || !collapsedAt.has(el) || pressed || document.querySelector(FIND_BAR)) return false;
+    var collapse = el && collapses.get(el);
+    if (!collapse || pressed || document.querySelector(FIND_BAR)) return false;
     var now = performance.now();
-    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have.
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapsedAt.get(el) < 2000;
+    // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Rows
+    // coming back can push the position down the conversation, but only something else takes it further up than the
+    // collapse left it.
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && el.scrollTop >= collapse.top - 1;
   };
 })();
 </script>`
