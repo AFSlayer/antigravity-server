@@ -32,6 +32,8 @@ global.MutationObserver = class { constructor(fn) { observer = fn; } observe() {
 global.requestAnimationFrame = fn => { frames.push(fn); };
 global.setTimeout = fn => { frames.push(fn); };
 Object.defineProperty(global, "performance", { value: { now: () => now } });
+let coarse = false;
+global.matchMedia = () => ({ matches: coarse });
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
@@ -591,6 +593,386 @@ for (const end of ["pointerup", "pointercancel", "contextmenu", "dragstart", "bl
   settle();
   collapse(el);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  fire("pointerup", { target: body });
+}
+
+// A reader at the bottom flung far above the top goes back to the bottom, and stays there for the bounce.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 1000;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  el.scrollTop = -500;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000, "the bounce keeps pulling toward the top");
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 11000, "the reader keeps their distance from the bottom");
+  el.scrollTop = 0;
+  now += 800;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 0, "released once the bounce has had time to finish");
+}
+
+// A reader further up goes back to the position they had, whatever the height does.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 500;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+}
+
+// The frame after a removal can be the first to see the fling, and it holds just the same.
+{
+  settle();
+  const el = viewport();
+  remove(el, ROWS);
+  el.scrollTop = -34601;
+  frame();
+  assert.strictEqual(el.scrollTop, 9000);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// A hold that ran out with no event to end it does not hide the next collapse.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 5000;
+  collapse(el);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), true);
+}
+
+// From an overscroll already under way there is no position to go back to.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -300;
+  fire("scroll", { target: el });
+  el.scrollTop = -1500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -1500);
+}
+
+// Rows removed during the bounce are not taken for a collapse, then or once it is over.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  el.scrollTop = -20000;
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+  now += 1000;
+  el.scrollTop = 0;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// The bounce settling at the top is still the bounce.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  el.scrollTop = 0;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+}
+
+// It holds for the whole second, and only past a fling.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 999;
+  el.scrollTop = -500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000, "still held at 999 ms");
+  settle();
+  const near = viewport();
+  near.scrollTop = -999;
+  fire("scroll", { target: near });
+  assert.strictEqual(near.scrollTop, -999, "-999 is left alone");
+}
+
+// The re-render that flings the conversation usually grows it too, as in the trace (18,331 to 82,650 px).
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 1000;
+  el.scrollHeight = 82650;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 81650);
+}
+
+// Within 100 px of the bottom counts as the bottom, and further up does not.
+for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
+  settle();
+  const el = viewport();
+  el.clientHeight = clientHeight;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  el.scrollHeight = 12000;
+  now += 100;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, want, "client height " + clientHeight);
+}
+
+// Once input on the conversation ends a hold, the bounce that follows is the reader's, event after event.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 100;
+  fire("touchstart", { target: { closest: () => el } });
+  now += 1;
+  for (const top of [-20000, -19000, -5000]) {
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, top);
+    now += 16;
+  }
+}
+
+// Nor is a hold that ran out started again by the bounce still going.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  now += 1000;
+  for (const top of [-15000, -14000]) {
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, top);
+    now += 16;
+  }
+}
+
+// A bounce that keeps pulling up from the position just set is still the bounce.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 500;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  for (const top of [6000, 2000, 20]) {
+    now += 16;
+    el.scrollTop = top;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, 9000, "pulled up to " + top);
+  }
+}
+
+// A fling right after a collapse goes back to where the reader was before it, not to where it left them.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 600;
+  el.scrollTop = 9400;
+  fire("scroll", { target: el });
+  remove(el, ROWS);
+  el.scrollHeight = 2000;
+  el.scrollTop = 0;
+  frame();
+  el.scrollHeight = 82650;
+  el.scrollTop = -34601;
+  now += 50;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 82050);
+}
+
+// A hold that ran out with no event after it leaves its own position as the last one seen. Otherwise a re-render that
+// shortened the conversation looks, at the next small removal, like a collapse of that size.
+{
+  settle();
+  const el = viewport();
+  el.clientHeight = 1000;
+  el.scrollHeight = 12000;
+  el.scrollTop = 11000;
+  fire("scroll", { target: el });
+  el.scrollHeight = 10000;
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 5000;
+  remove(el, ICON);
+  frame();
+  assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
+}
+
+// Something else moving the conversation, such as the jump to the latest message, ends the hold. A fling after
+// that is a new one, back to where that left the reader.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 100;
+  el.scrollTop = 9500;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9500);
+  now += 100;
+  el.scrollTop = 9400;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9400, "no longer held");
+  el.scrollTop = -30000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9400);
+}
+
+// A fling seen while pressed is not held, and is not kept as the position to go back to either.
+{
+  settle();
+  const el = viewport();
+  fire("pointerdown", { target: { closest: () => el } });
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -34601);
+  fire("pointerup", { target: body });
+  settle();
+  el.scrollTop = -30000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+}
+
+// On a touch screen, a bounce at the bottom that ends tens of thousands of pixels up, where the bottom was before the
+// conversation grew, goes back to the bottom, also when the bounce lands there again.
+{
+  settle();
+  coarse = true;
+  const tall = () => {
+    const el = viewport();
+    el.clientHeight = 666;
+    el.scrollHeight = 103856;
+    el.scrollTop = 103190;
+    fire("scroll", { target: el });
+    now += 16;
+    return el;
+  };
+  let el = tall();
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190);
+  now += 100;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "again within the second");
+
+  // Script asking for that spot, or for any spot by bringing a row into view, is the app's own doing.
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 39242);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "asked for that spot");
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(null, null);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "a row brought into view");
+
+  // A pin to the bottom in the same frame does not cover a jump somewhere else, and a request ages out.
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 1e9);
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "asked for the bottom");
+  settle();
+  el = tall();
+  window.__agyScrolledByScript(el, 39242);
+  now += 151;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 103190, "asked too long ago");
+
+  // The conversation getting that much shorter explains the move, and smaller moves are left alone.
+  settle();
+  el = tall();
+  el.scrollHeight = 39908;
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "shorter by as much");
+  for (const [to, want] of [[103190 - 31000, 103190 - 31000], [103190 - 32000, 103190]]) {
+    settle();
+    el = tall();
+    el.scrollTop = to;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.scrollTop, want, "moved " + (103190 - to));
+  }
+  settle();
+  el = viewport();
+  el.scrollTop = 4900;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 4900, "under 5000 px");
+
+  // Away from touch screens the browser moves the conversation by itself.
+  coarse = false;
+  settle();
+  el = tall();
+  el.scrollTop = 39242;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 39242, "not a touch screen");
+}
+
+// The ordinary overscroll of a finger or a fling stays alone.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -300;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -300);
+}
+
+// Nor is the first thing a page shows a position to go back to.
+{
+  settle();
+  const el = { scrollTop: -34601, scrollHeight: 10000, matches: () => true, closest: () => el };
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, -34601);
+}
+
+// Touching the conversation hands it back, and a held press is never overridden.
+{
+  settle();
+  const el = viewport();
+  el.scrollTop = -34601;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 9000);
+  now += 100;
+  fire("touchstart", { target: { closest: () => el } });
+  now += 1;
+  el.scrollTop = 200;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 200);
+
+  settle();
+  const held = viewport();
+  fire("pointerdown", { target: { closest: () => held } });
+  held.scrollTop = -34601;
+  fire("scroll", { target: held });
+  assert.strictEqual(held.scrollTop, -34601);
   fire("pointerup", { target: body });
 }
 process.exit(0);
