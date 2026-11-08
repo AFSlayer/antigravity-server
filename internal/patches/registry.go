@@ -285,7 +285,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileHomeNewConvoRowRe,
-			Replace: `${1}var _agyHome=c==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${2}(a||_agyHome)&&${3}variant:_agyHome?"ghost":"secondary",${4}href:_agyHome?void 0:${5},onClick:_agyHome?()=>window.__agyStartNewConversation?.():void 0,${6}selected:!_agyHome&&${7},`,
+			Replace: `${1}var _agyHome=c==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${2}(a||_agyHome)&&${3}variant:_agyHome?"ghost":"secondary",${4}href:_agyHome?void 0:${5},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${6}selected:!_agyHome&&${7},`,
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
 		},

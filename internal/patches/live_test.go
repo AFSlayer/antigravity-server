@@ -88,6 +88,9 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		if !bytes.Contains(mainJS, []byte(`{showNewConversation:a=!0,className:b,conciergeTestId:c}`)) {
 			t.Error("mobile-home-new-conversation-row: the navigation component's parameters changed, so it may not recognize the mobile home")
 		}
+		if !bytes.Contains(mainJS, []byte(`conciergeTestId:"mobile-home-concierge"`)) {
+			t.Error("mobile-home-new-conversation-row: the mobile home no longer identifies itself as the patch expects")
+		}
 	}
 
 	// mobile-back-clears-section also tells the titlebar's home hook to treat a selected project as away from home, so

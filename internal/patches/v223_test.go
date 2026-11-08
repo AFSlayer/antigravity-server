@@ -718,6 +718,15 @@ simulateNativeFocusIn = false;
 btnEl.props.onClick();
 assert.strictEqual(focusedCount, 1);
 assert.strictEqual(focusInCount, 1, "synthetic FocusEvent must fire once when native focusin did not fire");
+
+// 7. With the row above the list on the mobile home, the list leaves its items alone and registers what the row calls
+window.__agyNewRowOnTop = true;
+startedSection = null;
+const topBfc = renderWith("background", rawItems).children[0].children[0];
+assert.strictEqual(topBfc.props.items, rawItems, "the list must not add a second New Conversation row");
+window.__agyStartNewConversation();
+assert.strictEqual(startedSection, "outside-of-project");
+window.__agyNewRowOnTop = undefined;
 process.exit(0);
 `
 			if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
@@ -990,6 +999,13 @@ assert.strictEqual(desk.props.href, "/");
 assert.strictEqual(desk.props.selected, true);
 assert.strictEqual(desk.props.onClick, undefined);
 assert.strictEqual(window.__agyNewRowOnTop, undefined);
+
+// Without the list's patch nothing is registered, and the row still goes to a new conversation.
+let assigned = "";
+window.location = { assign(url) { assigned = url; } };
+delete window.__agyStartNewConversation;
+nav(home).children[0].props.onClick();
+assert.strictEqual(assigned, "/?project=outside-of-project");
 
 // Another caller that turns the row off still gets none.
 assert.strictEqual(nav({ showNewConversation: false, className: "x" }), null);
