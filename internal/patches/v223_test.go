@@ -943,3 +943,59 @@ null,A.createElement(YT,{iconName:"arrow_back",onClick:()=>{c()},"aria-label":"B
 		checkSyntax(t, "question-modal-write-in-radio-229", got)
 	})
 }
+
+// The mobile home turns off the sidebar's New Conversation row, and with it the top of the list PC shows.
+func TestMobileHomeNewConversationRow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	nav := `function nav({showNewConversation:a=!0,className:b,conciergeTestId:c}){var z=deps.z,y=deps.y,G=deps.G,I=[],B=!1,x=()=>"/",t={},p=()=>{},J=!1,r=()=>{},d=true,C=null,M=0;return a||!z?.hideConversationHistory||y||G||I.length>0||B?A.createElement("div",{className:dj("flex flex-col gap-1.5",b),"data-testid":"sidebar-navigation-items"},a&&A.createElement(B5,{variant:"secondary",icon:A.createElement(lt,{name:"add"}),text:"New Conversation",href:x(t),"data-testid":"new-conversation-button",` + "\n" + `onActivate:()=>{p();J&&r()},selected:d,tooltipText:"New Conversation",tooltipKeybinding:C?.keybindings}),"rest"):null}`
+	got := applyOnly(t, "mobile-home-new-conversation-row", nav, Options{MobileUX: true})
+	if !strings.Contains(got, `_agyHome`) {
+		t.Fatalf("the patch did not apply:\n%s", got)
+	}
+	if off := applyOnly(t, "mobile-home-new-conversation-row", nav, Options{MobileUX: false}); strings.Contains(off, `_agyHome`) {
+		t.Fatal("the row is a mobile patch")
+	}
+	harness := `
+const assert = require("assert");
+global.window = {};
+const A = { createElement(tag, props, ...children) { return { tag, props, children }; } };
+const dj = (...c) => c.join(" "), B5 = "SideBarButton", lt = "Icon";
+const deps = { z: { hideConversationHistory: true }, y: false, G: false };
+` + got + `
+const home = { showNewConversation: false, className: "px-2", conciergeTestId: "mobile-home-concierge" };
+
+// The mobile home's row is one of the plain rows, first in the column, even with nothing else to show there.
+const homeTree = nav(home);
+const row = homeTree.children[0];
+assert.strictEqual(row.props.variant, "ghost");
+assert.strictEqual(row.props.href, undefined);
+assert.strictEqual(row.props.selected, false);
+assert.strictEqual(row.props["data-testid"], "new-conversation-button");
+assert.strictEqual(window.__agyNewRowOnTop, true);
+
+// It starts a conversation through what the list component registered.
+let started = 0;
+window.__agyStartNewConversation = () => { started++; };
+row.props.onClick();
+assert.strictEqual(started, 1);
+
+// The PC sidebar keeps its own row.
+window.__agyNewRowOnTop = undefined;
+const desk = nav({}).children[0];
+assert.strictEqual(desk.props.variant, "secondary");
+assert.strictEqual(desk.props.href, "/");
+assert.strictEqual(desk.props.selected, true);
+assert.strictEqual(desk.props.onClick, undefined);
+assert.strictEqual(window.__agyNewRowOnTop, undefined);
+
+// Another caller that turns the row off still gets none.
+assert.strictEqual(nav({ showNewConversation: false, className: "x" }), null);
+process.exit(0);
+`
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("runtime harness failed: %v\n%s", err, out)
+	}
+}

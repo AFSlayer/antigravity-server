@@ -79,6 +79,17 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
+	// mobile-home-new-conversation-row is optional for older bundles, and would fall back to the row in the list without
+	// a word. It also tells the mobile home apart by the navigation component's third parameter.
+	if bytes.Contains(mainJS, []byte(`showNewConversation:!1`)) {
+		if !mobileHomeNewConvoRowRe.Match(mainJS) {
+			t.Error("mobile-home-new-conversation-row: the navigation rows were not found; the mobile home falls back to the row in the list")
+		}
+		if !bytes.Contains(mainJS, []byte(`{showNewConversation:a=!0,className:b,conciergeTestId:c}`)) {
+			t.Error("mobile-home-new-conversation-row: the navigation component's parameters changed, so it may not recognize the mobile home")
+		}
+	}
+
 	// mobile-back-clears-section also tells the titlebar's home hook to treat a selected project as away from home, so
 	// the back button shows there. That part is optional for older bundles and would fail without a word, so check
 	// that it matches and that the hook it flags is the one mobile-new-convo-header rewrites.
