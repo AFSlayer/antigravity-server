@@ -80,6 +80,12 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
+	// paging-trim-waits-for-still is optional for bundles without this paging code, and would leave rows dropping under
+	// a moving reader without a word.
+	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !pagingTrimWaitsRe.Match(mainJS) {
+		t.Error("paging-trim-waits-for-still: the paging code is there but its update decision was not found; rows above drop while the reader scrolls")
+	}
+
 	// mobile-home-new-conversation-row is optional for older bundles, and would fall back to the row in the list without
 	// a word. It also tells the mobile home apart by the navigation component's third parameter.
 	if bytes.Contains(mainJS, []byte(`showNewConversation:!1`)) {
