@@ -876,6 +876,30 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   coarse = false;
 }
 
+// The same when the first event after the slide still carries the bounce, or the old position iOS put back. The app
+// asked for the position the slide left, and that is what is held.
+for (const first of [-30, 26292]) {
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollHeight = 48921;
+  el.scrollTop = 26327;
+  fire("scroll", { target: el });
+  now += 50;
+  el.scrollTop = -58;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 26327);
+  now += 300;
+  window.__agyScrolledByScript(el, 8069);
+  el.scrollHeight = 30663;
+  el.scrollTop = first;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 8069, "held where the slide left it, first event at " + first);
+  now += 5000;
+  coarse = false;
+}
+
 // A collapse long past says nothing about where a later fling came from.
 {
   coarse = true;
@@ -982,6 +1006,17 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   window.__agyScrolledByScript(el, 900);
   assert.strictEqual(el.style.overflowY, "");
 
+  // Following a reply on a tall screen, the app pins the position to the bottom by asking for the whole height, which is
+  // a screen further than the end. Only the reply's own growth is a move.
+  el.clientHeight = 1200;
+  el.scrollHeight = 50000;
+  el.scrollTop = 48800;
+  fire("scroll", { target: el });
+  el.scrollHeight = 50900;
+  window.__agyScrolledByScript(el, 50900);
+  assert.strictEqual(el.style.overflowY, "", "a pin to the bottom is not rows above");
+  el.clientHeight = 666;
+
   // A smooth scroll the app asks for, such as the End key's, is left to run.
   fire("scroll", { target: el });
   window.__agyScrolledByScript(el, 29592, true);
@@ -1063,6 +1098,23 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   assert.strictEqual(answers.indexOf(false), 12, "waits for 3 s, then lets the rows go");
   assert.ok(answers.slice(13).every(Boolean), "the next drop waits again");
   assert.strictEqual(waits, 4);
+
+  // Rendering can hold the bundle's next question back for over a second, and that time counts as well.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  const slow = [];
+  for (let k = 0; k < 5; k++) {
+    now += 1200;
+    el.scrollTop -= 200;
+    fire("scroll", { target: el });
+    slow.push(window.__agyDeferTrim());
+    fire("touchstart", onEl([{}]));
+    fire("touchmove", onEl([{}]));
+    fire("touchend", onEl([]));
+  }
+  assert.deepStrictEqual(slow, [true, true, true, false, true], "the wait ends after 3 s of slow questions too");
 
   // A slow drag uses none of that time, so the fling it ends in still gets all of it.
   now += 5000;
@@ -1169,6 +1221,12 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   const row = { closest: () => el, own: {}, addEventListener(name, fn) { this.own[name] = fn; } };
   fire("touchstart", { target: row, touches: [{}] });
   assert.strictEqual(window.__agyDeferTrim(), true);
+  // The drag goes on over the removed row for longer than a silent finger is believed.
+  for (let k = 0; k < 15; k++) {
+    now += 1000;
+    row.own.touchmove({ target: row, touches: [{}] });
+  }
+  assert.strictEqual(window.__agyDeferTrim(), true, "a drag on a removed row still holds the rows");
   row.own.touchend({ target: row, touches: [] });
   now += 400;
   frame();

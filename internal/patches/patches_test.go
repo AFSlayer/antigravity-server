@@ -141,6 +141,20 @@ func TestAllMainJSPatchesApply(t *testing.T) {
 	}
 }
 
+// The minifier wraps lines after operators, commas and semicolons, so the paging decision can be split at any of them.
+func TestPagingTrimWaitsMatchesWrappedLines(t *testing.T) {
+	var re *regexp.Regexp
+	for _, p := range All() {
+		if p.ID == "paging-trim-waits-for-still" {
+			re = p.FindRe
+		}
+	}
+	src := "ma=\nZ.startIndex<\noa.startIndex||\nZ.endIndexExclusive>\noa.endIndexExclusive;\nif(N(ba,\npa,\nka))ma&&\nK(g.timing.oppositeDirectionCooldownMs||\ng.timing.retryDelayMs);\nelse{"
+	if re == nil || !re.MatchString(src) {
+		t.Error("the paging decision was not matched across line breaks")
+	}
+}
+
 func TestPatchedContentIsCorrect(t *testing.T) {
 	out, _ := Apply(MainJS, syntheticBundle(), fullOptions())
 	body := string(out)
