@@ -20,8 +20,9 @@ var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url
 // findBarInputRe matches the input scroll-input-tracker looks for. The bundle can wrap lines between any two tokens.
 var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Find"`)
 
-// rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by.
-var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh`)
+// rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
+// it in a helper that the rows' minHeight calls.
+var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
