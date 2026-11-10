@@ -211,17 +211,13 @@
           >
         </li>
         <li id="step-2">
-          <div class="step-title">Sign in, then copy the address</div>
-          <div class="step-body">
-            The page will fail to load with something like "cannot connect". That is
-            expected. Copy the whole address from the address bar.
-          </div>
+          <div class="step-title" id="copy-title">Sign in with Google</div>
+          <div class="step-body" id="copy-body"></div>
         </li>
         <li id="step-3">
           <div class="step-title">Paste it here</div>
           <textarea
             id="pasted"
-            placeholder="http://localhost:12345/auth/callback?state=…&amp;code=…"
             autocapitalize="off"
             autocomplete="off"
             spellcheck="false"
@@ -234,7 +230,7 @@
 
       <div class="note">
         Nothing is sent anywhere except Google and the Antigravity language server
-        on this host. The address you paste contains a single-use code.
+        on this host. What you paste is a single-use code.
       </div>
       {{ end }}
     </main>
@@ -246,6 +242,24 @@
       const msg = document.getElementById("msg");
       const finish = document.getElementById("finish");
       const pasted = document.getElementById("pasted");
+
+      // What step 2 and 3 say depends on how the language server finishes the
+      // sign-in. 2.31 and later show a code; older ones redirect to localhost.
+      const modes = {
+        authCode: {
+          title: "Sign in, then copy the code",
+          body: 'Google ends on a page that shows an authorization code. Tap "Copy to Clipboard".',
+          placeholder: "4/0A…",
+          empty: "Paste the code Google showed you.",
+        },
+        loopback: {
+          title: "Sign in, then copy the address",
+          body: 'The page will fail to load with something like "cannot connect". That is expected. Copy the whole address from the address bar.',
+          placeholder: "http://localhost:12345/auth/callback?state=…&code=…",
+          empty: "Paste the address you were redirected to.",
+        },
+      };
+      let mode = modes.loopback;
 
       function say(text, kind) {
         msg.textContent = text;
@@ -259,31 +273,44 @@
           body: JSON.stringify(body || {}),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Request failed");
+        if (!res.ok) {
+          const err = new Error(data.error || "Request failed");
+          err.status = res.status;
+          throw err;
+        }
         return data;
       }
 
-      (async () => {
-        try {
-          const data = await post("/__agy/api/signin/begin");
-          if (data.signedIn) {
-            location.reload();
-            return;
-          }
-          link.href = data.authUrl;
-          link.removeAttribute("aria-disabled");
-          note.textContent = "Opens in a new tab. Come back here afterwards.";
-          document.getElementById("step-1").classList.add("done");
-        } catch (err) {
-          note.textContent = "";
-          say(err.message, "err");
+      async function prepare() {
+        link.setAttribute("aria-disabled", "true");
+        link.removeAttribute("href");
+        note.textContent = "Preparing…";
+        document.getElementById("step-1").classList.remove("done");
+
+        const data = await post("/__agy/api/signin/begin");
+        if (data.signedIn) {
+          location.reload();
+          return;
         }
-      })();
+        mode = modes[data.mode] || modes.loopback;
+        document.getElementById("copy-title").textContent = mode.title;
+        document.getElementById("copy-body").textContent = mode.body;
+        pasted.placeholder = mode.placeholder;
+        link.href = data.authUrl;
+        link.removeAttribute("aria-disabled");
+        note.textContent = "Opens in a new tab. Come back here afterwards.";
+        document.getElementById("step-1").classList.add("done");
+      }
+
+      prepare().catch((err) => {
+        note.textContent = "";
+        say(err.message, "err");
+      });
 
       finish.addEventListener("click", async () => {
         const value = pasted.value.trim();
         if (!value) {
-          say("Paste the address you were redirected to.", "err");
+          say(mode.empty, "err");
           return;
         }
 
@@ -297,7 +324,19 @@
           finish.textContent = "Done";
           setTimeout(() => location.replace("/"), 1800);
         } catch (err) {
-          say(err.message, "err");
+          if (err.status === 409) {
+            // The attempt is gone, so its code is useless. Start a new one.
+            pasted.value = "";
+            try {
+              await prepare();
+              say("That sign-in expired. Open the Google page again.", "err");
+            } catch (again) {
+              note.textContent = "";
+              say(again.message, "err");
+            }
+          } else {
+            say(err.message, "err");
+          }
           finish.disabled = false;
         }
       });

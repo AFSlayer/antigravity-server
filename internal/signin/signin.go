@@ -8,14 +8,20 @@
 // directly. It builds a Google consent URL, tries to open it with xdg-open, then
 // waits for the callback on 127.0.0.1.
 //
-// This package captures that URL with a shim standing in for xdg-open, hands it
-// to the browser, and accepts the address the browser was redirected to
-// afterwards, forwarding it to the waiting callback listener. Sign-in then
-// completes with no SSH tunnel and no token copied by hand.
+// This package captures that URL with a shim standing in for xdg-open. From
+// 2.31 the language server can then switch the attempt to an auth-code flow,
+// where Google redirects to a page on antigravity.google that shows a one-time
+// code. When it can, Begin switches and hands that URL to the browser, and
+// Complete submits the code the user pastes back. Older language servers lack
+// the switch, so Begin falls back to the loopback URL and Complete forwards the
+// address the browser was redirected to afterwards to the waiting callback
+// listener. Either way sign-in completes with no SSH tunnel.
 package signin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,9 +40,23 @@ const (
 	// consent URL to the shim.
 	urlTimeout = 20 * time.Second
 	// loginTimeout bounds the Login RPC, which blocks until the callback arrives.
+	// Language servers from 2.31 end the attempt on their own after 5 minutes.
 	loginTimeout = 15 * time.Minute
 	// sessionTTL is how long a captured URL stays usable before we start over.
+	// It stays well under the language server's own 5 minutes so a reused URL
+	// leaves time to finish.
 	sessionTTL = 2 * time.Minute
+)
+
+// Mode says what the user pastes back once Google is done with them.
+type Mode string
+
+const (
+	// ModeAuthCode means Google ends on a page that shows a one-time code.
+	ModeAuthCode Mode = "authCode"
+	// ModeLoopback means Google redirects to a localhost address that fails to
+	// load, and the user pastes that address.
+	ModeLoopback Mode = "loopback"
 )
 
 var (
@@ -45,15 +65,31 @@ var (
 	ErrUnavailable = errors.New("sign-in cannot be started on this instance")
 	// ErrNoSession means Complete was called before Begin.
 	ErrNoSession = errors.New("no sign-in is in progress")
+	// ErrExpired means the language server gave up on the attempt, so the code
+	// or address can no longer be used.
+	ErrExpired = errors.New("this sign-in expired, so start it again")
 	// ErrNoCode means the pasted address carried no authorization code.
 	ErrNoCode = errors.New("that address has no authorization code in it")
 )
 
 type session struct {
+	mode        Mode
 	authURL     string
 	callbackURL string
 	started     time.Time
 	cancel      context.CancelFunc
+	// done is closed when the Login RPC returns, which ends the attempt.
+	done chan struct{}
+}
+
+// live reports whether the language server is still waiting on this attempt.
+func (s *session) live() bool {
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // Coordinator owns at most one in-flight sign-in attempt.
@@ -61,6 +97,9 @@ type Coordinator struct {
 	instance *lsproc.Instance
 	urlFile  string
 
+	// beginMu serialises Begin, so two tabs opening the page share one attempt
+	// instead of the second Login replacing the first.
+	beginMu sync.Mutex
 	mu      sync.Mutex
 	pending *session
 
@@ -198,19 +237,22 @@ func (c *Coordinator) refreshSignedIn(prevCachedAt time.Time) {
 	c.cachedAt = time.Now()
 }
 
-// Begin starts a sign-in attempt and returns the Google consent URL to open. If
-// an attempt is already in flight its URL is returned instead, so refreshing the
-// page does not strand the previous one.
-func (c *Coordinator) Begin(ctx context.Context) (string, error) {
+// Begin starts a sign-in attempt and returns the Google consent URL to open,
+// along with what the user will paste back. If an attempt is already in flight
+// its URL is returned instead, so refreshing the page does not strand the
+// previous one.
+func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	if !c.Available() {
-		return "", ErrUnavailable
+		return "", "", ErrUnavailable
 	}
 
+	c.beginMu.Lock()
+	defer c.beginMu.Unlock()
+
 	c.mu.Lock()
-	if c.pending != nil && time.Since(c.pending.started) < sessionTTL {
-		authURL := c.pending.authURL
+	if p := c.pending; p != nil && p.live() && time.Since(p.started) < sessionTTL {
 		c.mu.Unlock()
-		return authURL, nil
+		return p.authURL, p.mode, nil
 	}
 	if c.pending != nil {
 		c.pending.cancel()
@@ -219,36 +261,75 @@ func (c *Coordinator) Begin(ctx context.Context) (string, error) {
 	c.mu.Unlock()
 
 	if err := os.Remove(c.urlFile); err != nil && !os.IsNotExist(err) {
-		return "", err
+		return "", "", err
 	}
 
 	loginCtx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	sess := &session{started: time.Now(), cancel: cancel, done: make(chan struct{})}
 	go func() {
-		// Login blocks until the callback arrives or the context expires. Its
-		// result is ignored: SignedIn is the source of truth afterwards.
+		// Login blocks until the attempt succeeds, fails or expires. Its result
+		// is ignored: SignedIn is the source of truth afterwards.
 		_, _ = c.instance.Call(loginCtx, "Login", map[string]any{})
+		close(sess.done)
 	}()
 
-	authURL, err := c.waitForURL(ctx)
+	loopbackURL, err := c.waitForURL(ctx, sess.done)
 	if err != nil {
 		cancel()
-		return "", err
+		return "", "", err
 	}
 
-	callbackURL, err := callbackFrom(authURL)
-	if err != nil {
-		cancel()
-		return "", err
+	if authURL, ok := c.switchToAuthCode(ctx); ok {
+		sess.mode, sess.authURL = ModeAuthCode, authURL
+	} else {
+		callbackURL, err := callbackFrom(loopbackURL)
+		if err != nil {
+			cancel()
+			return "", "", err
+		}
+		sess.mode, sess.authURL, sess.callbackURL = ModeLoopback, loopbackURL, callbackURL
 	}
 
 	c.mu.Lock()
-	c.pending = &session{authURL: authURL, callbackURL: callbackURL, started: time.Now(), cancel: cancel}
+	c.pending = sess
 	c.mu.Unlock()
 
-	return authURL, nil
+	return sess.authURL, sess.mode, nil
 }
 
-func (c *Coordinator) waitForURL(ctx context.Context) (string, error) {
+// switchToAuthCode asks the language server to move the attempt in flight to
+// the auth-code flow and returns the consent URL for it. It reports false on
+// language servers older than 2.31, which do not have the RPC.
+func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, bool) {
+	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
+	if err != nil {
+		return "", false
+	}
+
+	var out struct {
+		Active  bool            `json:"active"`
+		AuthURL string          `json:"authUrl"`
+		Mode    json.RawMessage `json:"mode"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", false
+	}
+	if !out.Active || !isAuthCodeMode(out.Mode) || !strings.HasPrefix(out.AuthURL, "https://accounts.google.com/") {
+		return "", false
+	}
+	return out.AuthURL, true
+}
+
+// isAuthCodeMode accepts LoginSessionMode as protojson writes it, by name, and
+// as a number in case a server writes enums that way.
+func isAuthCodeMode(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return string(raw) == `"LOGIN_SESSION_MODE_AUTH_CODE"` || string(raw) == "2"
+}
+
+// waitForURL waits for the shim to record the consent URL. done is closed if
+// the Login RPC returns first, in which case no URL is coming.
+func (c *Coordinator) waitForURL(ctx context.Context, done <-chan struct{}) (string, error) {
 	deadline := time.Now().Add(urlTimeout)
 
 	for {
@@ -268,6 +349,8 @@ func (c *Coordinator) waitForURL(ctx context.Context) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
+		case <-done:
+			return "", fmt.Errorf("the language server ended the sign-in before producing a URL")
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -300,8 +383,10 @@ func callbackFrom(authURL string) (string, error) {
 	return target.String(), nil
 }
 
-// Complete forwards the address the browser landed on to the waiting callback
-// listener and reports whether Antigravity ended up signed in.
+// Complete hands what the user pasted to the language server and reports
+// whether Antigravity ended up signed in. In auth-code mode that is the code
+// Google showed, or the address of the page that showed it. In loopback mode it
+// is the address the browser was redirected to.
 func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	c.mu.Lock()
 	pending := c.pending
@@ -310,15 +395,24 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	if pending == nil {
 		return ErrNoSession
 	}
-
-	query, err := queryFrom(pasted)
-	if err != nil {
-		return err
+	if !pending.live() {
+		c.finish(pending)
+		return ErrExpired
 	}
 
-	if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
-		c.finish()
-		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+	if pending.mode == ModeAuthCode {
+		if err := c.submitAuthCode(ctx, pending, pasted); err != nil {
+			return err
+		}
+	} else {
+		query, err := queryFrom(pasted)
+		if err != nil {
+			return err
+		}
+		if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
+			c.finish(pending)
+			return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+		}
 	}
 
 	// The Login RPC needs a moment to exchange the code for a token.
@@ -328,7 +422,7 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 			c.cached = authSignedIn
 			c.cachedAt = time.Now()
 			c.authMu.Unlock()
-			c.finish()
+			c.finish(pending)
 			return nil
 		}
 		select {
@@ -341,13 +435,52 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	return fmt.Errorf("Antigravity accepted the code but is still not signed in")
 }
 
-func (c *Coordinator) finish() {
-	c.mu.Lock()
-	if c.pending != nil {
-		c.pending.cancel()
-		c.pending = nil
+// submitAuthCode passes the pasted text to SubmitLoginAuthCode as is. The
+// language server accepts a bare code or the whole callback page address and
+// explains what is wrong with anything else, so it is left to judge.
+func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, pasted string) error {
+	code := strings.TrimSpace(pasted)
+	if code == "" {
+		return errors.New("paste the code Google showed you")
 	}
-	c.mu.Unlock()
+
+	data, err := c.instance.Call(ctx, "SubmitLoginAuthCode", map[string]any{"code": code})
+	if err != nil {
+		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+	}
+
+	var out struct {
+		Accepted   bool   `json:"accepted"`
+		RetryError string `json:"retryError"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return fmt.Errorf("could not read Antigravity's answer: %w", err)
+	}
+	if out.Accepted {
+		return nil
+	}
+
+	// A rejected code leaves the attempt open for another try unless the
+	// language server has given up on it.
+	if !pending.live() {
+		c.finish(pending)
+		return ErrExpired
+	}
+	if out.RetryError != "" {
+		return errors.New(out.RetryError)
+	}
+	return errors.New("Antigravity did not accept that code")
+}
+
+// finish ends sess. It leaves alone an attempt that has since replaced it.
+func (c *Coordinator) finish(sess *session) {
+	sess.cancel()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending != sess {
+		return
+	}
+	c.pending = nil
 	_ = os.Remove(c.urlFile)
 }
 

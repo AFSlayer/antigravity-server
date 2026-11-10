@@ -80,7 +80,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authURL, err := s.coordinator.Begin(ctx)
+	authURL, mode, err := s.coordinator.Begin(ctx)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, signin.ErrUnavailable) {
@@ -90,7 +90,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"authUrl": authURL})
+	writeJSON(w, http.StatusOK, map[string]any{"authUrl": authURL, "mode": mode})
 }
 
 func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 		Pasted string `json:"pasted"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Could not read the pasted address."})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Could not read what was pasted."})
 		return
 	}
 
@@ -111,7 +111,7 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.coordinator.Complete(ctx, req.Pasted); err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, signin.ErrNoSession) {
+		if errors.Is(err, signin.ErrNoSession) || errors.Is(err, signin.ErrExpired) {
 			status = http.StatusConflict
 		}
 		writeJSON(w, status, map[string]any{"error": err.Error()})
