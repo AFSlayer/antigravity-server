@@ -345,6 +345,7 @@ for (const [top, over] of [[8998, false], [8999, false], [9000, true], [9500, tr
   settle();
   let reads = 0;
   const el = viewport();
+  frame();
   Object.defineProperty(el, "scrollHeight", { get() { reads++; return 10000; } });
   Object.defineProperty(el, "scrollTop", { get() { reads++; return 9000; } });
   remove(el, ROWS);
@@ -430,6 +431,7 @@ for (const [fall, expected] of [[1600, true], [1601, false]]) {
 {
   settle();
   const el = viewport();
+  frame();
   observer([{ target: { closest: () => null }, removedNodes: [ROWS] }, { target: {}, removedNodes: [ROWS] }]);
   assert.strictEqual(frames.length, 0);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
@@ -980,6 +982,12 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   window.__agyScrolledByScript(el, 900);
   assert.strictEqual(el.style.overflowY, "");
 
+  // A smooth scroll the app asks for, such as the End key's, is left to run.
+  fire("scroll", { target: el });
+  window.__agyScrolledByScript(el, 29592, true);
+  assert.strictEqual(el.style.overflowY, "", "a smooth scroll is not ended");
+  frame();
+
   // Nor is a finger still down ended.
   fire("touchstart", onEl([{}]));
   window.__agyScrolledByScript(el, 29592);
@@ -1025,11 +1033,19 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   now += 200;
   el.scrollTop -= 30;
   fire("scroll", { target: el });
+  // A main thread busy rendering draws no frame and gets no scroll event while the fling goes on.
+  now += 600;
+  assert.strictEqual(window.__agyDeferTrim(), true, "no frame drawn since the last move");
+  frame();
+  assert.strictEqual(window.__agyDeferTrim(), false, "frames drawn and still for 300 ms");
+  el.scrollTop -= 30;
+  fire("scroll", { target: el });
+  frame();
   now += 299;
   assert.strictEqual(window.__agyDeferTrim(), true);
   now += 2;
   assert.strictEqual(window.__agyDeferTrim(), false, "still for 300 ms");
-  assert.strictEqual(waits, 1, "the trace marks the wait once");
+  assert.strictEqual(waits, 2, "the trace marks each wait once");
 
   // Flings run together for long hold the rows back for 3 s, as rows keep loading above in the meantime.
   now += 5000;
@@ -1046,19 +1062,51 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   }
   assert.strictEqual(answers.indexOf(false), 12, "waits for 3 s, then lets the rows go");
   assert.ok(answers.slice(13).every(Boolean), "the next drop waits again");
-  assert.strictEqual(waits, 3);
+  assert.strictEqual(waits, 4);
+
+  // A slow drag uses none of that time, so the fling it ends in still gets all of it.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  const dragged = [];
+  for (let k = 0; k < 16; k++) {
+    now += 250;
+    fire("touchmove", onEl([{}]));
+    el.scrollTop -= 40;
+    fire("scroll", { target: el });
+    dragged.push(window.__agyDeferTrim());
+  }
+  fire("touchend", onEl([]));
+  const flung = [];
+  for (let k = 0; k < 14; k++) {
+    now += 250;
+    el.scrollTop -= 100;
+    fire("scroll", { target: el });
+    flung.push(window.__agyDeferTrim());
+  }
+  assert.ok(dragged.every(Boolean), "a 4 s drag waits throughout");
+  assert.strictEqual(flung.indexOf(false), 12, "the fling after it waits its own 3 s");
 
   // A finger down is waited for however long it stays.
   now += 5000;
   fire("touchstart", onEl([{}]));
-  now += 10000;
-  assert.strictEqual(window.__agyDeferTrim(), true, "a finger down 10 s later");
+  now += 9000;
+  fire("touchmove", onEl([{}]));
+  now += 9000;
+  assert.strictEqual(window.__agyDeferTrim(), true, "a finger down 18 s later");
   // A page hidden with the finger down may never see the touch end.
   global.document.hidden = true;
   fire("visibilitychange", {});
   delete global.document.hidden;
   now += 400;
+  frame();
   assert.strictEqual(window.__agyDeferTrim(), false, "hiding the page lifts the finger");
+  // Nor may anything else that loses a touch's end. A finger that sent nothing for 10 s is taken as lifted.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  now += 9999;
+  assert.strictEqual(window.__agyDeferTrim(), true);
+  now += 2;
+  assert.strictEqual(window.__agyDeferTrim(), false, "silent for 10 s");
 
   // The app moving the position long after any input, as it does while following a reply, does not hold the rows.
   now += 10000;
@@ -1123,6 +1171,7 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   assert.strictEqual(window.__agyDeferTrim(), true);
   row.own.touchend({ target: row, touches: [] });
   now += 400;
+  frame();
   assert.strictEqual(window.__agyDeferTrim(), false, "the removed row's own end lifts the finger");
   now += 5000;
 }
@@ -1346,7 +1395,9 @@ assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), false, false), "reques
 assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), undefined, false), "request", "a page without the tracker goes ahead");
 assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false), "request", "loading older rows never waits");
 assert.strictEqual(decide(at(3400, 3570), at(3400, 3570), true, false), "request", "keeping the start never waits");
+assert.strictEqual(decide(at(3400, 3500), at(3470, 3550), true, false), "request", "an update that also loads rows below never waits");
 assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, true), "retry 1000", "the bundle's own cooldown is kept");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, true), "", "and a drop in its cooldown is skipped as before");
 `
 	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {
 		t.Fatalf("paging harness failed: %v\n%s", err, out)
@@ -1429,7 +1480,8 @@ let clock = 100000;
 let timers = [];
 const performance = { now: () => clock };
 const window = { location: { pathname: "/c/x" } };
-const requestAnimationFrame = fn => fn();
+let frames = [];
+const requestAnimationFrame = fn => { frames.push(fn); };
 const setTimeout = fn => { timers.push(fn); };
 ` + limit + `
 let lastScrollHeight, lastScrollTop, sc;
@@ -1439,6 +1491,7 @@ const chatScroller = () => sc;
 // Rows arrive while the reader is at the top, and the position goes to where the old top now is.
 const prepend = () => {
   timers = [];
+  frames = [];
   sc = { scrollTop: 0, scrollHeight: 458560 };
   lastScrollHeight = 458560;
   lastScrollTop = 0;
@@ -1446,7 +1499,7 @@ const prepend = () => {
   handleScrollerMutation();
   assert.strictEqual(sc.scrollTop, 32281);
 };
-const runRetries = () => timers.forEach(fn => fn());
+const runRetries = () => { frames.forEach(fn => fn()); timers.forEach(fn => fn()); };
 
 // A re-render that puts the position back at the top is still corrected.
 prepend();
@@ -1463,6 +1516,14 @@ sc.scrollHeight = 491000;
 runRetries();
 assert.strictEqual(sc.scrollTop, 32281);
 
+// A loading row going away shortens the conversation by a little, and the position is still corrected.
+prepend();
+clock += 150;
+sc.scrollTop = 0;
+sc.scrollHeight = 490801;
+runRetries();
+assert.strictEqual(sc.scrollTop, 32281);
+
 // Rows dropped above the reader shorten the conversation, and the lower position is right, however soon it happens.
 prepend();
 clock += 150;
@@ -1471,7 +1532,8 @@ sc.scrollTop = 8346;
 runRetries();
 assert.strictEqual(sc.scrollTop, 8346);
 
-// A retry held back for seconds does nothing, even if the height happens to be the same.
+// A retry held back for seconds does nothing, even if the height happens to be the same. Nor does the next frame's write
+// when rendering held that back as long.
 prepend();
 clock += 4600;
 sc.scrollTop = 8299;
