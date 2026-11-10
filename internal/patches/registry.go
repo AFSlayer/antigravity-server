@@ -17,12 +17,12 @@ var (
 
 	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&(?:\((?:[a-zA-Z0-9_$]+\(\),)+[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\)\)|[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\))`)
 
-	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
+	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:if\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\.current\)\)return!0;)?)((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:[de],sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);return )[a-zA-Z0-9_$]+\(\)\|\|(a\.length===0&&!g\?null:)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
-	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===0\)return ([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
+	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===\s*0\)return\s*([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileProjectSettingsExportRe       = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(\)\{var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),[de]=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=[a-zA-Z0-9_$]+\("main"\)`)
 	mobileSettingsProjectsRe            = regexp.MustCompile(
 		`(var [a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),[\s\S]{1,250}?\{sharedNavItems:[ce],globalScreens:[df],workspaces:[fg],showWorkspacesSection:[gh]\}=[a-zA-Z0-9_$]+\(\);` +
@@ -39,7 +39,7 @@ var (
 	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
 	mobileConversationRowActionsRe = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",(?:[\r\n\s]*![a-zA-Z0-9_$]+&&"\[&>\*\]:pointer-events-auto",)?)[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":[\r\n\s]*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
 
-	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),[\r\n\s]*handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
+	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),[\r\n\s]*handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)((?:,\s*handleRename:[a-zA-Z0-9_$]+)?)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
 	mobileTitlebarDeleteModalRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);[\r\n\s]*return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+[^}]*\}\)=>)`)
@@ -64,8 +64,8 @@ var (
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
 	mobileBackClearsSectionRe         = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
-	mobileHomeNewConvoRowRe           = regexp.MustCompile(`(;\s*)return a\|\|(![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\("flex flex-col gap-1\.5",\s*b\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),`)
-	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,variant:"sidebar",surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
+	mobileHomeNewConvoRowRe           = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|(![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),`)
+	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,variant:"sidebar",surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
 
@@ -90,7 +90,7 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+===void 0\|\|[a-zA-Z0-9_$]+\.isMultiSelect\|\|!document\.hasFocus\(\)\|\|[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)&&[a-zA-Z0-9_$]+!==[a-zA-Z0-9_$]+\.current)(\|\|[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
-	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*[a-zA-Z0-9_$]+\.current\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*)?)`)
+	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*(?:[a-zA-Z0-9_$]+\.current|0)\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*|!\s*[a-zA-Z0-9_$]+\s*\|\|\s*([a-zA-Z0-9_$]+)\.current\s*\|\|\s*)?)`)
 	pagingTrimWaitsRe                     = regexp.MustCompile(`(([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.startIndex\s*<\s*([a-zA-Z0-9_$]+)\.startIndex\s*\|\|\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*>\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*;\s*if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{`)
 	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+(?:\.current)?)\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
@@ -138,7 +138,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileEnterNewlineRe,
-			Replace: `registerCommand($1,$2=>{if(!$2)return!1;${3}var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
+			Replace: `registerCommand($1,$2=>{if(!$2)return!1;${3}${4}var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
@@ -286,7 +286,8 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileHomeNewConvoRowRe,
-			Replace: `${1}var _agyHome=c==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${2}(a||_agyHome)&&${3}variant:_agyHome?"ghost":"secondary",${4}href:_agyHome?void 0:${5},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${6}selected:!_agyHome&&${7},`,
+			// The mobile home tells itself apart by the component's conciergeTestId, whatever the parameter is called.
+			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${3}(a||_agyHome)&&${4}variant:_agyHome?"ghost":"secondary",${5}href:_agyHome?void 0:${6},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${7}selected:!_agyHome&&${8},`,
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
 		},
@@ -382,14 +383,16 @@ func All() []Patch {
 				return string(g[1]) + pmInit + `,_hp=!!` + string(g[11]) + `().get("settings")?.hideProjects,_ps=` + string(g[14]) + `(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),_init=(0,` + react + `.useRef)(!1);(0,` + react + `.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(` + navAct + `(_scr));` + stk + `.push("project:"+_pid)}else if(_scr&&_scr!=="General"){a(` + navAct + `(_scr));` + stk + `.push(_scr)}}catch(_e){}},[]);` + string(g[3]) + `,!_hp&&_pm&&_pl.length>0&&` + react + `.createElement(` + react + `.Fragment,null,` + react + `.createElement(` + hdrComp + `,{text:"Projects"}),_pl.map(_p=>` + react + `.createElement(` + itemComp + `,{key:_p.project.id,text:_p.project.name||"Project",label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});` + stk + `.push("project:"+_p.project.id)}}))),_pm&&` + react + `.createElement(` + react + `.Fragment,null,` + react + `.createElement(` + hdrComp + `,{text:"Not in Project"}),` + react + `.createElement(` + itemComp + `,{key:"outside-of-project",text:"Conversations",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});` + stk + `.push("project:outside-of-project")}}))` + string(g[8]) + `m?.startsWith("project:")&&window.__agyProjectSettings?` + react + `.createElement(window.__agyProjectSettings,null):` + string(g[9]) + string(g[10])
 			},
 		},
+		// Since 2.31 the bundle shows these buttons on screens without hover itself, through can-hover: classes.
 		{
-			ID:      "mobile-user-message-actions",
-			Desc:    "Make user message action buttons (Undo icon and copy) visible on touch devices",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: mobile,
-			FindRe:  mobileUserMessageActionsRe,
-			Replace: `${1}"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container select-none"`,
+			ID:       "mobile-user-message-actions",
+			Desc:     "Make user message action buttons (Undo icon and copy) visible on touch devices",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  mobile,
+			Optional: true,
+			FindRe:   mobileUserMessageActionsRe,
+			Replace:  `${1}"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container select-none"`,
 		},
 		{
 			ID:      "mobile-conversation-row-actions",
@@ -407,7 +410,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteHookRe,
-			Replace: `{handleArchive:$1,handleRestore:$2,handlePin:$3,handleUnpin:$4,isArchiveSupported:$5,handleDelete:agyDel,showDeleteModal:agyShowDel,setShowDeleteModal:agySetShowDel,showLoadingSpinner:agyDelSpin,handleCloseDeleteModal:agyCloseDel,handleShare:$6,showShareModal:$7,shareUrl:$8,handleCloseShareModal:$9,onShare:$10}=$11($12??"")`,
+			Replace: `{handleArchive:$1,handleRestore:$2,handlePin:$3,handleUnpin:$4,isArchiveSupported:$5,handleDelete:agyDel,showDeleteModal:agyShowDel,setShowDeleteModal:agySetShowDel,showLoadingSpinner:agyDelSpin,handleCloseDeleteModal:agyCloseDel,handleShare:${6},showShareModal:${7},shareUrl:${8},handleCloseShareModal:${9},onShare:${10}${11}}=${12}(${13}??"")`,
 		},
 		{
 			ID:      "mobile-titlebar-delete-menu",
@@ -697,14 +700,16 @@ func All() []Patch {
 				return string(g[1]) + `&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)` + string(g[2])
 			},
 		},
+		// Since 2.31 the hook measures the distance from the position itself.
 		{
-			ID:      "autoscroll-distance-fix",
-			Desc:    "Restore stable physical container scroll distance calculation in auto-scroll hook",
-			Target:  MainJS,
-			Kind:    Regexp,
-			Enabled: func(Options) bool { return true },
-			FindRe:  autoscrollDistanceFixRe,
-			Replace: `return ${1}?(${1}.scrollHeight-${1}.clientHeight-${1}.scrollTop)<=${3}:!1`,
+			ID:       "autoscroll-distance-fix",
+			Desc:     "Restore stable physical container scroll distance calculation in auto-scroll hook",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  func(Options) bool { return true },
+			Optional: true,
+			FindRe:   autoscrollDistanceFixRe,
+			Replace:  `return ${1}?(${1}.scrollHeight-${1}.clientHeight-${1}.scrollTop)<=${3}:!1`,
 		},
 		// The hook treats any drop in scrollTop as the user scrolling up and stops following the conversation.
 		// Rows remounting can collapse the content for a moment, which clamps scrollTop without anyone touching
@@ -735,6 +740,8 @@ func All() []Patch {
 				followOn := ""
 				if g[7] != nil {
 					followOn = "&&!" + string(g[7]) + ".current"
+				} else if g[8] != nil {
+					followOn = "&&!" + string(g[8]) + ".current"
 				}
 				return string(g[1]) + "(" + pinned + ".current" + followOn + "&&window.__agyIsSpontaneousScroll?.(" + el + ")?" +
 					el + `.scrollTo({top:` + el + `.scrollHeight,behavior:"instant"}):(` + unpin + "))" + ":" + string(g[6])
