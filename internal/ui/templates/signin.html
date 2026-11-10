@@ -248,7 +248,7 @@
       const modes = {
         authCode: {
           title: "Sign in, then copy the code",
-          body: 'Google ends on a page that shows an authorization code. Tap "Copy to Clipboard".',
+          body: 'Google ends on a page that shows an authorization code. Copy it with the "Copy to Clipboard" button.',
           placeholder: "4/0A…",
           empty: "Paste the code Google showed you.",
         },
@@ -327,9 +327,9 @@
           if (err.status === 409) {
             // The attempt is gone, so its code is useless. Start a new one.
             pasted.value = "";
+            say("That sign-in expired. Open the Google page again.", "err");
             try {
               await prepare();
-              say("That sign-in expired. Open the Google page again.", "err");
             } catch (again) {
               note.textContent = "";
               say(again.message, "err");

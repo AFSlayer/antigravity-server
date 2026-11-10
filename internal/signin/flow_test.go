@@ -27,6 +27,12 @@ type fakeLS struct {
 	urlFile string
 	// authCode makes SwitchLoginToAuthCode exist, as it does from 2.31.
 	authCode bool
+	// switchBody, when set, is what SwitchLoginToAuthCode answers instead.
+	switchBody string
+	// switchHang makes SwitchLoginToAuthCode wait for the caller to give up.
+	switchHang bool
+	// loginNoURL makes Login return at once without producing a URL.
+	loginNoURL bool
 
 	callback *httptest.Server
 	server   *httptest.Server
@@ -79,6 +85,10 @@ func (f *fakeLS) end(signedIn bool) {
 func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.URL.Path, rpcPrefix) {
 	case "Login":
+		if f.loginNoURL {
+			_, _ = w.Write([]byte(`{"authResult":{"uiMessage":"failed"}}`))
+			return
+		}
 		end := make(chan struct{})
 		f.mu.Lock()
 		f.logins++
@@ -109,6 +119,18 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			OpenBrowser *bool `json:"openBrowser"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if f.switchHang {
+			// The body has been read, so the server notices the caller leaving.
+			select {
+			case <-r.Context().Done():
+			case <-f.stop:
+			}
+			return
+		}
+		if f.switchBody != "" {
+			_, _ = w.Write([]byte(f.switchBody))
+			return
+		}
 		if req.OpenBrowser == nil || *req.OpenBrowser {
 			http.Error(w, "openBrowser must be false", http.StatusBadRequest)
 			return
@@ -127,7 +149,20 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.submitted = append(f.submitted, req.Code)
 		f.mu.Unlock()
-		if req.Code != "4/good" {
+		switch req.Code {
+		case "4/good":
+		case "4/connect-error":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"invalid_argument","message":"The code is malformed."}`))
+			return
+		case "4/expire":
+			// The attempt ends while the code is being checked.
+			f.end(false)
+			time.Sleep(100 * time.Millisecond)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"failed_precondition","message":"no login in progress"}`))
+			return
+		default:
 			_, _ = w.Write([]byte(`{"retryError":"That code did not work. Copy it again."}`))
 			return
 		}
@@ -284,6 +319,122 @@ func TestBeginReusesAttemptInFlight(t *testing.T) {
 		if u != urls[0] || u == "" {
 			t.Fatalf("Begins returned %q, want one shared URL", urls)
 		}
+	}
+}
+
+// A language server that answers SwitchLoginToAuthCode without actually
+// switching keeps the loopback flow, whose listener is still waiting.
+func TestBeginKeepsLoopbackWhenSwitchDoesNotSwitch(t *testing.T) {
+	for _, body := range []string{
+		`{"active":false}`,
+		`{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`,
+		`{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`,
+		`<html>not an RPC</html>`,
+	} {
+		f := newFakeLS(t, true)
+		f.switchBody = body
+		_, mode, err := f.coordinator().Begin(context.Background())
+		if err != nil || mode != ModeLoopback {
+			t.Errorf("switch answered %s: Begin = %q, %v; want loopback", body, mode, err)
+		}
+	}
+}
+
+// If the caller gives up during the switch, the language server may or may not
+// have switched, so neither URL can be trusted.
+func TestBeginDropsAttemptWhenSwitchIsInterrupted(t *testing.T) {
+	f := newFakeLS(t, true)
+	f.switchHang = true
+	c := f.coordinator()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.Begin(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Begin = %v, want the deadline", err)
+	}
+	if c.pending != nil {
+		t.Fatal("an interrupted switch must not leave an attempt behind")
+	}
+}
+
+func TestBeginReportsLoginEndingWithoutURL(t *testing.T) {
+	f := newFakeLS(t, true)
+	f.loginNoURL = true
+
+	start := time.Now()
+	if _, _, err := f.coordinator().Begin(context.Background()); err == nil {
+		t.Fatal("Begin succeeded with no URL")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Begin waited %v; it should stop once Login returns", elapsed)
+	}
+}
+
+func TestSubmitAuthCodeErrors(t *testing.T) {
+	f := newFakeLS(t, true)
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Complete(ctx, " \n"); err == nil || c.pending == nil {
+		t.Fatalf("Complete(blank) = %v; want an error that keeps the attempt", err)
+	}
+	if len(f.submitted) != 0 {
+		t.Error("a blank paste must not reach the language server")
+	}
+
+	// A Connect error is shown in the language server's words.
+	if err := c.Complete(ctx, "4/connect-error"); err == nil || err.Error() != "The code is malformed." {
+		t.Fatalf("Complete(connect error) = %v", err)
+	}
+	if c.pending == nil {
+		t.Fatal("a failed submit must not end a live attempt")
+	}
+
+	// A submit that fails because the attempt ended reads as expired, so the
+	// page starts over.
+	if err := c.Complete(ctx, "4/expire"); !errors.Is(err, ErrExpired) {
+		t.Fatalf("Complete after the attempt ended = %v, want ErrExpired", err)
+	}
+	if c.pending != nil {
+		t.Error("an expired attempt must be cleared")
+	}
+}
+
+// finish runs after RPCs that can take seconds. By then a new Begin may have
+// replaced the attempt, and ending that one would strand the user.
+func TestFinishLeavesReplacementAlone(t *testing.T) {
+	c := New(&lsproc.Instance{Port: 1}, filepath.Join(t.TempDir(), "urls"))
+	if err := os.WriteFile(c.urlFile, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCtx, oldCancel := context.WithCancel(context.Background())
+	old := &session{cancel: oldCancel, done: make(chan struct{})}
+	newCtx, newCancel := context.WithCancel(context.Background())
+	defer newCancel()
+	replacement := &session{cancel: newCancel, done: make(chan struct{})}
+	c.pending = replacement
+
+	c.finish(old)
+	if oldCtx.Err() == nil {
+		t.Error("finish must cancel the attempt it was given")
+	}
+	if c.pending != replacement || newCtx.Err() != nil {
+		t.Error("finish must not end the attempt that replaced it")
+	}
+	if _, err := os.Stat(c.urlFile); err != nil {
+		t.Error("finish must not remove the replacement's URL file")
+	}
+
+	c.finish(replacement)
+	if c.pending != nil || newCtx.Err() == nil {
+		t.Error("finish must end the current attempt")
+	}
+	if _, err := os.Stat(c.urlFile); !os.IsNotExist(err) {
+		t.Error("finish must remove the URL file of the current attempt")
 	}
 }
 

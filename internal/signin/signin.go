@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,13 +40,9 @@ const (
 	// urlTimeout bounds how long we wait for the language server to hand its
 	// consent URL to the shim.
 	urlTimeout = 20 * time.Second
-	// loginTimeout bounds the Login RPC, which blocks until the callback arrives.
-	// Language servers from 2.31 end the attempt on their own after 5 minutes.
+	// loginTimeout bounds the Login RPC, which blocks until the attempt ends.
+	// The language server ends it on its own after 5 minutes.
 	loginTimeout = 15 * time.Minute
-	// sessionTTL is how long a captured URL stays usable before we start over.
-	// It stays well under the language server's own 5 minutes so a reused URL
-	// leaves time to finish.
-	sessionTTL = 2 * time.Minute
 )
 
 // Mode says what the user pastes back once Google is done with them.
@@ -76,7 +73,6 @@ type session struct {
 	mode        Mode
 	authURL     string
 	callbackURL string
-	started     time.Time
 	cancel      context.CancelFunc
 	// done is closed when the Login RPC returns, which ends the attempt.
 	done chan struct{}
@@ -238,9 +234,9 @@ func (c *Coordinator) refreshSignedIn(prevCachedAt time.Time) {
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open,
-// along with what the user will paste back. If an attempt is already in flight
-// its URL is returned instead, so refreshing the page does not strand the
-// previous one.
+// along with what the user will paste back. While an attempt is still in flight
+// its URL is returned instead, so reloading the page, as iOS does when the user
+// comes back from Google, does not throw away the code they just copied.
 func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	if !c.Available() {
 		return "", "", ErrUnavailable
@@ -250,7 +246,7 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	defer c.beginMu.Unlock()
 
 	c.mu.Lock()
-	if p := c.pending; p != nil && p.live() && time.Since(p.started) < sessionTTL {
+	if p := c.pending; p != nil && p.live() {
 		c.mu.Unlock()
 		return p.authURL, p.mode, nil
 	}
@@ -265,7 +261,7 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	}
 
 	loginCtx, cancel := context.WithTimeout(context.Background(), loginTimeout)
-	sess := &session{started: time.Now(), cancel: cancel, done: make(chan struct{})}
+	sess := &session{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		// Login blocks until the attempt succeeds, fails or expires. Its result
 		// is ignored: SignedIn is the source of truth afterwards.
@@ -279,9 +275,17 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 		return "", "", err
 	}
 
-	if authURL, ok := c.switchToAuthCode(ctx); ok {
+	authURL, err := c.switchToAuthCode(ctx)
+	switch {
+	case err == nil:
 		sess.mode, sess.authURL = ModeAuthCode, authURL
-	} else {
+	case ctx.Err() != nil:
+		// The switch may have reached the language server, so which URL the
+		// attempt expects is unknown. Drop it rather than guess.
+		cancel()
+		return "", "", ctx.Err()
+	default:
+		log.Printf("[signin] using the loopback sign-in: %v", err)
 		callbackURL, err := callbackFrom(loopbackURL)
 		if err != nil {
 			cancel()
@@ -298,12 +302,12 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 }
 
 // switchToAuthCode asks the language server to move the attempt in flight to
-// the auth-code flow and returns the consent URL for it. It reports false on
-// language servers older than 2.31, which do not have the RPC.
-func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, bool) {
+// the auth-code flow and returns the consent URL for it. Language servers older
+// than 2.31 do not have the RPC and answer with an error.
+func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
 	if err != nil {
-		return "", false
+		return "", err
 	}
 
 	var out struct {
@@ -312,12 +316,12 @@ func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, bool) {
 		Mode    json.RawMessage `json:"mode"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return "", false
+		return "", fmt.Errorf("SwitchLoginToAuthCode answered with something other than JSON: %w", err)
 	}
 	if !out.Active || !isAuthCodeMode(out.Mode) || !strings.HasPrefix(out.AuthURL, "https://accounts.google.com/") {
-		return "", false
+		return "", fmt.Errorf("SwitchLoginToAuthCode did not switch: active=%v mode=%s", out.Active, out.Mode)
 	}
-	return out.AuthURL, true
+	return out.AuthURL, nil
 }
 
 // isAuthCodeMode accepts LoginSessionMode as protojson writes it, by name, and
@@ -445,18 +449,15 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 	}
 
 	data, err := c.instance.Call(ctx, "SubmitLoginAuthCode", map[string]any{"code": code})
-	if err != nil {
-		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
-	}
 
 	var out struct {
 		Accepted   bool   `json:"accepted"`
 		RetryError string `json:"retryError"`
+		// Message is set instead when the RPC fails as a Connect error.
+		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return fmt.Errorf("could not read Antigravity's answer: %w", err)
-	}
-	if out.Accepted {
+	parseErr := json.Unmarshal(data, &out)
+	if err == nil && parseErr == nil && out.Accepted {
 		return nil
 	}
 
@@ -466,8 +467,15 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 		c.finish(pending)
 		return ErrExpired
 	}
-	if out.RetryError != "" {
+	switch {
+	case out.RetryError != "":
 		return errors.New(out.RetryError)
+	case out.Message != "":
+		return errors.New(out.Message)
+	case err != nil:
+		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+	case parseErr != nil:
+		return fmt.Errorf("could not read Antigravity's answer: %w", parseErr)
 	}
 	return errors.New("Antigravity did not accept that code")
 }
