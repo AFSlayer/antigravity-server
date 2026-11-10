@@ -67,6 +67,10 @@ var (
 	ErrExpired = errors.New("this sign-in expired, so start it again")
 	// ErrNoCode means the pasted address carried no authorization code.
 	ErrNoCode = errors.New("that address has no authorization code in it")
+
+	// errNoAuthCode means the language server did not switch to the auth-code
+	// flow, so the loopback flow Login started is still the one to use.
+	errNoAuthCode = errors.New("no auth-code sign-in")
 )
 
 type session struct {
@@ -244,6 +248,9 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 
 	c.beginMu.Lock()
 	defer c.beginMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
 
 	c.mu.Lock()
 	if p := c.pending; p != nil && p.live() {
@@ -279,12 +286,7 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	switch {
 	case err == nil:
 		sess.mode, sess.authURL = ModeAuthCode, authURL
-	case ctx.Err() != nil:
-		// The switch may have reached the language server, so which URL the
-		// attempt expects is unknown. Drop it rather than guess.
-		cancel()
-		return "", "", ctx.Err()
-	default:
+	case errors.Is(err, errNoAuthCode) && ctx.Err() == nil:
 		log.Printf("[signin] using the loopback sign-in: %v", err)
 		callbackURL, err := callbackFrom(loopbackURL)
 		if err != nil {
@@ -292,6 +294,21 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 			return "", "", err
 		}
 		sess.mode, sess.authURL, sess.callbackURL = ModeLoopback, loopbackURL, callbackURL
+	default:
+		// The switch may have taken effect, so which URL the attempt expects
+		// is unknown. Drop it rather than guess.
+		cancel()
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		return "", "", err
+	}
+
+	// Login can fail just after recording its URL. Handing that URL out would
+	// send the user through Google for nothing.
+	if !sess.live() {
+		cancel()
+		return "", "", fmt.Errorf("the language server ended the sign-in before it could be used")
 	}
 
 	c.mu.Lock()
@@ -303,11 +320,12 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 
 // switchToAuthCode asks the language server to move the attempt in flight to
 // the auth-code flow and returns the consent URL for it. Language servers older
-// than 2.31 do not have the RPC and answer with an error.
+// than 2.31 do not have the RPC; that and any answer that leaves the attempt in
+// loopback mode come back as errNoAuthCode.
 func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
 	}
 
 	var out struct {
@@ -316,10 +334,16 @@ func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 		Mode    json.RawMessage `json:"mode"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return "", fmt.Errorf("SwitchLoginToAuthCode answered with something other than JSON: %w", err)
+		return "", fmt.Errorf("%w: SwitchLoginToAuthCode answered with something other than JSON", errNoAuthCode)
 	}
-	if !out.Active || !isAuthCodeMode(out.Mode) || !strings.HasPrefix(out.AuthURL, "https://accounts.google.com/") {
-		return "", fmt.Errorf("SwitchLoginToAuthCode did not switch: active=%v mode=%s", out.Active, out.Mode)
+	if !out.Active {
+		return "", fmt.Errorf("the language server has no sign-in in flight")
+	}
+	if !isAuthCodeMode(out.Mode) {
+		return "", fmt.Errorf("%w: SwitchLoginToAuthCode left the mode at %s", errNoAuthCode, out.Mode)
+	}
+	if !strings.HasPrefix(out.AuthURL, "https://accounts.google.com/") {
+		return "", fmt.Errorf("SwitchLoginToAuthCode switched but returned no Google URL")
 	}
 	return out.AuthURL, nil
 }
@@ -462,7 +486,13 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 	}
 
 	// A rejected code leaves the attempt open for another try unless the
-	// language server has given up on it.
+	// language server has given up on it. When it gives up as it answers,
+	// Login's answer can land just after this one, so allow it a moment.
+	select {
+	case <-pending.done:
+	case <-ctx.Done():
+	case <-time.After(300 * time.Millisecond):
+	}
 	if !pending.live() {
 		c.finish(pending)
 		return ErrExpired

@@ -191,20 +191,26 @@ func TestSignInPageBypassesStaleCacheAfterLogout(t *testing.T) {
 }
 
 // The page words steps 2 and 3 by mode, so begin has to say which one the
-// language server picked.
-func TestSignInBeginReportsMode(t *testing.T) {
+// language server picked. Once the attempt ends, complete answers 409, which is
+// what makes the page start a new one.
+func TestSignInBeginReportsModeAndCompleteReportsExpiry(t *testing.T) {
 	urlFile := filepath.Join(t.TempDir(), "urls")
 	stop := make(chan struct{})
+	endLogin := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch strings.TrimPrefix(r.URL.Path, "/exa.language_server_pb.LanguageServerService/") {
 		case "Login":
 			_ = os.WriteFile(urlFile, []byte("https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fauth%2Fcallback\n"), 0o600)
 			select {
+			case <-endLogin:
 			case <-r.Context().Done():
 			case <-stop:
 			}
+			_, _ = w.Write([]byte(`{"authResult":{"uiMessage":"context deadline exceeded"}}`))
 		case "SwitchLoginToAuthCode":
 			_, _ = w.Write([]byte(`{"active":true,"authUrl":"https://accounts.google.com/o/oauth2/auth?state=code","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`))
+		case "SubmitLoginAuthCode":
+			_, _ = w.Write([]byte(`{"retryError":"Sign-in session is no longer active. Please start sign-in again."}`))
 		case "GetAuthStatus":
 			_, _ = w.Write([]byte(`{"authResult":{}}`))
 		default:
@@ -233,5 +239,13 @@ func TestSignInBeginReportsMode(t *testing.T) {
 	}
 	if body.Mode != "authCode" || body.AuthURL != "https://accounts.google.com/o/oauth2/auth?state=code" {
 		t.Fatalf("begin = %+v, want the auth-code URL and mode", body)
+	}
+
+	// The language server gives up on the attempt.
+	close(endLogin)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("complete after the attempt ended = %d %s, want 409", rec.Code, rec.Body)
 	}
 }

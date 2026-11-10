@@ -33,6 +33,8 @@ type fakeLS struct {
 	switchHang bool
 	// loginNoURL makes Login return at once without producing a URL.
 	loginNoURL bool
+	// loginEndsAfterURL makes Login return just after producing its URL.
+	loginEndsAfterURL bool
 
 	callback *httptest.Server
 	server   *httptest.Server
@@ -103,6 +105,10 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			_ = file.Close()
 		}
 
+		if f.loginEndsAfterURL {
+			_, _ = w.Write([]byte(`{"authResult":{"uiMessage":"failed"}}`))
+			return
+		}
 		select {
 		case <-end:
 		case <-r.Context().Done():
@@ -156,9 +162,12 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"code":"invalid_argument","message":"The code is malformed."}`))
 			return
 		case "4/expire":
-			// The attempt ends while the code is being checked.
-			f.end(false)
-			time.Sleep(100 * time.Millisecond)
+			// The attempt ends while the code is being checked. Login's answer
+			// is sent after this one.
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				f.end(false)
+			}()
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"code":"failed_precondition","message":"no login in progress"}`))
 			return
@@ -322,21 +331,51 @@ func TestBeginReusesAttemptInFlight(t *testing.T) {
 	}
 }
 
-// A language server that answers SwitchLoginToAuthCode without actually
-// switching keeps the loopback flow, whose listener is still waiting.
-func TestBeginKeepsLoopbackWhenSwitchDoesNotSwitch(t *testing.T) {
-	for _, body := range []string{
-		`{"active":false}`,
-		`{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`,
-		`{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`,
-		`<html>not an RPC</html>`,
+// A language server that answers SwitchLoginToAuthCode without switching keeps
+// the loopback flow, whose listener is still waiting. One that switched, or has
+// no attempt, leaves nothing usable, so Begin fails rather than guess.
+func TestBeginSwitchAnswers(t *testing.T) {
+	for body, wantLoopback := range map[string]bool{
+		`{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`: true,
+		`<html>not an RPC</html>`: true,
+		`{"active":false}`:        false,
+		`{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`: false,
 	} {
 		f := newFakeLS(t, true)
 		f.switchBody = body
-		_, mode, err := f.coordinator().Begin(context.Background())
-		if err != nil || mode != ModeLoopback {
+		c := f.coordinator()
+		_, mode, err := c.Begin(context.Background())
+		if wantLoopback && (err != nil || mode != ModeLoopback) {
 			t.Errorf("switch answered %s: Begin = %q, %v; want loopback", body, mode, err)
 		}
+		if !wantLoopback && (err == nil || c.pending != nil) {
+			t.Errorf("switch answered %s: Begin = %q, %v; want an error and no attempt", body, mode, err)
+		}
+	}
+}
+
+// Login can record its URL and fail straight after. That URL must not be
+// handed out.
+func TestBeginDropsAttemptThatEndedAfterItsURL(t *testing.T) {
+	f := newFakeLS(t, false)
+	f.loginEndsAfterURL = true
+	c := f.coordinator()
+	if _, _, err := c.Begin(context.Background()); err == nil || c.pending != nil {
+		t.Fatalf("Begin = %v; want an error and no attempt", err)
+	}
+}
+
+// A caller that has already given up must not start a Login it will not use.
+func TestBeginGivesUpBeforeStartingLogin(t *testing.T) {
+	f := newFakeLS(t, true)
+	c := f.coordinator()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := c.Begin(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Begin = %v, want context.Canceled", err)
+	}
+	if n := f.loginCount(); n != 0 {
+		t.Errorf("Login ran %d times for a cancelled Begin", n)
 	}
 }
 
