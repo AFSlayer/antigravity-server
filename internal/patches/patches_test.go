@@ -89,6 +89,7 @@ var regexpFixtures = map[string]string{
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+	"paging-trim-waits-for-still":               `if(N(ba,pa,ka))ma&&K(g.timing.oppositeDirectionCooldownMs||g.timing.retryDelayMs);else{`,
 	"scrollbar-drag-follows-paging":             `pa=z.current.startScrollPos+((h?pa.clientX:pa.clientY)-z.current.startCoord)/ua*H.current.maxScrollPos,h?la.scrollLeft=pa:la.scrollTop=pa,`,
 	"autoscroll-unpin-needs-input":              `var J=()=>{var L=n.current;if(L){var M=L.scrollTop,N=F(),P=Math.max(0,L.scrollHeight-L.clientHeight),O=P<v.current&&M>=P-1,Q=r.current;M<t.current&&!O?(r.current=!1,tT.delete(L)):N&&!C.current&&(r.current=!0);Q!==r.current&&y.current?.(r.current)}}`,
 	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,

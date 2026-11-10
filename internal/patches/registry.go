@@ -91,6 +91,7 @@ var (
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+===void 0\|\|[a-zA-Z0-9_$]+\.isMultiSelect\|\|!document\.hasFocus\(\)\|\|[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)&&[a-zA-Z0-9_$]+!==[a-zA-Z0-9_$]+\.current)(\|\|[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*[a-zA-Z0-9_$]+\.current\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*)?)`)
+	pagingTrimWaitsRe                     = regexp.MustCompile(`(if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*([a-zA-Z0-9_$]+)\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{`)
 	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+(?:\.current)?)\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
@@ -738,6 +739,18 @@ func All() []Patch {
 				return string(g[1]) + "(" + pinned + ".current" + followOn + "&&window.__agyIsSpontaneousScroll?.(" + el + ")?" +
 					el + `.scrollTo({top:` + el + `.scrollHeight,behavior:"instant"}):(` + unpin + "))" + ":" + string(g[6])
 			},
+		},
+		// A second after older rows load above the reader, the bundle drops the rows far above them and moves the position
+		// up by what it dropped, usually while the reader is still scrolling up. On an iPhone the position then runs back
+		// down the conversation by 300 to 1000 px, and a finger still down drags on from where it was. A drop that is only
+		// that waits, retried until the conversation is still.
+		{
+			ID:      "paging-trim-waits-for-still",
+			Desc:    "Drop rows far above the reader only once the conversation has stopped moving",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  pagingTrimWaitsRe,
+			Replace: `${1}else if(!${2}&&window.__agyDeferTrim?.())${3}(250);else{`,
 		},
 		// A long conversation's window is cut at the top while the reader moves down it, which changes the scroll position
 		// and its range under a held scrollbar. The bundle maps a drag from where it began, so the next pointer move undoes
@@ -1872,6 +1885,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   var guardedScroller = null;
   var convoNavigatedAt = performance.now();
   var userScrolledNearTop = false;
+  var PREPEND_REAPPLY_MS = 600;
 
   function handleScrollerScroll() {
     var sc = chatScroller();
@@ -1925,15 +1939,16 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
         requestAnimationFrame(function () {
           sc.scrollTop = targetTop;
         });
-        setTimeout(function () {
+        var prependedAt = performance.now();
+        // Rendering a long conversation can hold these timers back for seconds. By then the app may have dropped rows
+        // above the reader and lowered the position itself, or the reader may have moved, so a late one does nothing.
+        var reapply = function () {
+          if (performance.now() - prependedAt > PREPEND_REAPPLY_MS || sc.scrollHeight < curHeight) return;
           if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
-        }, 50);
-        setTimeout(function () {
-          if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
-        }, 150);
-        setTimeout(function () {
-          if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
-        }, 300);
+        };
+        setTimeout(reapply, 50);
+        setTimeout(reapply, 150);
+        setTimeout(reapply, 300);
       }
     }
 
@@ -2006,9 +2021,23 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var JUMP_MIN = 5000;
   var JUMP_SHARE = 0.3;
   var SCRIPT_GRACE_MS = 150;
+  var COLLAPSE_MS = 2000;
+  // A fling keeps going for a while after the finger lifts, and a long one has been traced at 3.6 s with its bounce.
+  // Ending one that has already stopped changes nothing, so this errs long.
+  var MOMENTUM_MS = 8000;
+  // Further than this, a position the app sets is rows above coming or going, not a nudge.
+  var SCRIPT_MOVE_MIN = 2000;
+  // How far a fling can carry the position between two looks at it.
+  var WINDOW_SLACK = 300;
+  // A fling sends a scroll event every frame until it has stopped.
+  var STILL_MS = 300;
+  var movedAt = -Infinity;
+  var trimWaiting = false;
   var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
+  var touching = false;
+  var stopping = new WeakSet();
   window.__agyLastScrollInputAt = -Infinity;
 
   function mark() { window.__agyLastScrollInputAt = performance.now(); }
@@ -2016,6 +2045,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var opts = { capture: true, passive: true };
   ["wheel", "touchstart", "touchmove"].forEach(function (name) {
     window.addEventListener(name, function (e) { if (onConversation(e)) mark(); }, opts);
+  });
+  ["touchstart", "touchend", "touchcancel"].forEach(function (name) {
+    window.addEventListener(name, function (e) { touching = Boolean(e.touches && e.touches.length > 0); }, opts);
   });
   window.addEventListener("pointerdown", function (e) {
     if (onConversation(e)) { pressed = true; mark(); }
@@ -2073,14 +2105,49 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var collapse = collapses.get(el);
     if (collapse && collapse.over) collapses.delete(el);
     else if (collapse && top >= collapse.from) collapse.over = true;
+    if (seen && rowsMovedAbove(el, seen, top, height)) stopFling(el, false);
     if (seen && removed !== undefined) {
       var drop = seen.top - top;
-      if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed)) {
+      if (drop > 1 && (drop <= seen.height - height + 1 || drop <= removed) && !tookRowsAbove(el, seen, top, height)) {
         collapses.set(el, { at: performance.now(), top: top, from: seen.top, fromHeight: seen.height });
       }
     }
     lastSeen.set(el, { top: top, height: height });
   }
+
+  // Rows above the reader coming or going, with the position moved by the same amount so the same rows stay on screen.
+  // Rows added at the end while the reader follows it move the position as much, but leave the reader at the end.
+  function rowsMovedAbove(el, seen, top, height) {
+    var grew = height - seen.height;
+    return Math.abs(grew) > 1 && Math.abs(top - seen.top - grew) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
+  }
+
+  // A fling on iOS carries on in the coordinates it started in when rows above the reader come or go. The app moves the
+  // position to keep the same rows on screen and the fling drags it back, which the reader sees as being thrown down, or
+  // held there while the hold below fights it. Taking the overflow away for a frame ends the fling where the app put it.
+  // Elsewhere a fling has been seen to move with the position, and a finger still down is dragging, not flinging.
+  var IOS = typeof navigator !== "undefined" && (/iP(hone|ad|od)/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+  function stopFling(el, flung) {
+    if (!IOS || !el.style || touching || stopping.has(el)) return;
+    if (!flung && !(performance.now() - window.__agyLastScrollInputAt < MOMENTUM_MS)) return;
+    stopping.add(el);
+    var overflow = el.style.overflowY;
+    el.style.overflowY = "hidden";
+    requestAnimationFrame(function () {
+      el.style.overflowY = overflow;
+      stopping.delete(el);
+    });
+    try { window.dispatchEvent(new CustomEvent("agy-fling-stop")); } catch (e) {}
+  }
+
+  // Rows taken from above the reader lower the position by what they took, which leaves everything on screen where it
+  // was and nothing to go back to. A position clamped by a collapse ends up at the end of the conversation instead.
+  function tookRowsAbove(el, seen, top, height) {
+    var shrank = seen.height - height;
+    return shrank > 1 && Math.abs(seen.top - top - shrank) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
+  }
+
   // An iPhone has been seen moving a long conversation that had just re-rendered, with nothing asking it to. Once it put
   // the conversation tens of thousands of pixels above its top, and its bounce carried the reader to the top. Once a
   // bounce at the bottom ended 64,000 px up, at what had been the bottom before the conversation grew. A finger moves
@@ -2096,6 +2163,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var now = performance.now();
     var hold = holds.get(el);
     if (hold) {
+      // Rows above the reader coming or going move the position by what they added or took, and what is held with it.
+      var grew = el.scrollHeight - hold.height;
+      if (hold.gap < 0 && grew !== 0 && Math.abs(el.scrollTop - hold.last - grew) <= WINDOW_SLACK) hold.top += grew;
       var target = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
       var movedOn = el.scrollTop > target + 1 && el.scrollTop > hold.last + 1;
       if (movedOn || window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS) {
@@ -2111,12 +2181,13 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (el.scrollTop >= FLUNG_ABOVE_TOP && !unaskedJump(el, seen, now)) return false;
     // A collapse still being undone left a clamped position behind, and the reader belongs where it started.
     var collapse = collapses.get(el);
-    if (collapse && !collapse.over) seen = { top: collapse.from, height: collapse.fromHeight };
+    if (collapse && !collapse.over && now - collapse.at < COLLAPSE_MS) seen = { top: collapse.from, height: collapse.fromHeight };
     var flungTo = el.scrollTop;
     var atBottom = seen.height - seen.top - el.clientHeight <= NEAR_BOTTOM;
     hold = { gap: atBottom ? seen.height - seen.top : -1, top: seen.top, at: now };
     holds.set(el, hold);
     setHeld(el, hold, atBottom ? el.scrollHeight - hold.gap : hold.top);
+    stopFling(el, true);
     try { window.dispatchEvent(new CustomEvent("agy-fling-hold", { detail: { top: flungTo, back: atBottom ? "bottom" : seen.top, from: seen.top } })); } catch (e) {}
     return true;
   }
@@ -2145,6 +2216,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   }
   window.__agyScrolledByScript = function (el, top) {
     scripted = { at: performance.now(), el: el, top: typeof top === "number" && isFinite(top) ? top : null };
+    // Ended before the position moves rather than after, or the fling paints one more frame in its old coordinates.
+    if (el && scripted.top !== null && el.matches && el.matches(VIEWPORT) && Math.abs(scripted.top - el.scrollTop) > SCRIPT_MOVE_MIN) {
+      stopFling(el, false);
+    }
   };
   if (typeof Element !== "undefined") {
     var topSetter = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
@@ -2181,14 +2256,30 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   function setHeld(el, hold, top) {
     el.scrollTop = top;
     hold.last = el.scrollTop;
+    hold.height = el.scrollHeight;
     lastSeen.set(el, { top: hold.last, height: el.scrollHeight });
   }
 
   // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
   window.addEventListener("scroll", function (e) {
     var el = e.target;
-    if (el && el.matches && el.matches(VIEWPORT)) compare(el);
+    if (el && el.matches && el.matches(VIEWPORT)) {
+      movedAt = performance.now();
+      compare(el);
+    }
   }, opts);
+
+  // Asked by the bundle before it drops rows far above the reader. The position moves up by what it drops, and on iOS
+  // the reader's finger or fling does not move with it, so the rows wait for the conversation to stop moving.
+  window.__agyDeferTrim = function () {
+    var now = performance.now();
+    var wait = IOS && (touching || (now - window.__agyLastScrollInputAt < MOMENTUM_MS && now - movedAt < STILL_MS));
+    if (wait && !trimWaiting) {
+      try { window.dispatchEvent(new CustomEvent("agy-trim-wait")); } catch (e) {}
+    }
+    trimWaiting = wait;
+    return wait;
+  };
 
   // Removing rows is what collapses the content and clamps the scroll position, but only if it shortened the
   // conversation. Swapping a row for one of the same height happens all the time while a reply streams and says
@@ -2243,7 +2334,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     // The rows can take a while to come back on a slow device, and the scroll event only arrives once they have. Rows
     // coming back can push the position down the conversation, but only something else takes it further up than the
     // collapse left it.
-    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < 2000 && el.scrollTop >= collapse.top - 1;
+    return now - window.__agyLastScrollInputAt >= 1000 && now - collapse.at < COLLAPSE_MS && el.scrollTop >= collapse.top - 1;
   };
 })();
 </script>`
@@ -2505,6 +2596,14 @@ const mobileDebug = `<script id="agy-debug">
   // The scroll tracker puts a fling back before any sample can see it, so it reports one here.
   window.addEventListener("agy-fling-hold", function (e) {
     begin("fling-hold" + (e.detail ? ":" + Math.round(e.detail.top) + ">" + e.detail.back : ""), 1500);
+  });
+  window.addEventListener("agy-fling-stop", function () { begin("fling-stop", 1500); });
+  window.addEventListener("agy-trim-wait", function () { begin("trim-wait", 1500); });
+  // A finger down or up tells the reader's own movement from the browser's.
+  ["touchstart", "touchend", "touchcancel"].forEach(function (name) {
+    window.addEventListener(name, function (e) {
+      if (lines) push(name + ":" + (e.touches ? e.touches.length : 0));
+    }, { capture: true, passive: true });
   });
   vv.addEventListener("resize", function () { begin("vv-resize", 700); });
   vv.addEventListener("scroll", function () { begin("vv-scroll", 400); });
