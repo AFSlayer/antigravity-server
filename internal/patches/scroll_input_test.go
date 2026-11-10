@@ -912,7 +912,10 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   fire("touchstart", onEl([{}]));
   fire("touchmove", onEl([{}]));
   fire("touchend", onEl([]));
-  now += 400;
+  // The fling's bounce at the top sends a scroll event every frame.
+  now += 384;
+  fire("scroll", { target: el });
+  now += 16;
   el.scrollHeight = 62646;
   el.scrollTop = 30681;
   fire("scroll", { target: el });
@@ -965,7 +968,9 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   fire("touchstart", onEl([{}]));
   fire("touchmove", onEl([{}]));
   fire("touchend", onEl([]));
-  now += 3564;
+  now += 3548;
+  fire("scroll", { target: el });
+  now += 16;
   window.__agyScrolledByScript(el, 29592);
   assert.strictEqual(el.style.overflowY, "hidden", "ended before the move");
   frame();
@@ -980,6 +985,15 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   window.__agyScrolledByScript(el, 29592);
   assert.strictEqual(el.style.overflowY, "");
   fire("touchend", onEl([]));
+
+  // A conversation still for a moment has no fling to end, whatever the app moves.
+  now += 400;
+  window.__agyScrolledByScript(el, 8000);
+  assert.strictEqual(el.style.overflowY, "", "a still conversation is left alone");
+  el.scrollHeight = 22000;
+  el.scrollTop = 8000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "", "rows going above a still reader are not a fling");
   now += 10000;
   coarse = false;
 }
@@ -1016,6 +1030,35 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   now += 2;
   assert.strictEqual(window.__agyDeferTrim(), false, "still for 300 ms");
   assert.strictEqual(waits, 1, "the trace marks the wait once");
+
+  // Flings run together for long hold the rows back for 3 s, as rows keep loading above in the meantime.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  const answers = [];
+  for (let k = 0; k < 16; k++) {
+    now += 250;
+    el.scrollTop -= 200;
+    fire("scroll", { target: el });
+    answers.push(window.__agyDeferTrim());
+    if (k % 6 === 5) { fire("touchstart", onEl([{}])); fire("touchmove", onEl([{}])); fire("touchend", onEl([])); }
+  }
+  assert.strictEqual(answers.indexOf(false), 12, "waits for 3 s, then lets the rows go");
+  assert.ok(answers.slice(13).every(Boolean), "the next drop waits again");
+  assert.strictEqual(waits, 3);
+
+  // A finger down is waited for however long it stays.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  now += 10000;
+  assert.strictEqual(window.__agyDeferTrim(), true, "a finger down 10 s later");
+  // A page hidden with the finger down may never see the touch end.
+  global.document.hidden = true;
+  fire("visibilitychange", {});
+  delete global.document.hidden;
+  now += 400;
+  assert.strictEqual(window.__agyDeferTrim(), false, "hiding the page lifts the finger");
 
   // The app moving the position long after any input, as it does while following a reply, does not hold the rows.
   now += 10000;
@@ -1270,9 +1313,46 @@ process.exit(0);
 	}
 }
 
-// Traced on a long conversation: rows were added above the reader, and the retries that reassert the position ran four
-// seconds late because rendering held them back. The app had dropped other rows and lowered the position by then, so
-// they put the reader 24,000 px down, and the window followed.
+// Runs the bundle's paging decision as patched. Only an update that moves the window's start down waits, and only when
+// the tracker says so; growing the window, an update that keeps its start, and a page without the tracker go ahead.
+func TestPagingTrimWaitsOnlyForATopDrop(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	var patch Patch
+	for _, p := range All() {
+		if p.ID == "paging-trim-waits-for-still" {
+			patch = p
+		}
+	}
+	src := "ma=Z.startIndex<oa.startIndex||Z.endIndexExclusive>oa.endIndexExclusive;if(N(ba,pa,ka))ma&&K(g.timing.oppositeDirectionCooldownMs||g.timing.retryDelayMs);else{request()}"
+	patched := patch.FindRe.ReplaceAllString(src, patch.Replace)
+	if patched == src {
+		t.Fatal("the patch did not apply")
+	}
+	harness := `
+const assert = require("assert");
+const decide = (from, to, defer, cooldown) => new Function("oa", "Z", "defer", "cooldown", ` + "`" + `
+  var calls = [], ma, ba, pa, ka;
+  var g = { timing: { oppositeDirectionCooldownMs: 1000, retryDelayMs: 1000 } };
+  var N = () => cooldown, K = ms => calls.push("retry " + ms), request = () => calls.push("request");
+  globalThis.window = defer === undefined ? {} : { __agyDeferTrim: () => defer };
+  ` + "` + process.argv[1] + `" + `
+  return calls.join(",");` + "`" + `)(from, to, defer, cooldown);
+const at = (start, end) => ({ startIndex: start, endIndexExclusive: end });
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, false), "retry 250", "a drop from the top waits");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), false, false), "request", "and goes once the tracker allows");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), undefined, false), "request", "a page without the tracker goes ahead");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false), "request", "loading older rows never waits");
+assert.strictEqual(decide(at(3400, 3570), at(3400, 3570), true, false), "request", "keeping the start never waits");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, true), "retry 1000", "the bundle's own cooldown is kept");
+`
+	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {
+		t.Fatalf("paging harness failed: %v\n%s", err, out)
+	}
+}
+
 // The fling stop and the wait for still rows are for iOS. Other phones see the same moves and must keep their fling.
 func TestFlingStopAndTrimWaitAreIOSOnly(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -1326,6 +1406,9 @@ assert.strictEqual(el.style.overflowY, "", "a large move by the app leaves the f
 	}
 }
 
+// Traced on a long conversation: rows were added above the reader, and the retries that reassert the position ran four
+// seconds late because rendering held them back. The app had dropped other rows and lowered the position by then, so
+// they put the reader 24,000 px down, and the window followed.
 func TestLatePrependRetryLeavesThePositionAlone(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

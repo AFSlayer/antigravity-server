@@ -1943,9 +1943,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
         });
         var prependedAt = performance.now();
         // Rendering a long conversation can hold these timers back for seconds. By then the app may have dropped rows
-        // above the reader and lowered the position itself, or the reader may have moved, so a late one does nothing.
+        // above the reader and lowered the position itself, or the reader may have moved, so a late one does nothing,
+        // and neither does one after the conversation lost more than half of what was added.
         var reapply = function () {
-          if (performance.now() - prependedAt > PREPEND_REAPPLY_MS || sc.scrollHeight < curHeight) return;
+          if (performance.now() - prependedAt > PREPEND_REAPPLY_MS || sc.scrollHeight < curHeight - delta / 2) return;
           if (sc.scrollTop < delta / 2) sc.scrollTop = targetTop;
         };
         setTimeout(reapply, 50);
@@ -2027,18 +2028,20 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // A fling keeps going for a while after the finger lifts, and a long one has been traced at 3.6 s with its bounce.
   // Ending one that has already stopped changes nothing, so this errs long.
   var MOMENTUM_MS = 8000;
-  // Further than this, a position the app sets is rows above coming or going, not a nudge.
-  var SCRIPT_MOVE_MIN = 2000;
+  // Further than this, a move is rows above coming or going, not a nudge or a step of a fling, even one that several
+  // busy frames ran together. A reply streaming in below changes the height by less.
+  var ROWS_MOVE_MIN = 2000;
   // How far a fling can carry the position between two looks at it.
   var WINDOW_SLACK = 300;
-  // Rows above coming or going change the height by more than this. A smaller change, such as a reply streaming in
-  // below, can land within the slack of a fling's own step and pass for the position moving with it.
-  var ROWS_ABOVE_MIN = 2 * WINDOW_SLACK;
+  // The longest a fling or a run of flings holds back rows the bundle drops above the reader. Rows keep loading above
+  // meanwhile, and nothing else bounds how many are mounted.
+  var TRIM_WAIT_MAX_MS = 3000;
   // A fling sends a scroll event every frame until it has stopped.
   var STILL_MS = 300;
   var movedAt = -Infinity;
   var trimWaiting = false;
   var trimAskedAt = -Infinity;
+  var trimWaitSince = -Infinity;
   var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
@@ -2064,6 +2067,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     }
   }, opts);
   ["touchend", "touchcancel"].forEach(function (name) { window.addEventListener(name, touchState, opts); });
+  // A page hidden with a finger down may never see that touch end.
+  ["pagehide", "visibilitychange"].forEach(function (name) {
+    window.addEventListener(name, function () { if (name === "pagehide" || document.hidden) touching = false; }, opts);
+  });
   window.addEventListener("pointerdown", function (e) {
     if (onConversation(e)) { pressed = true; mark(); }
   }, opts);
@@ -2134,7 +2141,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // Rows added at the end while the reader follows it move the position as much, but leave the reader at the end.
   function rowsMovedAbove(el, seen, top, height) {
     var grew = height - seen.height;
-    return Math.abs(grew) > ROWS_ABOVE_MIN && Math.abs(top - seen.top - grew) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
+    return Math.abs(grew) > ROWS_MOVE_MIN && Math.abs(top - seen.top - grew) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
   }
 
   // A fling on iOS carries on in the coordinates it started in when rows above the reader come or go. The app moves the
@@ -2144,8 +2151,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var IOS = typeof navigator !== "undefined" && (/iP(hone|ad|od)/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
   function stopFling(el, flung) {
-    if (!IOS || !el.style || touching || stopping.has(el)) return;
-    if (!flung && !(performance.now() - window.__agyLastScrollInputAt < MOMENTUM_MS)) return;
+    if (!IOS || !el.style || touching || pressed || stopping.has(el)) return;
+    if (!flung && !moving(performance.now())) return;
     stopping.add(el);
     var overflow = el.style.overflowY;
     el.style.overflowY = "hidden";
@@ -2164,7 +2171,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // was and nothing to go back to. A position clamped by a collapse ends up at the end of the conversation instead.
   function tookRowsAbove(el, seen, top, height) {
     var shrank = seen.height - height;
-    return shrank > ROWS_ABOVE_MIN && Math.abs(seen.top - top - shrank) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
+    return shrank > ROWS_MOVE_MIN && Math.abs(seen.top - top - shrank) <= WINDOW_SLACK && height - top - el.clientHeight > NEAR_BOTTOM;
   }
 
   // An iPhone has been seen moving a long conversation that had just re-rendered, with nothing asking it to. Once it put
@@ -2184,7 +2191,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (hold) {
       // Rows above the reader coming or going move the position by what they added or took, and what is held with it.
       var grew = el.scrollHeight - hold.height;
-      if (hold.gap < 0 && Math.abs(grew) > ROWS_ABOVE_MIN && Math.abs(el.scrollTop - hold.last - grew) <= WINDOW_SLACK) hold.top += grew;
+      if (hold.gap < 0 && Math.abs(grew) > ROWS_MOVE_MIN && Math.abs(el.scrollTop - hold.last - grew) <= WINDOW_SLACK) hold.top += grew;
       var target = hold.gap >= 0 ? el.scrollHeight - hold.gap : hold.top;
       var movedOn = el.scrollTop > target + 1 && el.scrollTop > hold.last + 1;
       if (movedOn || window.__agyLastScrollInputAt > hold.at || now - hold.at >= FLING_HOLD_MS) {
@@ -2236,7 +2243,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   window.__agyScrolledByScript = function (el, top) {
     scripted = { at: performance.now(), el: el, top: typeof top === "number" && isFinite(top) ? top : null };
     // Ended before the position moves rather than after, or the fling paints one more frame in its old coordinates.
-    if (el && scripted.top !== null && el.matches && el.matches(VIEWPORT) && Math.abs(scripted.top - el.scrollTop) > SCRIPT_MOVE_MIN) {
+    if (el && scripted.top !== null && el.matches && el.matches(VIEWPORT) && Math.abs(scripted.top - el.scrollTop) > ROWS_MOVE_MIN) {
       stopFling(el, false);
     }
   };
@@ -2279,24 +2286,36 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     lastSeen.set(el, { top: hold.last, height: el.scrollHeight });
   }
 
-  // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks.
+  // Runs before the bundle's own listener on the element, so the answer is ready when the hook asks. The time is noted
+  // after the comparison, which asks whether the conversation was already moving before this event.
   window.addEventListener("scroll", function (e) {
     var el = e.target;
     if (el && el.matches && el.matches(VIEWPORT)) {
-      movedAt = performance.now();
       compare(el);
+      movedAt = performance.now();
     }
   }, opts);
 
+  // Still moving after the reader's input: a fling, its bounce, or the reader's own scroll. Moved by the app alone, or
+  // still for a moment, it has nothing to end and nothing to wait for.
+  function moving(now) {
+    return now - window.__agyLastScrollInputAt < MOMENTUM_MS && now - movedAt < STILL_MS;
+  }
+
   // Asked by the bundle before it drops rows far above the reader. The position moves up by what it drops, and on iOS
   // the reader's finger or fling does not move with it, so the rows wait for the conversation to stop moving.
+  // A finger down is waited for however long it stays, because a drag carries on from where it was and throws the
+  // reader thousands of pixels. A fling only nudges the position, so it is waited for up to TRIM_WAIT_MAX_MS.
   window.__agyDeferTrim = function () {
     var now = performance.now();
-    var wait = IOS && (touching || (now - window.__agyLastScrollInputAt < MOMENTUM_MS && now - movedAt < STILL_MS));
+    var wait = IOS && (touching || moving(now));
     // The bundle asks again every 250 ms while it waits, and may stop asking without a last answer.
-    if (wait && !(trimWaiting && now - trimAskedAt < 1000)) {
+    var continued = trimWaiting && now - trimAskedAt < 1000;
+    if (wait && !continued) {
+      trimWaitSince = now;
       try { window.dispatchEvent(new CustomEvent("agy-trim-wait")); } catch (e) {}
     }
+    if (wait && !touching && now - trimWaitSince >= TRIM_WAIT_MAX_MS) wait = false;
     trimWaiting = wait;
     trimAskedAt = now;
     return wait;

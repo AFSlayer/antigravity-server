@@ -179,6 +179,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`"Copy path")),n&&z.createElement`,
 		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
+		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else{`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
