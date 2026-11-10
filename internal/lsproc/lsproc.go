@@ -180,6 +180,18 @@ func (i *Instance) Fetch(path string) (body []byte, contentType string, err erro
 // language server.
 const CSRFHeader = "x-codeium-csrf-token"
 
+// StatusError is what Call returns when the language server answers with a
+// status other than 200. Call returns the body alongside it.
+type StatusError struct {
+	Method string
+	Code   int
+	Status string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s returned %s", e.Method, e.Status)
+}
+
 // Call invokes a Connect RPC on the language server. method is the bare method
 // name, for example "GetAuthStatus". It returns the raw JSON response.
 //
@@ -220,7 +232,7 @@ func (i *Instance) Call(ctx context.Context, method string, body any) ([]byte, e
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return data, fmt.Errorf("%s returned %s", method, resp.Status)
+		return data, &StatusError{Method: method, Code: resp.StatusCode, Status: resp.Status}
 	}
 	return data, nil
 }

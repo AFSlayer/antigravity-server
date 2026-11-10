@@ -80,7 +80,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authURL, err := s.coordinator.Begin(ctx)
+	authURL, mode, err := s.coordinator.Begin(ctx)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, signin.ErrUnavailable) {
@@ -90,7 +90,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"authUrl": authURL})
+	writeJSON(w, http.StatusOK, map[string]any{"authUrl": authURL, "mode": mode})
 }
 
 func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 		Pasted string `json:"pasted"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Could not read the pasted address."})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Could not read what was pasted."})
 		return
 	}
 
@@ -110,13 +110,24 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.coordinator.Complete(ctx, req.Pasted); err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, signin.ErrNoSession) {
-			status = http.StatusConflict
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		status, msg := completeError(err)
+		writeJSON(w, status, map[string]any{"error": msg})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// completeError turns what Complete returned into a status and message for the
+// page. 409 means the attempt is over and tells the page to start another.
+func completeError(err error) (int, string) {
+	switch {
+	case errors.Is(err, signin.ErrNoSession), errors.Is(err, signin.ErrExpired):
+		return http.StatusConflict, "That sign-in expired. Open the Google page again."
+	case errors.Is(err, signin.ErrFailed):
+		// The page prepares a new link on 409, so the reason stands alone. It
+		// can end in a link, which a trailing sentence would run into.
+		return http.StatusConflict, err.Error()
+	}
+	return http.StatusBadRequest, err.Error()
 }

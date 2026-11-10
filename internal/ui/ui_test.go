@@ -2,9 +2,13 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -185,5 +189,87 @@ func TestSignInPageBypassesStaleCacheAfterLogout(t *testing.T) {
 	}
 	if bodyAfter["signedIn"] || !bodyAfter["needsSignIn"] {
 		t.Fatalf("expected status after page visit to be signedIn=false, needsSignIn=true, got %+v", bodyAfter)
+	}
+}
+
+// The page words steps 2 and 3 by mode, so begin has to say which one the
+// language server picked. Once the attempt ends, complete answers 409, which is
+// what makes the page start a new one.
+func TestSignInBeginReportsModeAndCompleteReportsExpiry(t *testing.T) {
+	urlFile := filepath.Join(t.TempDir(), "urls")
+	stop := make(chan struct{})
+	endLogin := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/exa.language_server_pb.LanguageServerService/") {
+		case "Login":
+			_ = os.WriteFile(urlFile, []byte("https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fauth%2Fcallback\n"), 0o600)
+			select {
+			case <-endLogin:
+			case <-r.Context().Done():
+			case <-stop:
+			}
+			_, _ = w.Write([]byte(`{"authResult":{"uiMessage":"context deadline exceeded"}}`))
+		case "SwitchLoginToAuthCode":
+			_, _ = w.Write([]byte(`{"active":true,"authUrl":"https://accounts.google.com/o/oauth2/auth?state=code","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`))
+		case "SubmitLoginAuthCode":
+			_, _ = w.Write([]byte(`{"retryError":"Sign-in session is no longer active. Please start sign-in again."}`))
+		case "GetAuthStatus":
+			_, _ = w.Write([]byte(`{"authResult":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(stop) })
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	s := NewSignIn(signin.New(&lsproc.Instance{Port: port, CSRFToken: "t"}, urlFile))
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, SignInBeginPath, strings.NewReader("{}")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("begin status = %d: %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		AuthURL string `json:"authUrl"`
+		Mode    string `json:"mode"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Mode != "authCode" || body.AuthURL != "https://accounts.google.com/o/oauth2/auth?state=code" {
+		t.Fatalf("begin = %+v, want the auth-code URL and mode", body)
+	}
+
+	// The language server gives up on the attempt.
+	close(endLogin)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`)))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "expired") {
+		t.Fatalf("complete after the attempt ended = %d %s, want 409 saying it expired", rec.Code, rec.Body)
+	}
+}
+
+func TestCompleteErrorMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		msg    string
+	}{
+		{signin.ErrNoSession, http.StatusConflict, "That sign-in expired. Open the Google page again."},
+		{signin.ErrExpired, http.StatusConflict, "That sign-in expired. Open the Google page again."},
+		{
+			fmt.Errorf("%w: Invalid authorization code. Please retry.", signin.ErrFailed),
+			http.StatusConflict,
+			"Google sign-in did not complete: Invalid authorization code. Please retry.",
+		},
+		{errors.New("Invalid authorization code."), http.StatusBadRequest, "Invalid authorization code."},
+	} {
+		status, msg := completeError(tc.err)
+		if status != tc.status || msg != tc.msg {
+			t.Errorf("completeError(%v) = %d %q, want %d %q", tc.err, status, msg, tc.status, tc.msg)
+		}
 	}
 }
