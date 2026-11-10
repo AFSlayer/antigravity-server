@@ -29,7 +29,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -350,15 +349,15 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 // the auth-code flow and returns the consent URL for it. Language servers older
 // than 2.31 do not have the RPC. They answer 404, or serve the web UI with 200;
 // those and any answer that leaves the attempt in loopback mode come back as
-// errNoAuthCode. Anything else, such as a dropped connection or a 5xx, may have
-// switched, so it comes back as a plain error.
+// errNoAuthCode. Anything else, such as a dropped connection or another error
+// status, may have come after the switch, so it comes back as a plain error.
 func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
 	if err != nil {
-		// A 4xx was refused before anything happened, and 501 is Connect's
-		// unimplemented.
+		// 404 is an unknown method and 501 is Connect's unimplemented; neither
+		// can have switched.
 		var status *lsproc.StatusError
-		if errors.As(err, &status) && (status.Code/100 == 4 || status.Code == http.StatusNotImplemented) {
+		if errors.As(err, &status) && (status.Code == http.StatusNotFound || status.Code == http.StatusNotImplemented) {
 			return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
 		}
 		return "", err
@@ -595,35 +594,70 @@ func loginOutcome(data []byte, err error) (bool, string) {
 		return true, ""
 	}
 
+	if failure := authFailure(out.AuthResult); failure != "" {
+		return false, failure
+	}
 	var message string
 	if json.Unmarshal(out.AuthResult["uiMessage"], &message) == nil && message != "" {
 		return false, message
 	}
-
-	// Some failures come only as a field, such as verificationRequired or
-	// tosViolation in 2.31. Name whichever are set.
-	var reported []string
-	for key, value := range out.AuthResult {
-		switch string(bytes.TrimSpace(value)) {
-		case "", "false", "null", `""`, "{}", "[]", "0":
-			continue
-		}
-		if key != "grantedScopes" {
-			reported = append(reported, key)
-		}
-	}
-	if len(reported) > 0 {
-		sort.Strings(reported)
-		return false, "the language server reported " + strings.Join(reported, ", ")
-	}
-
 	if out.Message != "" {
 		return false, out.Message
 	}
-	if err != nil {
-		return false, err.Error()
+
+	// Running out of time, ours or the language server's, is an expiry. Any
+	// other transport error names an internal address, so keep it to the log.
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		log.Printf("[signin] Login failed: %v", err)
+		return false, "the language server stopped answering the sign-in"
 	}
 	return false, ""
+}
+
+// authFailures are AuthResult's failure fields with what each means. Each is a
+// message whose presence is the signal, even when it is empty, as
+// licenseRequired always is. generalError is left out: it also comes along
+// empty when the attempt timed out, so only its reason counts.
+var authFailures = []struct{ field, meaning string }{
+	{"tosViolation", "the account is blocked under the terms of service"},
+	{"ineligible", "the account is not eligible"},
+	{"verificationRequired", "Google needs to verify the account"},
+	{"licenseRequired", "the account needs an Antigravity license"},
+	{"projectRequired", "the account needs a Google Cloud project"},
+	{"headlessAuthRequired", "the language server asked for a different sign-in"},
+}
+
+// authFailure describes the failure an AuthResult reports, with any detail
+// and link it carries, or returns "" when it reports none.
+func authFailure(result map[string]json.RawMessage) string {
+	var detail struct {
+		Reason          string `json:"reason"`
+		Message         string `json:"message"`
+		VerificationURL string `json:"verificationUrl"`
+		AppealURL       string `json:"appealUrl"`
+		AuthURL         string `json:"authUrl"`
+	}
+
+	meaning := ""
+	for _, f := range authFailures {
+		if raw, ok := result[f.field]; ok && json.Unmarshal(raw, &detail) == nil {
+			meaning = f.meaning
+			break
+		}
+	}
+	if meaning == "" {
+		if raw, ok := result["generalError"]; !ok || json.Unmarshal(raw, &detail) != nil || detail.Reason == "" {
+			return ""
+		}
+	}
+
+	var parts []string
+	for _, part := range []string{meaning, detail.Message, detail.Reason, detail.VerificationURL, detail.AppealURL, detail.AuthURL} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, ": ")
 }
 
 // finish ends sess. It leaves alone an attempt that has since replaced it.

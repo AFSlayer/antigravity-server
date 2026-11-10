@@ -191,7 +191,7 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		case "4/verify":
 			// Accepted, but the account needs a step only Google can take.
 			f.mu.Lock()
-			f.failReply = `{"authResult":{"verificationRequired":{"url":"https://accounts.google.com/verify"},"generalError":{}}}`
+			f.failReply = `{"authResult":{"verificationRequired":{"verificationUrl":"https://accounts.google.com/verify"}}}`
 			f.mu.Unlock()
 			f.end(false)
 			_, _ = w.Write([]byte(`{"accepted":true}`))
@@ -404,7 +404,8 @@ func TestBeginSwitchAnswers(t *testing.T) {
 		{0, `<html>not an RPC</html>`, true},
 		{http.StatusNotFound, `404 page not found`, true},
 		{http.StatusNotImplemented, `{"code":"unimplemented"}`, true},
-		{http.StatusBadRequest, `{"code":"invalid_argument"}`, true},
+		{http.StatusBadRequest, `{"code":"invalid_argument"}`, false},
+		{http.StatusConflict, `{"code":"aborted"}`, false},
 		{0, `{"active":false}`, false},
 		{0, `{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`, false},
 		{http.StatusInternalServerError, `{"code":"internal"}`, false},
@@ -506,8 +507,8 @@ func TestCompleteNamesFailureWithoutMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := c.Complete(ctx, "4/verify")
-	if !errors.Is(err, ErrFailed) || !strings.Contains(err.Error(), "verificationRequired") {
-		t.Fatalf("Complete = %v, want ErrFailed naming verificationRequired", err)
+	if !errors.Is(err, ErrFailed) || !strings.Contains(err.Error(), "https://accounts.google.com/verify") {
+		t.Fatalf("Complete = %v, want ErrFailed with the verification link", err)
 	}
 }
 
@@ -657,11 +658,18 @@ func TestLoginOutcome(t *testing.T) {
 		reason string
 	}{
 		{`{"authResult":{"hasValidAuth":true,"grantedScopes":["openid"]}}`, nil, true, ""},
+		// What 2.31 answers when an attempt times out.
 		{`{"authResult":{"uiMessage":"context deadline exceeded","generalError":{}}}`, nil, false, "context deadline exceeded"},
-		{`{"authResult":{"verificationRequired":{"url":"https://x"},"generalError":{}}}`, nil, false, "the language server reported verificationRequired"},
-		{`{"authResult":{"tosViolation":true,"ineligible":true}}`, nil, false, "the language server reported ineligible, tosViolation"},
+		// Fields that are not failures say nothing.
+		{`{"authResult":{"authMode":"AUTH_MODE_PERSONAL_CONSUMER","isGcpTos":true,"projectId":"p","generalError":{}}}`, nil, false, ""},
+		{`{"authResult":{"licenseRequired":{}}}`, nil, false, "the account needs an Antigravity license"},
+		{`{"authResult":{"projectRequired":{}}}`, nil, false, "the account needs a Google Cloud project"},
+		{`{"authResult":{"verificationRequired":{"verificationUrl":"https://v"}}}`, nil, false, "Google needs to verify the account: https://v"},
+		{`{"authResult":{"tosViolation":{"message":"Suspended.","appealUrl":"https://a"},"uiMessage":"x"}}`, nil, false, "the account is blocked under the terms of service: Suspended.: https://a"},
+		{`{"authResult":{"generalError":{"reason":"token exchange failed"}}}`, nil, false, "token exchange failed"},
 		{`{"code":"internal","message":"token exchange failed"}`, errors.New("Login returned 500"), false, "token exchange failed"},
-		{``, errors.New("connection refused"), false, "connection refused"},
+		{``, errors.New(`Post "https://127.0.0.1:1/Login": EOF`), false, "the language server stopped answering the sign-in"},
+		{``, context.DeadlineExceeded, false, ""},
 		{`{}`, nil, false, ""},
 	} {
 		ok, reason := loginOutcome([]byte(tc.data), tc.err)
