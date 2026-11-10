@@ -2,6 +2,8 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -247,5 +249,27 @@ func TestSignInBeginReportsModeAndCompleteReportsExpiry(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`)))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "expired") {
 		t.Fatalf("complete after the attempt ended = %d %s, want 409 saying it expired", rec.Code, rec.Body)
+	}
+}
+
+func TestCompleteErrorMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		msg    string
+	}{
+		{signin.ErrNoSession, http.StatusConflict, "That sign-in expired. Open the Google page again."},
+		{signin.ErrExpired, http.StatusConflict, "That sign-in expired. Open the Google page again."},
+		{
+			fmt.Errorf("%w: Invalid authorization code. Please retry.", signin.ErrFailed),
+			http.StatusConflict,
+			"Google sign-in did not complete: Invalid authorization code. Please retry. Open the Google page again.",
+		},
+		{errors.New("Invalid authorization code."), http.StatusBadRequest, "Invalid authorization code."},
+	} {
+		status, msg := completeError(tc.err)
+		if status != tc.status || msg != tc.msg {
+			t.Errorf("completeError(%v) = %d %q, want %d %q", tc.err, status, msg, tc.status, tc.msg)
+		}
 	}
 }

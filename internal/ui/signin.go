@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/signin"
@@ -110,17 +111,22 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.coordinator.Complete(ctx, req.Pasted); err != nil {
-		// 409 means the attempt is over and tells the page to start another.
-		status, msg := http.StatusBadRequest, err.Error()
-		switch {
-		case errors.Is(err, signin.ErrNoSession), errors.Is(err, signin.ErrExpired):
-			status, msg = http.StatusConflict, "That sign-in expired. Open the Google page again."
-		case errors.Is(err, signin.ErrFailed):
-			status, msg = http.StatusConflict, err.Error()+". Open the Google page again."
-		}
+		status, msg := completeError(err)
 		writeJSON(w, status, map[string]any{"error": msg})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// completeError turns what Complete returned into a status and message for the
+// page. 409 means the attempt is over and tells the page to start another.
+func completeError(err error) (int, string) {
+	switch {
+	case errors.Is(err, signin.ErrNoSession), errors.Is(err, signin.ErrExpired):
+		return http.StatusConflict, "That sign-in expired. Open the Google page again."
+	case errors.Is(err, signin.ErrFailed):
+		return http.StatusConflict, strings.TrimRight(err.Error(), ". ") + ". Open the Google page again."
+	}
+	return http.StatusBadRequest, err.Error()
 }

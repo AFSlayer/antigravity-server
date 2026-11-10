@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -85,9 +86,16 @@ type session struct {
 	cancel      context.CancelFunc
 	// done is closed when the Login RPC returns, which ends the attempt.
 	done chan struct{}
-	// endReason is why Login returned without signing in, empty when it gave
-	// no reason. It is set before done is closed and read only after.
+	// loginOK and endReason say how Login returned: signed in, or why not,
+	// empty when it gave no reason. They are set before done is closed and
+	// read only after.
+	loginOK   bool
 	endReason string
+}
+
+// failed reports whether Login has returned without signing in.
+func (s *session) failed() bool {
+	return !s.live() && !s.loginOK
 }
 
 // live reports whether the language server is still waiting on this attempt.
@@ -287,13 +295,17 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 		// is the source of truth for success; what Login says is kept to
 		// explain a failure.
 		data, err := c.instance.Call(loginCtx, "Login", map[string]any{})
-		sess.endReason = loginEndReason(data, err)
+		sess.loginOK, sess.endReason = loginOutcome(data, err)
 		close(sess.done)
+		cancel()
 	}()
 
 	loopbackURL, err := c.waitForURL(ctx, sess.done)
 	if err != nil {
 		cancel()
+		if errors.Is(err, errEndedEarly) {
+			return "", "", endedEarly(sess)
+		}
 		return "", "", err
 	}
 
@@ -324,7 +336,7 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	// send the user through Google for nothing.
 	if !sess.live() {
 		cancel()
-		return "", "", errEndedEarly
+		return "", "", endedEarly(sess)
 	}
 
 	c.mu.Lock()
@@ -447,28 +459,29 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	if pending == nil {
 		return ErrNoSession
 	}
-	if !pending.live() {
+	if pending.failed() {
 		return c.ended(pending)
 	}
 
-	if pending.mode == ModeAuthCode {
+	// An attempt whose Login has already signed in only needs confirming.
+	if pending.live() && pending.mode == ModeAuthCode {
 		if err := c.submitAuthCode(ctx, pending, pasted); err != nil {
 			return err
 		}
-	} else {
+	} else if pending.live() {
 		query, err := queryFrom(pasted)
 		if err != nil {
 			return err
 		}
 		if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
 			c.finish(pending)
-			return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+			return fmt.Errorf("%w: Antigravity could not take that address: %v", ErrFailed, err)
 		}
 	}
 
 	// The Login RPC needs a moment to exchange the code for a token. If it
-	// returns without credentials, the exchange failed and the attempt is
-	// over, so there is no point waiting the full time. A few checks after it
+	// returns without signing in, the exchange failed and the attempt is over,
+	// so there is no point waiting the full time. A few checks after it
 	// returns cover GetAuthStatus catching up.
 	checksAfterLogin := 3
 	for i := 0; i < 20; i++ {
@@ -486,7 +499,7 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 			c.finish(pending)
 			return nil
 		}
-		if !pending.live() {
+		if pending.failed() {
 			if checksAfterLogin == 0 {
 				return c.ended(pending)
 			}
@@ -532,7 +545,7 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 	case <-ctx.Done():
 	case <-time.After(300 * time.Millisecond):
 	}
-	if !pending.live() {
+	if pending.failed() {
 		return c.ended(pending)
 	}
 	switch {
@@ -560,29 +573,57 @@ func (c *Coordinator) ended(sess *session) error {
 	return fmt.Errorf("%w: %s", ErrFailed, reason)
 }
 
-// loginEndReason is the language server's account of why Login returned, empty
-// when it signed in or gave none.
-func loginEndReason(data []byte, err error) string {
+// endedEarly is errEndedEarly with the language server's reason, if it gave
+// one. sess must have ended.
+func endedEarly(sess *session) error {
+	if sess.endReason == "" {
+		return errEndedEarly
+	}
+	return fmt.Errorf("%w: %s", errEndedEarly, sess.endReason)
+}
+
+// loginOutcome reads what Login answered: whether it signed in and, if not,
+// the language server's account of why, empty when it gave none.
+func loginOutcome(data []byte, err error) (bool, string) {
 	var out struct {
-		AuthResult struct {
-			HasValidAuth bool   `json:"hasValidAuth"`
-			UIMessage    string `json:"uiMessage"`
-		} `json:"authResult"`
+		AuthResult map[string]json.RawMessage `json:"authResult"`
 		// Message is set instead when the RPC fails as a Connect error.
 		Message string `json:"message"`
 	}
 	_ = json.Unmarshal(data, &out)
-	switch {
-	case out.AuthResult.HasValidAuth:
-		return ""
-	case out.AuthResult.UIMessage != "":
-		return out.AuthResult.UIMessage
-	case out.Message != "":
-		return out.Message
-	case err != nil:
-		return err.Error()
+	if string(out.AuthResult["hasValidAuth"]) == "true" {
+		return true, ""
 	}
-	return ""
+
+	var message string
+	if json.Unmarshal(out.AuthResult["uiMessage"], &message) == nil && message != "" {
+		return false, message
+	}
+
+	// Some failures come only as a field, such as verificationRequired or
+	// tosViolation in 2.31. Name whichever are set.
+	var reported []string
+	for key, value := range out.AuthResult {
+		switch string(bytes.TrimSpace(value)) {
+		case "", "false", "null", `""`, "{}", "[]", "0":
+			continue
+		}
+		if key != "grantedScopes" {
+			reported = append(reported, key)
+		}
+	}
+	if len(reported) > 0 {
+		sort.Strings(reported)
+		return false, "the language server reported " + strings.Join(reported, ", ")
+	}
+
+	if out.Message != "" {
+		return false, out.Message
+	}
+	if err != nil {
+		return false, err.Error()
+	}
+	return false, ""
 }
 
 // finish ends sess. It leaves alone an attempt that has since replaced it.

@@ -51,6 +51,10 @@ type fakeLS struct {
 	// failReply is what Login answers when it ends without signing in. The
 	// default is what 2.31 says when the attempt times out.
 	failReply string
+	// authLag delays GetAuthStatus seeing a sign-in that Login already
+	// reported.
+	authLag    time.Duration
+	signedInAt time.Time
 }
 
 func newFakeLS(t *testing.T, authCode bool) *fakeLS {
@@ -61,6 +65,10 @@ func newFakeLS(t *testing.T, authCode bool) *fakeLS {
 		stop:     make(chan struct{}),
 	}
 	f.callback = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("code") == "reject" {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			return
+		}
 		f.mu.Lock()
 		f.callbackQuery = r.URL.RawQuery
 		f.mu.Unlock()
@@ -85,6 +93,9 @@ func (f *fakeLS) coordinator() *Coordinator {
 func (f *fakeLS) end(signedIn bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if signedIn && !f.signedIn {
+		f.signedInAt = time.Now()
+	}
 	f.signedIn = f.signedIn || signedIn
 	if f.endLogin != nil {
 		close(f.endLogin)
@@ -177,6 +188,14 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		switch req.Code {
 		case "4/good":
+		case "4/verify":
+			// Accepted, but the account needs a step only Google can take.
+			f.mu.Lock()
+			f.failReply = `{"authResult":{"verificationRequired":{"url":"https://accounts.google.com/verify"},"generalError":{}}}`
+			f.mu.Unlock()
+			f.end(false)
+			_, _ = w.Write([]byte(`{"accepted":true}`))
+			return
 		case "4/exchange-fails":
 			// Accepted, but Login then fails to get a token.
 			f.mu.Lock()
@@ -208,7 +227,7 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 
 	case "GetAuthStatus":
 		f.mu.Lock()
-		signedIn := f.signedIn
+		signedIn := f.signedIn && time.Since(f.signedInAt) >= f.authLag
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"authResult": map[string]any{"hasValidAuth": signedIn}})
 
@@ -462,6 +481,53 @@ func TestCompleteStopsWaitingWhenLoginEnds(t *testing.T) {
 	}
 }
 
+// Login can report success before GetAuthStatus catches up. That is a
+// sign-in, not an ended attempt.
+func TestCompleteWaitsForSlowAuthStatusAfterSuccess(t *testing.T) {
+	f := newFakeLS(t, true)
+	f.authLag = 2 * time.Second
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Complete(ctx, "4/good"); err != nil {
+		t.Fatalf("Complete = %v, want success once GetAuthStatus catches up", err)
+	}
+}
+
+// A failure reported only as a field still has to reach the user as a
+// failure; calling it an expiry would send them round the same loop.
+func TestCompleteNamesFailureWithoutMessage(t *testing.T) {
+	f := newFakeLS(t, true)
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Complete(ctx, "4/verify")
+	if !errors.Is(err, ErrFailed) || !strings.Contains(err.Error(), "verificationRequired") {
+		t.Fatalf("Complete = %v, want ErrFailed naming verificationRequired", err)
+	}
+}
+
+// When the callback listener refuses the address, the attempt is ended, so the
+// error has to say the attempt is over.
+func TestCompleteLoopbackRefusedEndsAttempt(t *testing.T) {
+	f := newFakeLS(t, false)
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Complete(ctx, "http://localhost:1/auth/callback?state=old&code=reject"); !errors.Is(err, ErrFailed) {
+		t.Fatalf("Complete = %v, want ErrFailed", err)
+	}
+	if c.pending != nil {
+		t.Error("the refused attempt must be cleared")
+	}
+}
+
 // A second Begin waiting behind a stuck first one must give up with its own
 // deadline.
 func TestBeginWaitHonoursContext(t *testing.T) {
@@ -583,20 +649,24 @@ func TestFinishLeavesReplacementAlone(t *testing.T) {
 	}
 }
 
-func TestLoginEndReason(t *testing.T) {
+func TestLoginOutcome(t *testing.T) {
 	for _, tc := range []struct {
-		data string
-		err  error
-		want string
+		data   string
+		err    error
+		ok     bool
+		reason string
 	}{
-		{`{"authResult":{"hasValidAuth":true}}`, nil, ""},
-		{`{"authResult":{"uiMessage":"context deadline exceeded","generalError":{}}}`, nil, "context deadline exceeded"},
-		{`{"code":"internal","message":"token exchange failed"}`, errors.New("Login returned 500"), "token exchange failed"},
-		{``, errors.New("connection refused"), "connection refused"},
-		{`{}`, nil, ""},
+		{`{"authResult":{"hasValidAuth":true,"grantedScopes":["openid"]}}`, nil, true, ""},
+		{`{"authResult":{"uiMessage":"context deadline exceeded","generalError":{}}}`, nil, false, "context deadline exceeded"},
+		{`{"authResult":{"verificationRequired":{"url":"https://x"},"generalError":{}}}`, nil, false, "the language server reported verificationRequired"},
+		{`{"authResult":{"tosViolation":true,"ineligible":true}}`, nil, false, "the language server reported ineligible, tosViolation"},
+		{`{"code":"internal","message":"token exchange failed"}`, errors.New("Login returned 500"), false, "token exchange failed"},
+		{``, errors.New("connection refused"), false, "connection refused"},
+		{`{}`, nil, false, ""},
 	} {
-		if got := loginEndReason([]byte(tc.data), tc.err); got != tc.want {
-			t.Errorf("loginEndReason(%s, %v) = %q, want %q", tc.data, tc.err, got, tc.want)
+		ok, reason := loginOutcome([]byte(tc.data), tc.err)
+		if ok != tc.ok || reason != tc.reason {
+			t.Errorf("loginOutcome(%s, %v) = %v, %q; want %v, %q", tc.data, tc.err, ok, reason, tc.ok, tc.reason)
 		}
 	}
 }
