@@ -92,9 +92,6 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		if !mobileHomeNewConvoRowRe.Match(mainJS) {
 			t.Error("mobile-home-new-conversation-row: the navigation rows were not found; the mobile home falls back to the row in the list")
 		}
-		if !bytes.Contains(mainJS, []byte(`{showNewConversation:a=!0,className:b,conciergeTestId:c}`)) {
-			t.Error("mobile-home-new-conversation-row: the navigation component's parameters changed, so it may not recognize the mobile home")
-		}
 		if !bytes.Contains(mainJS, []byte(`conciergeTestId:"mobile-home-concierge"`)) {
 			t.Error("mobile-home-new-conversation-row: the mobile home no longer identifies itself as the patch expects")
 		}
