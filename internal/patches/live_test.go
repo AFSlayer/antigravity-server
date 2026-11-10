@@ -20,14 +20,14 @@ var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url
 // findBarInputRe matches the input scroll-input-tracker looks for. The bundle can wrap lines between any two tokens.
 var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Find"`)
 
-// rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
-// it in a helper that the rows' minHeight calls.
 // userMessageButtonsOnTouchRe and autoscrollPhysicalDistanceRe match what 2.31 does itself in place of
 // mobile-user-message-actions and autoscroll-distance-fix: user message buttons that only hide where the screen can
 // hover, and a hook that measures the distance to the bottom from the position.
 var userMessageButtonsOnTouchRe = regexp.MustCompile(`user-input-buttons-container[^"]*"\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
-var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=a,`)
+var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
 
+// rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
+// it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
