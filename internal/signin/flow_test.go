@@ -48,6 +48,9 @@ type fakeLS struct {
 	endLogin      chan struct{}
 	callbackQuery string
 	submitted     []string
+	// failReply is what Login answers when it ends without signing in. The
+	// default is what 2.31 says when the attempt times out.
+	failReply string
 }
 
 func newFakeLS(t *testing.T, authCode bool) *fakeLS {
@@ -62,6 +65,9 @@ func newFakeLS(t *testing.T, authCode bool) *fakeLS {
 		f.callbackQuery = r.URL.RawQuery
 		f.mu.Unlock()
 		f.end(true)
+		// Like the real listener, send the browser on to a page elsewhere. It
+		// is unreachable here, so following it would fail the sign-in.
+		http.Redirect(w, r, "http://127.0.0.1:1/auth-success", http.StatusFound)
 	}))
 	f.server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.callback.Close)
@@ -112,7 +118,15 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 		case <-f.stop:
 		}
-		_, _ = w.Write([]byte(`{}`))
+		f.mu.Lock()
+		reply := `{"authResult":{"uiMessage":"context deadline exceeded","generalError":{}}}`
+		if f.signedIn {
+			reply = `{"authResult":{"hasValidAuth":true}}`
+		} else if f.failReply != "" {
+			reply = f.failReply
+		}
+		f.mu.Unlock()
+		_, _ = w.Write([]byte(reply))
 
 	case "SwitchLoginToAuthCode":
 		if f.loginEndsOnSwitch {
@@ -165,6 +179,9 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		case "4/good":
 		case "4/exchange-fails":
 			// Accepted, but Login then fails to get a token.
+			f.mu.Lock()
+			f.failReply = `{"authResult":{"uiMessage":"oauth2: \"invalid_grant\" \"Bad Request\""}}`
+			f.mu.Unlock()
 			f.end(false)
 			_, _ = w.Write([]byte(`{"accepted":true}`))
 			return
@@ -198,6 +215,18 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (f *fakeLS) submittedCodes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.submitted...)
+}
+
+func (f *fakeLS) callbackGot() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callbackQuery
 }
 
 func (f *fakeLS) loginCount() int {
@@ -253,7 +282,7 @@ func TestBeginPrefersAuthCode(t *testing.T) {
 	if c.pending != nil {
 		t.Error("a finished attempt must be cleared")
 	}
-	if got := f.submitted; len(got) != 2 || got[1] != "4/good" {
+	if got := f.submittedCodes(); len(got) != 2 || got[1] != "4/good" {
 		t.Errorf("submitted %q, want the trimmed code last", got)
 	}
 }
@@ -274,8 +303,8 @@ func TestBeginFallsBackToLoopbackWithoutAuthCode(t *testing.T) {
 	if err := c.Complete(ctx, "http://localhost:1/auth/callback?state=loop&code=abc"); err != nil {
 		t.Fatalf("Complete = %v", err)
 	}
-	if f.callbackQuery != "state=loop&code=abc" {
-		t.Errorf("callback got %q", f.callbackQuery)
+	if got := f.callbackGot(); got != "state=loop&code=abc" {
+		t.Errorf("callback got %q", got)
 	}
 	if !c.SignedIn(ctx) {
 		t.Error("expected signed in")
@@ -300,7 +329,7 @@ func TestCompleteAfterLoginEnded(t *testing.T) {
 		if err := c.Complete(ctx, "http://localhost:1/auth/callback?code=abc"); !errors.Is(err, ErrExpired) {
 			t.Fatalf("authCode=%v: Complete after expiry = %v, want ErrExpired", authCode, err)
 		}
-		if len(f.submitted) != 0 || f.callbackQuery != "" {
+		if len(f.submittedCodes()) != 0 || f.callbackGot() != "" {
 			t.Errorf("authCode=%v: an expired attempt must not be handed the code", authCode)
 		}
 		if err := c.Complete(ctx, "4/good"); !errors.Is(err, ErrNoSession) {
@@ -410,7 +439,8 @@ func TestBeginReplacesEndedAttempt(t *testing.T) {
 }
 
 // A code can be accepted and the token exchange still fail, which ends Login.
-// That is known within a moment, so Complete must not wait out its polling.
+// That is known within a moment, so Complete must not wait out its polling, and
+// it is not an expiry, so the reason must reach the user.
 func TestCompleteStopsWaitingWhenLoginEnds(t *testing.T) {
 	f := newFakeLS(t, true)
 	c := f.coordinator()
@@ -420,8 +450,9 @@ func TestCompleteStopsWaitingWhenLoginEnds(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := c.Complete(ctx, "4/exchange-fails"); !errors.Is(err, ErrExpired) {
-		t.Fatalf("Complete = %v, want ErrExpired", err)
+	err := c.Complete(ctx, "4/exchange-fails")
+	if !errors.Is(err, ErrFailed) || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Fatalf("Complete = %v, want ErrFailed with the language server's reason", err)
 	}
 	if elapsed := time.Since(start); elapsed > 4*time.Second {
 		t.Errorf("Complete took %v after Login ended", elapsed)
@@ -495,7 +526,7 @@ func TestSubmitAuthCodeErrors(t *testing.T) {
 	if err := c.Complete(ctx, " \n"); err == nil || c.pending == nil {
 		t.Fatalf("Complete(blank) = %v; want an error that keeps the attempt", err)
 	}
-	if len(f.submitted) != 0 {
+	if len(f.submittedCodes()) != 0 {
 		t.Error("a blank paste must not reach the language server")
 	}
 
@@ -549,6 +580,24 @@ func TestFinishLeavesReplacementAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(c.urlFile); !os.IsNotExist(err) {
 		t.Error("finish must remove the URL file of the current attempt")
+	}
+}
+
+func TestLoginEndReason(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		err  error
+		want string
+	}{
+		{`{"authResult":{"hasValidAuth":true}}`, nil, ""},
+		{`{"authResult":{"uiMessage":"context deadline exceeded","generalError":{}}}`, nil, "context deadline exceeded"},
+		{`{"code":"internal","message":"token exchange failed"}`, errors.New("Login returned 500"), "token exchange failed"},
+		{``, errors.New("connection refused"), "connection refused"},
+		{`{}`, nil, ""},
+	} {
+		if got := loginEndReason([]byte(tc.data), tc.err); got != tc.want {
+			t.Errorf("loginEndReason(%s, %v) = %q, want %q", tc.data, tc.err, got, tc.want)
+		}
 	}
 }
 

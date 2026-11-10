@@ -212,7 +212,7 @@
         </li>
         <li id="step-2">
           <div class="step-title" id="copy-title">Sign in with Google</div>
-          <div class="step-body" id="copy-body"></div>
+          <div class="step-body" id="copy-body">Then copy what you are given and come back here.</div>
         </li>
         <li id="step-3">
           <div class="step-title">Paste it here</div>
@@ -327,7 +327,7 @@
           if (err.status === 409) {
             // The attempt is gone, so its code is useless. Start a new one.
             pasted.value = "";
-            say("That sign-in expired. Open the Google page again.", "err");
+            say(err.message, "err");
             try {
               await prepare();
             } catch (again) {

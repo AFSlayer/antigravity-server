@@ -110,11 +110,15 @@ func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.coordinator.Complete(ctx, req.Pasted); err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, signin.ErrNoSession) || errors.Is(err, signin.ErrExpired) {
-			status = http.StatusConflict
+		// 409 means the attempt is over and tells the page to start another.
+		status, msg := http.StatusBadRequest, err.Error()
+		switch {
+		case errors.Is(err, signin.ErrNoSession), errors.Is(err, signin.ErrExpired):
+			status, msg = http.StatusConflict, "That sign-in expired. Open the Google page again."
+		case errors.Is(err, signin.ErrFailed):
+			status, msg = http.StatusConflict, err.Error()+". Open the Google page again."
 		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, status, map[string]any{"error": msg})
 		return
 	}
 

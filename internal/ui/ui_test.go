@@ -245,7 +245,7 @@ func TestSignInBeginReportsModeAndCompleteReportsExpiry(t *testing.T) {
 	close(endLogin)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`)))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("complete after the attempt ended = %d %s, want 409", rec.Code, rec.Body)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "expired") {
+		t.Fatalf("complete after the attempt ended = %d %s, want 409 saying it expired", rec.Code, rec.Body)
 	}
 }

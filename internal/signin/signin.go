@@ -62,9 +62,12 @@ var (
 	ErrUnavailable = errors.New("sign-in cannot be started on this instance")
 	// ErrNoSession means Complete was called before Begin.
 	ErrNoSession = errors.New("no sign-in is in progress")
-	// ErrExpired means the language server gave up on the attempt, so the code
-	// or address can no longer be used.
+	// ErrExpired means the language server gave up on the attempt after
+	// waiting too long, so the code or address can no longer be used.
 	ErrExpired = errors.New("this sign-in expired, so start it again")
+	// ErrFailed means the attempt ended without signing in for some other
+	// reason. Errors that wrap it carry the language server's own account.
+	ErrFailed = errors.New("Google sign-in did not complete")
 	// ErrNoCode means the pasted address carried no authorization code.
 	ErrNoCode = errors.New("that address has no authorization code in it")
 
@@ -82,6 +85,9 @@ type session struct {
 	cancel      context.CancelFunc
 	// done is closed when the Login RPC returns, which ends the attempt.
 	done chan struct{}
+	// endReason is why Login returned without signing in, empty when it gave
+	// no reason. It is set before done is closed and read only after.
+	endReason string
 }
 
 // live reports whether the language server is still waiting on this attempt.
@@ -277,9 +283,11 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	loginCtx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 	sess := &session{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		// Login blocks until the attempt succeeds, fails or expires. Its result
-		// is ignored: SignedIn is the source of truth afterwards.
-		_, _ = c.instance.Call(loginCtx, "Login", map[string]any{})
+		// Login blocks until the attempt succeeds, fails or expires. SignedIn
+		// is the source of truth for success; what Login says is kept to
+		// explain a failure.
+		data, err := c.instance.Call(loginCtx, "Login", map[string]any{})
+		sess.endReason = loginEndReason(data, err)
 		close(sess.done)
 	}()
 
@@ -303,7 +311,8 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 		sess.mode, sess.authURL, sess.callbackURL = ModeLoopback, loopbackURL, callbackURL
 	default:
 		// The switch may have taken effect, so which URL the attempt expects
-		// is unknown. Drop it rather than guess.
+		// is unknown. Drop it rather than guess; the next Login replaces it on
+		// the language server.
 		cancel()
 		if ctx.Err() != nil {
 			return "", "", ctx.Err()
@@ -439,8 +448,7 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 		return ErrNoSession
 	}
 	if !pending.live() {
-		c.finish(pending)
-		return ErrExpired
+		return c.ended(pending)
 	}
 
 	if pending.mode == ModeAuthCode {
@@ -480,8 +488,7 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 		}
 		if !pending.live() {
 			if checksAfterLogin == 0 {
-				c.finish(pending)
-				return ErrExpired
+				return c.ended(pending)
 			}
 			checksAfterLogin--
 		}
@@ -526,8 +533,7 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 	case <-time.After(300 * time.Millisecond):
 	}
 	if !pending.live() {
-		c.finish(pending)
-		return ErrExpired
+		return c.ended(pending)
 	}
 	switch {
 	case out.RetryError != "":
@@ -540,6 +546,43 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 		return fmt.Errorf("could not read Antigravity's answer: %w", parseErr)
 	}
 	return errors.New("Antigravity did not accept that code")
+}
+
+// ended clears sess, whose Login has returned without signing in, and says
+// why it ended.
+func (c *Coordinator) ended(sess *session) error {
+	c.finish(sess)
+	reason := sess.endReason
+	if reason == "" || strings.Contains(reason, "deadline exceeded") {
+		return ErrExpired
+	}
+	log.Printf("[signin] sign-in failed: %s", reason)
+	return fmt.Errorf("%w: %s", ErrFailed, reason)
+}
+
+// loginEndReason is the language server's account of why Login returned, empty
+// when it signed in or gave none.
+func loginEndReason(data []byte, err error) string {
+	var out struct {
+		AuthResult struct {
+			HasValidAuth bool   `json:"hasValidAuth"`
+			UIMessage    string `json:"uiMessage"`
+		} `json:"authResult"`
+		// Message is set instead when the RPC fails as a Connect error.
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(data, &out)
+	switch {
+	case out.AuthResult.HasValidAuth:
+		return ""
+	case out.AuthResult.UIMessage != "":
+		return out.AuthResult.UIMessage
+	case out.Message != "":
+		return out.Message
+	case err != nil:
+		return err.Error()
+	}
+	return ""
 }
 
 // finish ends sess. It leaves alone an attempt that has since replaced it.
@@ -561,7 +604,14 @@ func fetch(ctx context.Context, target string) ([]byte, error) {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		// The callback answers with a redirect to a page on antigravity.google
+		// meant for a browser. Its own status is what matters.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
