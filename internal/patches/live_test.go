@@ -20,6 +20,12 @@ var socketConstructionRe = regexp.MustCompile(`new WebSocket\(this\.options\.url
 // findBarInputRe matches the input scroll-input-tracker looks for. The bundle can wrap lines between any two tokens.
 var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Find"`)
 
+// userMessageButtonsOnTouchRe and autoscrollPhysicalDistanceRe match what 2.31 does itself in place of
+// mobile-user-message-actions and autoscroll-distance-fix: user message buttons that only hide where the screen can
+// hover, and a hook that measures the distance to the bottom from the position.
+var userMessageButtonsOnTouchRe = regexp.MustCompile(`user-input-buttons-container[^"]*"\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
+var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -80,6 +86,15 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
 
+	// mobile-user-message-actions and autoscroll-distance-fix are optional because 2.31 does both itself. A bundle with
+	// neither the code they patch nor that would lose them without a word.
+	if !mobileUserMessageActionsRe.Match(mainJS) && !userMessageButtonsOnTouchRe.Match(mainJS) {
+		t.Error("mobile-user-message-actions: the bundle neither has the buttons the patch shows nor shows them on touch screens itself")
+	}
+	if !autoscrollDistanceFixRe.Match(mainJS) && !autoscrollPhysicalDistanceRe.Match(mainJS) {
+		t.Error("autoscroll-distance-fix: the auto-scroll hook neither has the check the patch fixes nor measures the position itself")
+	}
+
 	// paging-trim-waits-for-still is optional for bundles without this paging code, and would leave rows dropping under
 	// a moving reader without a word.
 	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !pagingTrimWaitsRe.Match(mainJS) {
@@ -87,7 +102,7 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	}
 
 	// mobile-home-new-conversation-row is optional for older bundles, and would fall back to the row in the list without
-	// a word. It also tells the mobile home apart by the navigation component's third parameter.
+	// a word. It tells the mobile home apart by the navigation component's conciergeTestId, named in its signature.
 	if bytes.Contains(mainJS, []byte(`showNewConversation:!1`)) {
 		if !mobileHomeNewConvoRowRe.Match(mainJS) {
 			t.Error("mobile-home-new-conversation-row: the navigation rows were not found; the mobile home falls back to the row in the list")

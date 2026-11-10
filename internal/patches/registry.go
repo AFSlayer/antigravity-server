@@ -22,7 +22,7 @@ var (
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:[de],sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);return )[a-zA-Z0-9_$]+\(\)\|\|(a\.length===0&&!g\?null:)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
-	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===\s*0\)return\s*([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
+	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===\s*0\)return\s+([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileProjectSettingsExportRe       = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(\)\{var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),[de]=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=[a-zA-Z0-9_$]+\("main"\)`)
 	mobileSettingsProjectsRe            = regexp.MustCompile(
 		`(var [a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),[\s\S]{1,250}?\{sharedNavItems:[ce],globalScreens:[df],workspaces:[fg],showWorkspacesSection:[gh]\}=[a-zA-Z0-9_$]+\(\);` +
@@ -730,7 +730,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  autoscrollUnpinInputRe,
-			Replace: `${1}(${3}.current&&!${7}.current&&window.__agyIsSpontaneousScroll?.(${2})?${2}.scrollTo({top:${2}.scrollHeight,behavior:"instant"}):(${3}.current=!1,${4})):${6}`,
+			Replace: `${1}(${3}.current&&!${8}.current&&window.__agyIsSpontaneousScroll?.(${2})?${2}.scrollTo({top:${2}.scrollHeight,behavior:"instant"}):(${3}.current=!1,${4})):${6}`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				el := string(g[2])
 				pinned, unpin := string(g[5]), string(g[5])+".current=!1"

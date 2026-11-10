@@ -60,6 +60,17 @@ func TestAntigravity231PatchShapes(t *testing.T) {
 			t.Errorf("2.31 shape missing %q in:\n%s", want, got)
 		}
 	})
+	// Two patches are optional since 2.31.0 does what they did, and the live bundle test checks that it still does.
+	t.Run("done by the bundle itself", func(t *testing.T) {
+		buttons := `className:Ai("flex flex-row items-center justify-end gap-0.5 select-none",` + "\n" + `f?"px-1 transition-opacity":"px-1 can-hover:absolute can-hover:bottom-1 can-hover:right-1 can-hover:p-1 can-hover:rounded-full can-hover:bg-card can-hover:border can-hover:border-card-border can-hover:shadow-sm user-input-buttons-container transition-all","can-hover:opacity-0 can-hover:pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto group-has-[:focus-visible]/user-input-step:opacity-100 group-has-[:focus-visible]/user-input-step:pointer-events-auto")`
+		if mobileUserMessageActionsRe.MatchString(buttons) || !userMessageButtonsOnTouchRe.MatchString(buttons) {
+			t.Error("2.31 user message buttons are not recognized as shown on touch screens")
+		}
+		hook := `var H=m.current;if(H){var J=H.scrollTop,K=Math.max(0,H.scrollHeight-H.clientHeight),M=K-J<=a,L=K<t.current&&J>=K-1,N=J-q.current,P=N>0&&N<=K-t.current,O=p.current;N<0&&!L?(p.current=!1,dU.delete(H)):!M||y.current||`
+		if autoscrollDistanceFixRe.MatchString(hook) || !autoscrollPhysicalDistanceRe.MatchString(hook) {
+			t.Error("2.31 auto-scroll hook is not recognized as measuring the distance itself")
+		}
+	})
 }
 
 // 2.31.0 gives the navigation column a compact mode for the mobile home, which moves conciergeTestId to the fourth

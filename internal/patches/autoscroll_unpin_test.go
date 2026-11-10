@@ -236,3 +236,101 @@ process.exit(0);
 		t.Fatalf("hook and tracker harness failed: %v\n%s", err, out)
 	}
 }
+
+// The same with the hook 2.31 ships, which tells a fall from the change in position itself and reads its
+// followDisabled ref before following again.
+func TestPatchedHook231AndTrackerTogether(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	hook := applyUnpinPatch(t, `var G=()=>{var H=m.current;if(H){var J=H.scrollTop,K=Math.max(0,H.scrollHeight-H.clientHeight),M=K-J<=a,L=K<t.current&&J>=K-1,N=J-q.current,P=N>0&&N<=K-t.current,O=p.current;N<0&&!L?(p.current=!1,dU.delete(H)):!M||y.current||P||(p.current=!0);O!==p.current&&(z(),w.current?.(p.current));C(J);q.current=J;t.current=K}};`)
+	script := scrollInputTracker
+	script = script[strings.Index(script, ">")+1:]
+	script = script[:strings.LastIndex(script, "</script>")]
+	harness := `
+const assert = require("assert");
+const fs = require("fs");
+const listeners = {};
+let clock = 100000;
+let observer;
+let frames = [];
+global.window = global;
+global.addEventListener = (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); };
+global.document = { querySelector: () => null };
+global.MutationObserver = class { constructor(fn) { observer = fn; } observe() {} };
+global.requestAnimationFrame = fn => { frames.push(fn); };
+global.setTimeout = fn => { frames.push(fn); };
+Object.defineProperty(global, "performance", { value: { now: () => clock } });
+new Function(fs.readFileSync(process.argv[1], "utf8"))();
+const hookSource = fs.readFileSync(process.argv[2], "utf8");
+
+const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
+const frame = () => { while (frames.length > 0) { const due = frames; frames = []; due.forEach(fn => fn()); } };
+const ROWS = { nodeType: 1, tagName: "DIV", textContent: "x".repeat(14382), matches: () => false, querySelectorAll: () => [], getElementsByTagName: () => ({ length: 143 }) };
+const ICON = { nodeType: 1, tagName: "SPAN", textContent: "x".repeat(7), matches: () => false, querySelectorAll: () => [], getElementsByTagName: () => ({ length: 1 }) };
+
+// A conversation followed at the bottom, with the hook's own state.
+const conversation = followDisabled => {
+  clock += 5000;
+  const el = {
+    scrollTop: 9000, scrollHeight: 10000, clientHeight: 1000,
+    matches: () => true, closest: () => el,
+    scrollTo(o) { this.scrollTop = Math.min(o.top, this.scrollHeight - this.clientHeight); },
+  };
+  const m = { current: el }, p = { current: true }, t = { current: 9000 }, q = { current: 9000 };
+  const y = { current: followDisabled }, w = { current: null }, z = () => {}, C = () => {}, dU = new WeakMap();
+  const G = new Function("m", "a", "t", "q", "p", "dU", "y", "z", "w", "C", hookSource + "return G;")(m, 20, t, q, p, dU, y, z, w, C);
+  const event = () => { fire("scroll", { target: el }); G(); };
+  event();
+  return { el, p, event, remove: node => observer([{ target: el, removedNodes: [node] }]) };
+};
+
+// Rows go and come back before the scroll event: back at the bottom, still following.
+{
+  const c = conversation(false);
+  c.remove(ROWS);
+  c.el.scrollHeight = 1000;
+  c.el.scrollTop = 0;
+  c.el.scrollHeight = 10000;
+  c.event();
+  assert.strictEqual(c.el.scrollTop, 9000);
+  assert.strictEqual(c.p.current, true);
+}
+
+// A status icon swapped in the frame of a scroll with no input: the reader stays and following stops.
+{
+  const c = conversation(false);
+  c.remove(ICON);
+  c.el.scrollTop -= 800;
+  c.event();
+  assert.strictEqual(c.el.scrollTop, 8200);
+  assert.strictEqual(c.p.current, false);
+}
+
+// With following turned off, the same collapse is left where it is.
+{
+  const c = conversation(true);
+  c.remove(ROWS);
+  c.el.scrollHeight = 1000;
+  c.el.scrollTop = 0;
+  c.el.scrollHeight = 10000;
+  c.event();
+  assert.strictEqual(c.el.scrollTop, 0);
+  assert.strictEqual(c.p.current, false);
+}
+frame();
+`
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "tracker.js")
+	hookPath := filepath.Join(dir, "hook.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte(hook), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, "-e", harness, "--", scriptPath, hookPath).CombinedOutput(); err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+}
