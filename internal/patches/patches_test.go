@@ -89,6 +89,7 @@ var regexpFixtures = map[string]string{
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+	"paging-trim-waits-for-still":               `ma=Z.startIndex<oa.startIndex||Z.endIndexExclusive>oa.endIndexExclusive;if(N(ba,pa,ka))ma&&K(g.timing.oppositeDirectionCooldownMs||g.timing.retryDelayMs);else{`,
 	"scrollbar-drag-follows-paging":             `pa=z.current.startScrollPos+((h?pa.clientX:pa.clientY)-z.current.startCoord)/ua*H.current.maxScrollPos,h?la.scrollLeft=pa:la.scrollTop=pa,`,
 	"autoscroll-unpin-needs-input":              `var J=()=>{var L=n.current;if(L){var M=L.scrollTop,N=F(),P=Math.max(0,L.scrollHeight-L.clientHeight),O=P<v.current&&M>=P-1,Q=r.current;M<t.current&&!O?(r.current=!1,tT.delete(L)):N&&!C.current&&(r.current=!0);Q!==r.current&&y.current?.(r.current)}}`,
 	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,
@@ -140,6 +141,20 @@ func TestAllMainJSPatchesApply(t *testing.T) {
 	}
 }
 
+// The minifier wraps lines after operators, commas and semicolons, so the paging decision can be split at any of them.
+func TestPagingTrimWaitsMatchesWrappedLines(t *testing.T) {
+	var re *regexp.Regexp
+	for _, p := range All() {
+		if p.ID == "paging-trim-waits-for-still" {
+			re = p.FindRe
+		}
+	}
+	src := "ma=\nZ.startIndex<\noa.startIndex||\nZ.endIndexExclusive>\noa.endIndexExclusive;\nif(N(ba,\npa,\nka))ma&&\nK(g.timing.oppositeDirectionCooldownMs||\ng.timing.retryDelayMs);\nelse{"
+	if re == nil || !re.MatchString(src) {
+		t.Error("the paging decision was not matched across line breaks")
+	}
+}
+
 func TestPatchedContentIsCorrect(t *testing.T) {
 	out, _ := Apply(MainJS, syntheticBundle(), fullOptions())
 	body := string(out)
@@ -178,6 +193,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`"Copy path")),n&&z.createElement`,
 		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
+		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else{`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,

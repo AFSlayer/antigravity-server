@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -34,6 +35,7 @@ global.setTimeout = fn => { frames.push(fn); };
 Object.defineProperty(global, "performance", { value: { now: () => now } });
 let coarse = false;
 global.matchMedia = () => ({ matches: coarse });
+global.navigator = { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)", platform: "iPhone", maxTouchPoints: 5 };
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
@@ -343,6 +345,7 @@ for (const [top, over] of [[8998, false], [8999, false], [9000, true], [9500, tr
   settle();
   let reads = 0;
   const el = viewport();
+  frame();
   Object.defineProperty(el, "scrollHeight", { get() { reads++; return 10000; } });
   Object.defineProperty(el, "scrollTop", { get() { reads++; return 9000; } });
   remove(el, ROWS);
@@ -428,6 +431,7 @@ for (const [fall, expected] of [[1600, true], [1601, false]]) {
 {
   settle();
   const el = viewport();
+  frame();
   observer([{ target: { closest: () => null }, removedNodes: [ROWS] }, { target: {}, removedNodes: [ROWS] }]);
   assert.strictEqual(frames.length, 0);
   assert.strictEqual(window.__agyIsSpontaneousScroll(el), false);
@@ -800,6 +804,436 @@ for (const [clientHeight, want] of [[900, 11000], [800, 9000]]) {
   assert.strictEqual(el.scrollTop, 82050);
 }
 
+// From a trace: scrolled up in a long conversation, the window dropped rows above the reader and the position fell by
+// exactly what went, so nothing moved on screen. A frame later iOS put back the position from before, in a conversation
+// that was now far shorter. Going back there threw the reader 18,258 px down, and the window slid after them.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollHeight = 48921;
+  el.scrollTop = 26327;
+  fire("scroll", { target: el });
+  now += 950;
+  observer([{ target: el, removedNodes: [ROWS] }]);
+  el.scrollHeight = 30663;
+  el.scrollTop = 8069;
+  frame();
+  now += 34;
+  el.scrollTop = 26292;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 8069, "the rows above went for good, so the position they left is the reader's");
+  now += 5000;
+  coarse = false;
+}
+
+// The same with the reader still moving, so the position falls by a little more than the rows took.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollHeight = 33021;
+  el.scrollTop = 26039;
+  fire("scroll", { target: el });
+  now += 500;
+  observer([{ target: el, removedNodes: [ROWS] }]);
+  el.scrollHeight = 22594;
+  el.scrollTop = 15500;
+  frame();
+  now += 12;
+  el.scrollTop = 25641;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 15500);
+  now += 5000;
+  coarse = false;
+}
+
+// A hold still running when the window slides moves with it, rather than going back to where the rows used to be.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollHeight = 48921;
+  el.scrollTop = 26327;
+  fire("scroll", { target: el });
+  now += 50;
+  el.scrollTop = -58;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 26327);
+  now += 300;
+  el.scrollHeight = 30663;
+  el.scrollTop = 8069;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 8069);
+  now += 50;
+  el.scrollTop = -30;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 8069, "the hold keeps the position the slide left");
+  now += 5000;
+  coarse = false;
+}
+
+// The same when the first event after the slide still carries the bounce, or the old position iOS put back. The app
+// asked for the position the slide left, and that is what is held.
+for (const first of [-30, 26292]) {
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollHeight = 48921;
+  el.scrollTop = 26327;
+  fire("scroll", { target: el });
+  now += 50;
+  el.scrollTop = -58;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 26327);
+  now += 300;
+  window.__agyScrolledByScript(el, 8069);
+  el.scrollHeight = 30663;
+  el.scrollTop = first;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 8069, "held where the slide left it, first event at " + first);
+  now += 5000;
+  coarse = false;
+}
+
+// A collapse long past says nothing about where a later fling came from.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 1000;
+  observer([{ target: el, removedNodes: [ROWS] }]);
+  el.scrollHeight = 1000;
+  el.scrollTop = 0;
+  frame();
+  now += 3000;
+  el.scrollHeight = 30000;
+  el.scrollTop = 5000;
+  fire("scroll", { target: el });
+  now += 20;
+  el.scrollTop = 20000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 5000);
+  now += 5000;
+  coarse = false;
+}
+
+// From a phone trace: rows came above the reader at the top, then rows went while the reader flung up, and each time the
+// app moved the position to keep the same rows on screen. iOS kept the fling going in the old coordinates, so the
+// fling is ended where the app put the position, once the finger is off and only on iOS.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.style = { overflowY: "" };
+  const onEl = touches => ({ target: { closest: () => el }, touches });
+  el.scrollHeight = 31965;
+  el.scrollTop = 0;
+  fire("scroll", { target: el });
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  // The fling's bounce at the top sends a scroll event every frame.
+  now += 384;
+  fire("scroll", { target: el });
+  now += 16;
+  el.scrollHeight = 62646;
+  el.scrollTop = 30681;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "hidden", "rows added above during a fling end it");
+  frame();
+  assert.strictEqual(el.style.overflowY, "", "for one frame");
+
+  now += 300;
+  el.scrollTop = 29606;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "", "an ordinary scroll leaves the fling alone");
+  el.scrollHeight = 41217;
+  el.scrollTop = 8105;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "hidden", "rows taken from above during a fling end it");
+  frame();
+
+  // A finger still down is dragging, and nothing ends that.
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  el.scrollHeight = 71217;
+  el.scrollTop = 38105;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "");
+  fire("touchend", onEl([]));
+
+  // Long after the last input there is no fling to end.
+  now += 10000;
+  el.scrollHeight = 41217;
+  el.scrollTop = 8105;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "");
+
+  now += 5000;
+  coarse = false;
+}
+
+// From a phone trace: a long fling ended in a bounce at the top 3.6 s after the finger lifted, rows came above, and the
+// bounce painted a frame in its old coordinates before the scroll event could end it. The fling is ended when the app
+// asks to move the position that far, before it moves.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.style = { overflowY: "" };
+  const onEl = touches => ({ target: { closest: () => el }, touches });
+  el.scrollHeight = 43193;
+  el.scrollTop = -57;
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  now += 3548;
+  fire("scroll", { target: el });
+  now += 16;
+  window.__agyScrolledByScript(el, 29592);
+  assert.strictEqual(el.style.overflowY, "hidden", "ended before the move");
+  frame();
+  assert.strictEqual(el.style.overflowY, "");
+
+  // A small correction is not rows coming or going.
+  window.__agyScrolledByScript(el, 900);
+  assert.strictEqual(el.style.overflowY, "");
+
+  // Following a reply on a tall screen, the app pins the position to the bottom by asking for the whole height, which is
+  // a screen further than the end. Only the reply's own growth is a move.
+  el.clientHeight = 1200;
+  el.scrollHeight = 50000;
+  el.scrollTop = 48800;
+  fire("scroll", { target: el });
+  el.scrollHeight = 50900;
+  window.__agyScrolledByScript(el, 50900);
+  assert.strictEqual(el.style.overflowY, "", "a pin to the bottom is not rows above");
+  el.clientHeight = 666;
+
+  // A smooth scroll the app asks for, such as the End key's, is left to run.
+  fire("scroll", { target: el });
+  window.__agyScrolledByScript(el, 29592, true);
+  assert.strictEqual(el.style.overflowY, "", "a smooth scroll is not ended");
+  frame();
+
+  // Nor is a finger still down ended.
+  fire("touchstart", onEl([{}]));
+  window.__agyScrolledByScript(el, 29592);
+  assert.strictEqual(el.style.overflowY, "");
+  fire("touchend", onEl([]));
+
+  // A conversation still for a moment has no fling to end, whatever the app moves.
+  now += 400;
+  window.__agyScrolledByScript(el, 8000);
+  assert.strictEqual(el.style.overflowY, "", "a still conversation is left alone");
+  el.scrollHeight = 22000;
+  el.scrollTop = 8000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.style.overflowY, "", "rows going above a still reader are not a fling");
+  now += 10000;
+  coarse = false;
+}
+
+// From a phone trace: a second after older rows loaded, the app dropped the rows far above the reader while the reader
+// was still scrolling up, and the position then ran 300 to 1000 px back down. The rows wait while a finger is down or
+// the conversation is still moving after input, and go once it has been still for a moment.
+{
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.style = { overflowY: "" };
+  const onEl = touches => ({ target: { closest: () => el }, touches });
+  let waits = 0;
+  global.CustomEvent = class { constructor(type) { this.type = type; } };
+  global.dispatchEvent = e => { if (e.type === "agy-trim-wait") waits++; };
+  el.scrollHeight = 71349;
+  el.scrollTop = 31911;
+  fire("scroll", { target: el });
+  now += 450;
+  fire("touchstart", onEl([{}]));
+  assert.strictEqual(window.__agyDeferTrim(), true, "a finger down");
+  fire("touchmove", onEl([{}]));
+  now += 50;
+  el.scrollTop -= 40;
+  fire("scroll", { target: el });
+  fire("touchend", onEl([]));
+  assert.strictEqual(window.__agyDeferTrim(), true, "a fling still going");
+  now += 200;
+  el.scrollTop -= 30;
+  fire("scroll", { target: el });
+  // A main thread busy rendering draws no frame and gets no scroll event while the fling goes on.
+  now += 600;
+  assert.strictEqual(window.__agyDeferTrim(), true, "no frame drawn since the last move");
+  frame();
+  assert.strictEqual(window.__agyDeferTrim(), false, "frames drawn and still for 300 ms");
+  el.scrollTop -= 30;
+  fire("scroll", { target: el });
+  frame();
+  now += 299;
+  assert.strictEqual(window.__agyDeferTrim(), true);
+  now += 2;
+  assert.strictEqual(window.__agyDeferTrim(), false, "still for 300 ms");
+  assert.strictEqual(waits, 2, "the trace marks each wait once");
+
+  // Flings run together for long hold the rows back for 3 s, as rows keep loading above in the meantime.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  const answers = [];
+  for (let k = 0; k < 16; k++) {
+    now += 250;
+    el.scrollTop -= 200;
+    fire("scroll", { target: el });
+    answers.push(window.__agyDeferTrim());
+    if (k % 6 === 5) { fire("touchstart", onEl([{}])); fire("touchmove", onEl([{}])); fire("touchend", onEl([])); }
+  }
+  assert.strictEqual(answers.indexOf(false), 12, "waits for 3 s, then lets the rows go");
+  assert.ok(answers.slice(13).every(Boolean), "the next drop waits again");
+  assert.strictEqual(waits, 4);
+
+  // Rendering can hold the bundle's next question back for over a second, and that time counts as well.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  const slow = [];
+  for (let k = 0; k < 5; k++) {
+    now += 1200;
+    el.scrollTop -= 200;
+    fire("scroll", { target: el });
+    slow.push(window.__agyDeferTrim());
+    fire("touchstart", onEl([{}]));
+    fire("touchmove", onEl([{}]));
+    fire("touchend", onEl([]));
+  }
+  assert.deepStrictEqual(slow, [true, true, true, false, true], "the wait ends after 3 s of slow questions too");
+
+  // A slow drag uses none of that time, so the fling it ends in still gets all of it.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  const dragged = [];
+  for (let k = 0; k < 16; k++) {
+    now += 250;
+    fire("touchmove", onEl([{}]));
+    el.scrollTop -= 40;
+    fire("scroll", { target: el });
+    dragged.push(window.__agyDeferTrim());
+  }
+  fire("touchend", onEl([]));
+  const flung = [];
+  for (let k = 0; k < 14; k++) {
+    now += 250;
+    el.scrollTop -= 100;
+    fire("scroll", { target: el });
+    flung.push(window.__agyDeferTrim());
+  }
+  assert.ok(dragged.every(Boolean), "a 4 s drag waits throughout");
+  assert.strictEqual(flung.indexOf(false), 12, "the fling after it waits its own 3 s");
+
+  // A finger down is waited for however long it stays.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  now += 9000;
+  fire("touchmove", onEl([{}]));
+  now += 9000;
+  assert.strictEqual(window.__agyDeferTrim(), true, "a finger down 18 s later");
+  // A page hidden with the finger down may never see the touch end.
+  global.document.hidden = true;
+  fire("visibilitychange", {});
+  delete global.document.hidden;
+  now += 400;
+  frame();
+  assert.strictEqual(window.__agyDeferTrim(), false, "hiding the page lifts the finger");
+  // Nor may anything else that loses a touch's end. A finger that sent nothing for 10 s is taken as lifted.
+  now += 5000;
+  fire("touchstart", onEl([{}]));
+  now += 9999;
+  assert.strictEqual(window.__agyDeferTrim(), true);
+  now += 2;
+  assert.strictEqual(window.__agyDeferTrim(), false, "silent for 10 s");
+
+  // The app moving the position long after any input, as it does while following a reply, does not hold the rows.
+  now += 10000;
+  el.scrollTop += 500;
+  fire("scroll", { target: el });
+  assert.strictEqual(window.__agyDeferTrim(), false);
+  delete global.CustomEvent;
+  delete global.dispatchEvent;
+  now += 5000;
+}
+
+// A reply streaming in below changes the height by a line at a time. While the reader flings up the middle of the
+// conversation, a step of the fling can land within the slack of that change, which is not rows moving above.
+{
+  coarse = true;
+  now += 5000;
+  const el = viewport();
+  el.clientHeight = 666;
+  el.scrollTop = 20000;
+  el.scrollHeight = 40000;
+  el.style = { overflowY: "" };
+  const onEl = touches => ({ target: { closest: () => el }, touches });
+  fire("scroll", { target: el });
+  fire("touchstart", onEl([{}]));
+  fire("touchmove", onEl([{}]));
+  fire("touchend", onEl([]));
+  for (let k = 0; k < 30; k++) {
+    now += 16;
+    el.scrollTop -= 120;
+    if (k % 5 === 2) el.scrollHeight += 24;
+    fire("scroll", { target: el });
+    assert.strictEqual(el.style.overflowY, "", "a fling past a streaming reply goes on, step " + k);
+    frame();
+  }
+
+  // Nor does a held position move down with the reply.
+  now += 5000;
+  el.scrollTop = 20000;
+  fire("scroll", { target: el });
+  now += 30;
+  el.scrollTop = -5000;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.scrollTop, 20000, "held");
+  for (let k = 0; k < 20; k++) {
+    now += 16;
+    el.scrollHeight += 30;
+    fire("scroll", { target: el });
+  }
+  assert.strictEqual(el.scrollTop, 20000, "the hold stays where the reader was");
+  now += 5000;
+  frame();
+  coarse = false;
+}
+
+// A touch ends on the element it started on, and the app can remove that element while the finger is down. Its end
+// then never reaches the window, and the rows above would wait for the next touch.
+{
+  now += 5000;
+  const el = viewport();
+  const row = { closest: () => el, own: {}, addEventListener(name, fn) { this.own[name] = fn; } };
+  fire("touchstart", { target: row, touches: [{}] });
+  assert.strictEqual(window.__agyDeferTrim(), true);
+  // The drag goes on over the removed row for longer than a silent finger is believed.
+  for (let k = 0; k < 15; k++) {
+    now += 1000;
+    row.own.touchmove({ target: row, touches: [{}] });
+  }
+  assert.strictEqual(window.__agyDeferTrim(), true, "a drag on a removed row still holds the rows");
+  row.own.touchend({ target: row, touches: [] });
+  now += 400;
+  frame();
+  assert.strictEqual(window.__agyDeferTrim(), false, "the removed row's own end lifts the finger");
+  now += 5000;
+}
+
 // A hold that ran out with no event after it leaves its own position as the last one seen. Otherwise a re-render that
 // shortened the conversation looks, at the next small removal, like a collapse of that size.
 {
@@ -983,5 +1417,189 @@ process.exit(0);
 	}
 	if out, err := exec.Command(node, "-e", harness, "--", scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("scroll input harness failed: %v\n%s", err, out)
+	}
+}
+
+// Runs the bundle's paging decision as patched. Only an update that moves the window's start down waits, and only when
+// the tracker says so; growing the window, an update that keeps its start, and a page without the tracker go ahead.
+func TestPagingTrimWaitsOnlyForATopDrop(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	var patch Patch
+	for _, p := range All() {
+		if p.ID == "paging-trim-waits-for-still" {
+			patch = p
+		}
+	}
+	src := "ma=Z.startIndex<oa.startIndex||Z.endIndexExclusive>oa.endIndexExclusive;if(N(ba,pa,ka))ma&&K(g.timing.oppositeDirectionCooldownMs||g.timing.retryDelayMs);else{request()}"
+	patched := patch.FindRe.ReplaceAllString(src, patch.Replace)
+	if patched == src {
+		t.Fatal("the patch did not apply")
+	}
+	harness := `
+const assert = require("assert");
+const decide = (from, to, defer, cooldown) => new Function("oa", "Z", "defer", "cooldown", ` + "`" + `
+  var calls = [], ma, ba, pa, ka;
+  var g = { timing: { oppositeDirectionCooldownMs: 1000, retryDelayMs: 1000 } };
+  var N = () => cooldown, K = ms => calls.push("retry " + ms), request = () => calls.push("request");
+  globalThis.window = defer === undefined ? {} : { __agyDeferTrim: () => defer };
+  ` + "` + process.argv[1] + `" + `
+  return calls.join(",");` + "`" + `)(from, to, defer, cooldown);
+const at = (start, end) => ({ startIndex: start, endIndexExclusive: end });
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, false), "retry 250", "a drop from the top waits");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), false, false), "request", "and goes once the tracker allows");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), undefined, false), "request", "a page without the tracker goes ahead");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false), "request", "loading older rows never waits");
+assert.strictEqual(decide(at(3400, 3570), at(3400, 3570), true, false), "request", "keeping the start never waits");
+assert.strictEqual(decide(at(3400, 3500), at(3470, 3550), true, false), "request", "an update that also loads rows below never waits");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, true), "retry 1000", "the bundle's own cooldown is kept");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, true), "", "and a drop in its cooldown is skipped as before");
+`
+	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {
+		t.Fatalf("paging harness failed: %v\n%s", err, out)
+	}
+}
+
+// The fling stop and the wait for still rows are for iOS. Other phones see the same moves and must keep their fling.
+func TestFlingStopAndTrimWaitAreIOSOnly(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := scrollInputTracker
+	script = script[strings.Index(script, ">")+1:]
+	script = script[:strings.LastIndex(script, "</script>")]
+	harness := `
+const assert = require("assert");
+const fs = require("fs");
+const listeners = {};
+let now = 100000;
+let frames = [];
+global.window = global;
+global.addEventListener = (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); };
+global.document = { querySelector: () => null };
+global.MutationObserver = class { observe() {} };
+global.requestAnimationFrame = fn => { frames.push(fn); };
+global.setTimeout = fn => { frames.push(fn); };
+Object.defineProperty(global, "performance", { value: { now: () => now } });
+global.matchMedia = () => ({ matches: true });
+global.navigator = { userAgent: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36", platform: "Linux armv8l", maxTouchPoints: 5 };
+new Function(fs.readFileSync(process.argv[1], "utf8"))();
+const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
+
+const el = { scrollTop: 0, scrollHeight: 31965, clientHeight: 666, matches: () => true, closest: () => el, style: { overflowY: "" } };
+const onEl = touches => ({ target: { closest: () => el }, touches });
+fire("scroll", { target: el });
+fire("touchstart", onEl([{}]));
+assert.strictEqual(window.__agyDeferTrim(), false, "a finger down holds nothing back");
+fire("touchmove", onEl([{}]));
+fire("touchend", onEl([]));
+now += 100;
+el.scrollHeight = 62646;
+el.scrollTop = 30681;
+fire("scroll", { target: el });
+assert.strictEqual(el.style.overflowY, "", "rows added above leave the fling alone");
+assert.strictEqual(window.__agyDeferTrim(), false, "a fling holds nothing back");
+window.__agyScrolledByScript(el, 8000);
+assert.strictEqual(el.style.overflowY, "", "a large move by the app leaves the fling alone");
+`
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "tracker.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, "-e", harness, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+}
+
+// Traced on a long conversation: rows were added above the reader, and the retries that reassert the position ran four
+// seconds late because rendering held them back. The app had dropped other rows and lowered the position by then, so
+// they put the reader 24,000 px down, and the window followed.
+func TestLatePrependRetryLeavesThePositionAlone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	start := strings.Index(keyboardDetect, "function handleScrollerMutation()")
+	end := strings.Index(keyboardDetect, "function attachScrollerGuard()")
+	if start < 0 || end < start {
+		t.Fatal("the prepend handler was not found")
+	}
+	limit := regexp.MustCompile(`var PREPEND_REAPPLY_MS = \d+;`).FindString(keyboardDetect)
+	if limit == "" {
+		t.Fatal("the retry limit was not found")
+	}
+	harness := `
+const assert = require("assert");
+let clock = 100000;
+let timers = [];
+const performance = { now: () => clock };
+const window = { location: { pathname: "/c/x" } };
+let frames = [];
+const requestAnimationFrame = fn => { frames.push(fn); };
+const setTimeout = fn => { timers.push(fn); };
+` + limit + `
+let lastScrollHeight, lastScrollTop, sc;
+const currentConvoUrl = "/c/x", convoNavigatedAt = 0, userScrolledNearTop = true;
+const chatScroller = () => sc;
+` + keyboardDetect[start:end] + `
+// Rows arrive while the reader is at the top, and the position goes to where the old top now is.
+const prepend = () => {
+  timers = [];
+  frames = [];
+  sc = { scrollTop: 0, scrollHeight: 458560 };
+  lastScrollHeight = 458560;
+  lastScrollTop = 0;
+  sc.scrollHeight = 490841;
+  handleScrollerMutation();
+  assert.strictEqual(sc.scrollTop, 32281);
+};
+const runRetries = () => { frames.forEach(fn => fn()); timers.forEach(fn => fn()); };
+
+// A re-render that puts the position back at the top is still corrected.
+prepend();
+clock += 50;
+sc.scrollTop = 0;
+runRetries();
+assert.strictEqual(sc.scrollTop, 32281);
+
+// So is one that comes with more rows mounted.
+prepend();
+clock += 150;
+sc.scrollTop = 0;
+sc.scrollHeight = 491000;
+runRetries();
+assert.strictEqual(sc.scrollTop, 32281);
+
+// A loading row going away shortens the conversation by a little, and the position is still corrected.
+prepend();
+clock += 150;
+sc.scrollTop = 0;
+sc.scrollHeight = 490801;
+runRetries();
+assert.strictEqual(sc.scrollTop, 32281);
+
+// Rows dropped above the reader shorten the conversation, and the lower position is right, however soon it happens.
+prepend();
+clock += 150;
+sc.scrollHeight = 467045;
+sc.scrollTop = 8346;
+runRetries();
+assert.strictEqual(sc.scrollTop, 8346);
+
+// A retry held back for seconds does nothing, even if the height happens to be the same. Nor does the next frame's write
+// when rendering held that back as long.
+prepend();
+clock += 4600;
+sc.scrollTop = 8299;
+runRetries();
+assert.strictEqual(sc.scrollTop, 8299);
+process.exit(0);
+`
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
 	}
 }
