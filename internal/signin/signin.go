@@ -313,7 +313,12 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	if err != nil {
 		// Drop the attempt; the next Login replaces it on the language server.
 		cancel()
-		return "", "", err
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		// The error can name an internal address, so keep it to the log.
+		log.Printf("[signin] could not prepare the sign-in: %v", err)
+		return "", "", errors.New("the language server could not prepare the sign-in, so try again")
 	}
 	if mode == ModeAuthCode {
 		sess.mode, sess.authURL = ModeAuthCode, authURL
@@ -359,13 +364,13 @@ func (c *Coordinator) chooseFlow(ctx context.Context) (Mode, string, error) {
 	// attempt is in rather than guess.
 	data, sessionErr := c.instance.Call(ctx, "GetLoginSession", map[string]any{})
 	if sessionErr == nil {
-		var session loginSession
-		if json.Unmarshal(data, &session) == nil && session.Active {
-			if url, ok := session.authCodeURL(); ok {
+		var answer loginSession
+		if json.Unmarshal(data, &answer) == nil && answer.Active {
+			if consentURL, ok := answer.authCodeURL(); ok {
 				log.Printf("[signin] the switch failed but took effect: %v", err)
-				return ModeAuthCode, url, nil
+				return ModeAuthCode, consentURL, nil
 			}
-			if session.loopback() {
+			if answer.loopback() {
 				log.Printf("[signin] using the loopback sign-in after the switch failed: %v", err)
 				return ModeLoopback, "", nil
 			}
@@ -397,37 +402,45 @@ func (s loginSession) loopback() bool {
 
 // switchToAuthCode asks the language server to move the attempt in flight to
 // the auth-code flow and returns the consent URL for it. Language servers older
-// than 2.31 do not have the RPC. They answer 404, or serve the web UI with 200;
-// those and any answer that leaves the attempt in loopback mode come back as
-// errNoAuthCode. Anything else, such as a dropped connection or another error
-// status, may have come after the switch, so it comes back as a plain error.
+// than 2.31 do not have the RPC. They answer a plain 404, or serve the web UI
+// with 200; those and any answer that leaves the attempt in loopback mode come
+// back as errNoAuthCode. Anything else, such as a dropped connection or another
+// error status, may have come after the switch, so it comes back as a plain
+// error.
 func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
 	if err != nil {
-		// 404 is an unknown method and 501 is Connect's unimplemented; neither
-		// can have switched.
+		// A plain 404 is an unknown method and 501 is Connect's unimplemented;
+		// neither can have switched. A 404 carrying a Connect error, such as
+		// not_found, came from the RPC itself.
 		var status *lsproc.StatusError
-		if errors.As(err, &status) && (status.Code == http.StatusNotFound || status.Code == http.StatusNotImplemented) {
-			return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
+		if errors.As(err, &status) {
+			var connectErr struct {
+				Code string `json:"code"`
+			}
+			fromRPC := json.Unmarshal(data, &connectErr) == nil && connectErr.Code != ""
+			if (status.Code == http.StatusNotFound && !fromRPC) || status.Code == http.StatusNotImplemented {
+				return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
+			}
 		}
 		return "", err
 	}
 
-	var session loginSession
-	if err := json.Unmarshal(data, &session); err != nil {
+	var answer loginSession
+	if err := json.Unmarshal(data, &answer); err != nil {
 		return "", fmt.Errorf("%w: SwitchLoginToAuthCode answered with something other than JSON", errNoAuthCode)
 	}
-	if !session.Active {
+	if !answer.Active {
 		return "", fmt.Errorf("the language server has no sign-in in flight")
 	}
-	if session.loopback() {
+	if answer.loopback() {
 		return "", fmt.Errorf("%w: SwitchLoginToAuthCode left the mode at loopback", errNoAuthCode)
 	}
-	url, ok := session.authCodeURL()
+	consentURL, ok := answer.authCodeURL()
 	if !ok {
-		return "", fmt.Errorf("SwitchLoginToAuthCode answered mode %s without a Google URL", session.Mode)
+		return "", fmt.Errorf("SwitchLoginToAuthCode answered without a usable Google URL, mode %q", answer.Mode)
 	}
-	return url, nil
+	return consentURL, nil
 }
 
 // isMode reports whether raw is the LoginSessionMode called name, accepting
@@ -700,7 +713,7 @@ func authFailure(result map[string]json.RawMessage) string {
 
 	meaning := ""
 	for _, f := range authFailures {
-		if raw, ok := result[f.field]; ok && json.Unmarshal(raw, &detail) == nil {
+		if raw, ok := result[f.field]; ok && string(bytes.TrimSpace(raw)) != "null" && json.Unmarshal(raw, &detail) == nil {
 			meaning = f.meaning
 			break
 		}

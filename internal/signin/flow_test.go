@@ -422,6 +422,7 @@ func TestBeginSwitchAnswers(t *testing.T) {
 		{0, `{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`, true},
 		{0, `<html>not an RPC</html>`, true},
 		{http.StatusNotFound, `404 page not found`, true},
+		{http.StatusNotFound, `{"code":"not_found","message":"no login in progress"}`, false},
 		{http.StatusNotImplemented, `{"code":"unimplemented"}`, true},
 		{http.StatusBadRequest, `{"code":"invalid_argument"}`, false},
 		{http.StatusConflict, `{"code":"aborted"}`, false},
@@ -556,9 +557,18 @@ func TestBeginWaitHonoursContext(t *testing.T) {
 	c := f.coordinator()
 
 	first, cancelFirst := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancelFirst()
-	go func() { _, _, _ = c.Begin(first) }()
-	time.Sleep(100 * time.Millisecond)
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _, _ = c.Begin(first)
+	}()
+	t.Cleanup(func() {
+		cancelFirst()
+		<-firstDone
+	})
+	for len(c.beginning) == 0 {
+		time.Sleep(time.Millisecond)
+	}
 
 	second, cancelSecond := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancelSecond()
@@ -634,6 +644,17 @@ func TestCompleteKeepsTransportDetailOffThePage(t *testing.T) {
 	}
 	if strings.Contains(logged.String(), "SECRET") {
 		t.Errorf("the log quotes the pasted code: %s", logged.String())
+	}
+}
+
+// If the switch fails and the language server cannot say what happened, the
+// page gets a plain message rather than an internal address.
+func TestBeginKeepsSwitchErrorOffThePage(t *testing.T) {
+	f := newFakeLS(t, true)
+	f.switchStatus, f.switchBody = http.StatusInternalServerError, `{"code":"internal","message":"at 127.0.0.1:9"}`
+	_, _, err := f.coordinator().Begin(context.Background())
+	if err == nil || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("Begin = %v; want a plain error", err)
 	}
 }
 
@@ -748,6 +769,7 @@ func TestLoginOutcome(t *testing.T) {
 		// Fields that are not failures say nothing.
 		{`{"authResult":{"authMode":"AUTH_MODE_PERSONAL_CONSUMER","isGcpTos":true,"projectId":"p","generalError":{}}}`, nil, false, ""},
 		{`{"authResult":{"licenseRequired":{}}}`, nil, false, "the account needs an Antigravity license"},
+		{`{"authResult":{"tosViolation":null,"uiMessage":"context deadline exceeded"}}`, nil, false, "context deadline exceeded"},
 		{`{"authResult":{"projectRequired":{}}}`, nil, false, "the account needs a Google Cloud project"},
 		{`{"authResult":{"verificationRequired":{"verificationUrl":"https://v"}}}`, nil, false, "Google needs to verify the account: https://v"},
 		{`{"authResult":{"tosViolation":{"message":"Suspended.","appealUrl":"https://a"},"uiMessage":"x"}}`, nil, false, "the account is blocked under the terms of service: Suspended.: https://a"},
