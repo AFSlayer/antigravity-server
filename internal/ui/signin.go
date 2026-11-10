@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/signin"
@@ -126,7 +125,9 @@ func completeError(err error) (int, string) {
 	case errors.Is(err, signin.ErrNoSession), errors.Is(err, signin.ErrExpired):
 		return http.StatusConflict, "That sign-in expired. Open the Google page again."
 	case errors.Is(err, signin.ErrFailed):
-		return http.StatusConflict, strings.TrimRight(err.Error(), ". ") + ". Open the Google page again."
+		// The page prepares a new link on 409, so the reason stands alone. It
+		// can end in a link, which a trailing sentence would run into.
+		return http.StatusConflict, err.Error()
 	}
 	return http.StatusBadRequest, err.Error()
 }

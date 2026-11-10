@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -308,27 +309,21 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 		return "", "", err
 	}
 
-	authURL, err := c.switchToAuthCode(ctx)
-	switch {
-	case err == nil:
+	mode, authURL, err := c.chooseFlow(ctx)
+	if err != nil {
+		// Drop the attempt; the next Login replaces it on the language server.
+		cancel()
+		return "", "", err
+	}
+	if mode == ModeAuthCode {
 		sess.mode, sess.authURL = ModeAuthCode, authURL
-	case errors.Is(err, errNoAuthCode) && ctx.Err() == nil:
-		log.Printf("[signin] using the loopback sign-in: %v", err)
+	} else {
 		callbackURL, err := callbackFrom(loopbackURL)
 		if err != nil {
 			cancel()
 			return "", "", err
 		}
 		sess.mode, sess.authURL, sess.callbackURL = ModeLoopback, loopbackURL, callbackURL
-	default:
-		// The switch may have taken effect, so which URL the attempt expects
-		// is unknown. Drop it rather than guess; the next Login replaces it on
-		// the language server.
-		cancel()
-		if ctx.Err() != nil {
-			return "", "", ctx.Err()
-		}
-		return "", "", err
 	}
 
 	// Login can fail just after recording its URL. Handing that URL out would
@@ -343,6 +338,61 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	c.mu.Unlock()
 
 	return sess.authURL, sess.mode, nil
+}
+
+// chooseFlow switches the attempt in flight to the auth-code flow when the
+// language server can, and says which flow the attempt ended up in, with the
+// consent URL for the auth-code one.
+func (c *Coordinator) chooseFlow(ctx context.Context) (Mode, string, error) {
+	authURL, err := c.switchToAuthCode(ctx)
+	switch {
+	case err == nil:
+		return ModeAuthCode, authURL, nil
+	case ctx.Err() != nil:
+		return "", "", ctx.Err()
+	case errors.Is(err, errNoAuthCode):
+		log.Printf("[signin] using the loopback sign-in: %v", err)
+		return ModeLoopback, "", nil
+	}
+
+	// The switch may have taken effect before it failed. Ask which flow the
+	// attempt is in rather than guess.
+	data, sessionErr := c.instance.Call(ctx, "GetLoginSession", map[string]any{})
+	if sessionErr == nil {
+		var session loginSession
+		if json.Unmarshal(data, &session) == nil && session.Active {
+			if url, ok := session.authCodeURL(); ok {
+				log.Printf("[signin] the switch failed but took effect: %v", err)
+				return ModeAuthCode, url, nil
+			}
+			if session.loopback() {
+				log.Printf("[signin] using the loopback sign-in after the switch failed: %v", err)
+				return ModeLoopback, "", nil
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
+	return "", "", err
+}
+
+// loginSession is what SwitchLoginToAuthCode and GetLoginSession answer.
+type loginSession struct {
+	Active  bool            `json:"active"`
+	AuthURL string          `json:"authUrl"`
+	Mode    json.RawMessage `json:"mode"`
+}
+
+// authCodeURL returns the consent URL when the attempt is in the auth-code
+// flow and the URL is Google's.
+func (s loginSession) authCodeURL() (string, bool) {
+	ok := isMode(s.Mode, "LOGIN_SESSION_MODE_AUTH_CODE", 2) && strings.HasPrefix(s.AuthURL, "https://accounts.google.com/")
+	return s.AuthURL, ok
+}
+
+func (s loginSession) loopback() bool {
+	return isMode(s.Mode, "LOGIN_SESSION_MODE_LOOPBACK", 1)
 }
 
 // switchToAuthCode asks the language server to move the attempt in flight to
@@ -363,31 +413,29 @@ func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	var out struct {
-		Active  bool            `json:"active"`
-		AuthURL string          `json:"authUrl"`
-		Mode    json.RawMessage `json:"mode"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
+	var session loginSession
+	if err := json.Unmarshal(data, &session); err != nil {
 		return "", fmt.Errorf("%w: SwitchLoginToAuthCode answered with something other than JSON", errNoAuthCode)
 	}
-	if !out.Active {
+	if !session.Active {
 		return "", fmt.Errorf("the language server has no sign-in in flight")
 	}
-	if !isAuthCodeMode(out.Mode) {
-		return "", fmt.Errorf("%w: SwitchLoginToAuthCode left the mode at %s", errNoAuthCode, out.Mode)
+	if session.loopback() {
+		return "", fmt.Errorf("%w: SwitchLoginToAuthCode left the mode at loopback", errNoAuthCode)
 	}
-	if !strings.HasPrefix(out.AuthURL, "https://accounts.google.com/") {
-		return "", fmt.Errorf("SwitchLoginToAuthCode switched but returned no Google URL")
+	url, ok := session.authCodeURL()
+	if !ok {
+		return "", fmt.Errorf("SwitchLoginToAuthCode answered mode %s without a Google URL", session.Mode)
 	}
-	return out.AuthURL, nil
+	return url, nil
 }
 
-// isAuthCodeMode accepts LoginSessionMode as protojson writes it, by name, and
-// as a number in case a server writes enums that way.
-func isAuthCodeMode(raw json.RawMessage) bool {
+// isMode reports whether raw is the LoginSessionMode called name, accepting
+// it as protojson writes it, by name, and as a number in case a server writes
+// enums that way.
+func isMode(raw json.RawMessage, name string, number int) bool {
 	raw = bytes.TrimSpace(raw)
-	return string(raw) == `"LOGIN_SESSION_MODE_AUTH_CODE"` || string(raw) == "2"
+	return string(raw) == `"`+name+`"` || string(raw) == strconv.Itoa(number)
 }
 
 // waitForURL waits for the shim to record the consent URL. done is closed if
@@ -473,8 +521,18 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 			return err
 		}
 		if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
+			// The error can quote the address, code and all, so it goes to
+			// the log without the query.
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				urlErr.URL = pending.callbackURL
+			}
+			log.Printf("[signin] the callback listener did not take the address: %v", err)
+			if pending.failed() {
+				return c.ended(pending)
+			}
 			c.finish(pending)
-			return fmt.Errorf("%w: Antigravity could not take that address: %v", ErrFailed, err)
+			return fmt.Errorf("%w: Antigravity could not take that address", ErrFailed)
 		}
 	}
 
@@ -553,7 +611,9 @@ func (c *Coordinator) submitAuthCode(ctx context.Context, pending *session, past
 	case out.Message != "":
 		return errors.New(out.Message)
 	case err != nil:
-		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
+		// A transport error names an internal address, so keep it to the log.
+		log.Printf("[signin] SubmitLoginAuthCode failed: %v", err)
+		return errors.New("could not reach Antigravity's language server, so try again")
 	case parseErr != nil:
 		return fmt.Errorf("could not read Antigravity's answer: %w", parseErr)
 	}

@@ -263,7 +263,7 @@ func TestCompleteErrorMessages(t *testing.T) {
 		{
 			fmt.Errorf("%w: Invalid authorization code. Please retry.", signin.ErrFailed),
 			http.StatusConflict,
-			"Google sign-in did not complete: Invalid authorization code. Please retry. Open the Google page again.",
+			"Google sign-in did not complete: Invalid authorization code. Please retry.",
 		},
 		{errors.New("Invalid authorization code."), http.StatusBadRequest, "Invalid authorization code."},
 	} {

@@ -1,9 +1,11 @@
 package signin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +35,9 @@ type fakeLS struct {
 	switchStatus int
 	// switchHang makes SwitchLoginToAuthCode wait for the caller to give up.
 	switchHang bool
+	// sessionBody, when set, is what GetLoginSession answers. Otherwise it is
+	// not there.
+	sessionBody string
 	// loginNoURL makes Login return at once without producing a URL.
 	loginNoURL bool
 	// loginEndsOnSwitch makes Login return, unsigned, as the switch arrives.
@@ -178,11 +183,25 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			"mode":    "LOGIN_SESSION_MODE_AUTH_CODE",
 		})
 
+	case "GetLoginSession":
+		if f.sessionBody == "" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(f.sessionBody))
+
 	case "SubmitLoginAuthCode":
 		var req struct {
 			Code string `json:"code"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Code == "4/drop" {
+			// The connection goes away mid-call, as when the server restarts.
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
 		f.mu.Lock()
 		f.submitted = append(f.submitted, req.Code)
 		f.mu.Unlock()
@@ -552,6 +571,72 @@ func TestBeginWaitHonoursContext(t *testing.T) {
 	}
 }
 
+// A switch that fails may still have taken effect. GetLoginSession says which
+// flow the attempt is in, so Begin need not give up.
+func TestBeginAsksAfterAmbiguousSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		session  string
+		wantMode Mode
+	}{
+		{`{"active":true,"authUrl":"https://accounts.google.com/o/oauth2/auth?state=asked","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`, ModeAuthCode},
+		{`{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`, ModeLoopback},
+		{`{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`, ""},
+		{`{}`, ""},
+	} {
+		f := newFakeLS(t, true)
+		f.switchStatus, f.switchBody = http.StatusInternalServerError, `{"code":"internal"}`
+		f.sessionBody = tc.session
+		c := f.coordinator()
+		authURL, mode, err := c.Begin(context.Background())
+		if tc.wantMode == "" {
+			if err == nil || c.pending != nil {
+				t.Errorf("session %s: Begin = %q, %v; want an error and no attempt", tc.session, mode, err)
+			}
+			continue
+		}
+		if err != nil || mode != tc.wantMode {
+			t.Errorf("session %s: Begin = %q, %v; want %q", tc.session, mode, err, tc.wantMode)
+		}
+		if tc.wantMode == ModeAuthCode && !strings.Contains(authURL, "state=asked") {
+			t.Errorf("Begin handed out %q, want the URL GetLoginSession gave", authURL)
+		}
+	}
+}
+
+// Errors from the language server can quote internal addresses and, on the
+// loopback path, the pasted code. Neither belongs on the page or, for the
+// code, in the log.
+func TestCompleteKeepsTransportDetailOffThePage(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	f := newFakeLS(t, true)
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Complete(ctx, "4/drop")
+	if err == nil || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("Complete(dropped) = %v; want an error without the address", err)
+	}
+
+	f = newFakeLS(t, false)
+	c = f.coordinator()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.callback.Close()
+	err = c.Complete(ctx, "http://localhost:1/auth/callback?state=loop&code=4/SECRET")
+	if !errors.Is(err, ErrFailed) || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("Complete(listener gone) = %v; want ErrFailed without the code or address", err)
+	}
+	if strings.Contains(logged.String(), "SECRET") {
+		t.Errorf("the log quotes the pasted code: %s", logged.String())
+	}
+}
+
 // If the caller gives up during the switch, the language server may or may not
 // have switched, so neither URL can be trusted.
 func TestBeginDropsAttemptWhenSwitchIsInterrupted(t *testing.T) {
@@ -679,7 +764,7 @@ func TestLoginOutcome(t *testing.T) {
 	}
 }
 
-func TestIsAuthCodeMode(t *testing.T) {
+func TestIsMode(t *testing.T) {
 	for raw, want := range map[string]bool{
 		`"LOGIN_SESSION_MODE_AUTH_CODE"`:   true,
 		`2`:                                true,
@@ -688,8 +773,8 @@ func TestIsAuthCodeMode(t *testing.T) {
 		`1`:                                false,
 		``:                                 false,
 	} {
-		if got := isAuthCodeMode(json.RawMessage(raw)); got != want {
-			t.Errorf("isAuthCodeMode(%s) = %v, want %v", raw, got, want)
+		if got := isMode(json.RawMessage(raw), "LOGIN_SESSION_MODE_AUTH_CODE", 2); got != want {
+			t.Errorf("isMode(%s, AUTH_CODE) = %v, want %v", raw, got, want)
 		}
 	}
 }
