@@ -1755,29 +1755,32 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   var suppressComposerUntil = 0;
   var lastComposerTouchTime = 0;
-  var lastDialogBlurAt = -Infinity;
-  var DIALOG_CONTAINER_SELECTOR = '[role="dialog"], [role="menu"], [data-radix-popper-content-wrapper], .aux-drawer-popup';
+  var lastTouchTarget = null;
+  var lastTouchAt = -Infinity;
 
-  function hasOpenDialog() {
-    var els = document.querySelectorAll(DIALOG_CONTAINER_SELECTOR);
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el.getAttribute("aria-hidden") === "true" || el.getAttribute("data-state") === "closed") continue;
-      var cs = window.getComputedStyle(el);
-      if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity) === 0 || cs.pointerEvents === "none") continue;
-      var r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight) {
-        return true;
-      }
-    }
-    return false;
+  // justTouched reports whether the user's last touch, begun or lifted within
+  // the last second, landed on the field now taking focus. A touch anywhere in
+  // the composer counts for its editor, which the app focuses for taps on its
+  // padding too.
+  function justTouched(field) {
+    if (!lastTouchTarget || performance.now() - lastTouchAt > 1000) return false;
+    var area = (field.closest && field.closest('[data-testid="agent-input-box"]')) || field;
+    return area === lastTouchTarget || !!(area.contains && area.contains(lastTouchTarget));
   }
 
   document.addEventListener("touchstart", function (e) {
     var t = e.target;
+    lastTouchTarget = t;
+    lastTouchAt = performance.now();
     if (t && t.closest && t.closest('[data-testid="agent-input-box"]')) {
       lastComposerTouchTime = performance.now();
     }
+  }, { capture: true, passive: true });
+
+  // A long press focuses the field when it is lifted, not when it began.
+  document.addEventListener("touchend", function (e) {
+    lastTouchTarget = e.target;
+    lastTouchAt = performance.now();
   }, { capture: true, passive: true });
 
   // When an objective option (radio) in ask_question is selected on mobile devices:
@@ -1841,16 +1844,16 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
       checkNearBottom();
       predicted = loadPredicted();
-      // Closing a dialog, popover, or bottom sheet (for example the model picker) hands focus
-      // back to the composer without opening the keyboard. Shrinking for a keyboard
-      // that never arrives makes the chat jump up and settle back, so the prediction
-      // is skipped there. If the keyboard does open, the viewport resize still
-      // moves the shell, just without the speculative jump.
-      var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500) &&
-        !(t.closest && t.closest(DIALOG_CONTAINER_SELECTOR));
+      // Only a field the user just touched brings the keyboard up. Focus handed
+      // back by script does not: the model picker's bottom sheet, for one,
+      // returns focus to the composer when its closing animation ends, half a
+      // second after the tap that closed it. Shrinking for a keyboard that
+      // never arrives makes the chat jump up and settle back. If the keyboard
+      // does open, the viewport resize still moves the shell, just without
+      // the speculative jump.
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
-      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && !returnedFromDialog) {
+      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && justTouched(t)) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         moveAt = performance.now();
@@ -1860,23 +1863,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  document.addEventListener("pointerdown", function (e) {
-    var t = e.target;
-    if (t && (isTextInput(t) || (t.closest && t.closest('[data-lexical-editor="true"]')))) {
-      return;
-    }
-    if (hasOpenDialog()) {
-      if (t && (!t.closest || !t.closest(DIALOG_CONTAINER_SELECTOR) || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
-        lastDialogBlurAt = performance.now();
-      }
-    }
-  }, true);
-
-  window.addEventListener("focusout", function (e) {
-    var t = e.target;
-    if (t && t.closest && t.closest(DIALOG_CONTAINER_SELECTOR)) {
-      lastDialogBlurAt = performance.now();
-    }
+  window.addEventListener("focusout", function () {
     if (hasActiveQuestion) return;
     track(500);
   });
