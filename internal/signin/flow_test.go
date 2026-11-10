@@ -27,14 +27,16 @@ type fakeLS struct {
 	urlFile string
 	// authCode makes SwitchLoginToAuthCode exist, as it does from 2.31.
 	authCode bool
-	// switchBody, when set, is what SwitchLoginToAuthCode answers instead.
-	switchBody string
+	// switchBody, when set, is what SwitchLoginToAuthCode answers instead,
+	// with switchStatus if that is set too.
+	switchBody   string
+	switchStatus int
 	// switchHang makes SwitchLoginToAuthCode wait for the caller to give up.
 	switchHang bool
 	// loginNoURL makes Login return at once without producing a URL.
 	loginNoURL bool
-	// loginEndsAfterURL makes Login return just after producing its URL.
-	loginEndsAfterURL bool
+	// loginEndsOnSwitch makes Login return, unsigned, as the switch arrives.
+	loginEndsOnSwitch bool
 
 	callback *httptest.Server
 	server   *httptest.Server
@@ -105,10 +107,6 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			_ = file.Close()
 		}
 
-		if f.loginEndsAfterURL {
-			_, _ = w.Write([]byte(`{"authResult":{"uiMessage":"failed"}}`))
-			return
-		}
 		select {
 		case <-end:
 		case <-r.Context().Done():
@@ -117,6 +115,11 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 
 	case "SwitchLoginToAuthCode":
+		if f.loginEndsOnSwitch {
+			f.end(false)
+			// Let Login's answer reach the coordinator first.
+			time.Sleep(50 * time.Millisecond)
+		}
 		if !f.authCode {
 			http.NotFound(w, r)
 			return
@@ -134,6 +137,9 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if f.switchBody != "" {
+			if f.switchStatus != 0 {
+				w.WriteHeader(f.switchStatus)
+			}
 			_, _ = w.Write([]byte(f.switchBody))
 			return
 		}
@@ -157,6 +163,11 @@ func (f *fakeLS) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		switch req.Code {
 		case "4/good":
+		case "4/exchange-fails":
+			// Accepted, but Login then fails to get a token.
+			f.end(false)
+			_, _ = w.Write([]byte(`{"accepted":true}`))
+			return
 		case "4/connect-error":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"code":"invalid_argument","message":"The code is malformed."}`))
@@ -332,24 +343,34 @@ func TestBeginReusesAttemptInFlight(t *testing.T) {
 }
 
 // A language server that answers SwitchLoginToAuthCode without switching keeps
-// the loopback flow, whose listener is still waiting. One that switched, or has
-// no attempt, leaves nothing usable, so Begin fails rather than guess.
+// the loopback flow, whose listener is still waiting. Any answer that may have
+// switched, or found no attempt, leaves nothing usable, so Begin fails rather
+// than guess.
 func TestBeginSwitchAnswers(t *testing.T) {
-	for body, wantLoopback := range map[string]bool{
-		`{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`: true,
-		`<html>not an RPC</html>`: true,
-		`{"active":false}`:        false,
-		`{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`: false,
+	for _, tc := range []struct {
+		status       int
+		body         string
+		wantLoopback bool
+	}{
+		{0, `{"active":true,"authUrl":"https://accounts.google.com/x","mode":"LOGIN_SESSION_MODE_LOOPBACK"}`, true},
+		{0, `<html>not an RPC</html>`, true},
+		{http.StatusNotFound, `404 page not found`, true},
+		{http.StatusNotImplemented, `{"code":"unimplemented"}`, true},
+		{http.StatusBadRequest, `{"code":"invalid_argument"}`, true},
+		{0, `{"active":false}`, false},
+		{0, `{"active":true,"authUrl":"https://example.com/x","mode":"LOGIN_SESSION_MODE_AUTH_CODE"}`, false},
+		{http.StatusInternalServerError, `{"code":"internal"}`, false},
+		{http.StatusServiceUnavailable, `{"code":"unavailable"}`, false},
 	} {
 		f := newFakeLS(t, true)
-		f.switchBody = body
+		f.switchStatus, f.switchBody = tc.status, tc.body
 		c := f.coordinator()
 		_, mode, err := c.Begin(context.Background())
-		if wantLoopback && (err != nil || mode != ModeLoopback) {
-			t.Errorf("switch answered %s: Begin = %q, %v; want loopback", body, mode, err)
+		if tc.wantLoopback && (err != nil || mode != ModeLoopback) {
+			t.Errorf("switch answered %d %s: Begin = %q, %v; want loopback", tc.status, tc.body, mode, err)
 		}
-		if !wantLoopback && (err == nil || c.pending != nil) {
-			t.Errorf("switch answered %s: Begin = %q, %v; want an error and no attempt", body, mode, err)
+		if !tc.wantLoopback && (err == nil || c.pending != nil) {
+			t.Errorf("switch answered %d %s: Begin = %q, %v; want an error and no attempt", tc.status, tc.body, mode, err)
 		}
 	}
 }
@@ -358,24 +379,78 @@ func TestBeginSwitchAnswers(t *testing.T) {
 // handed out.
 func TestBeginDropsAttemptThatEndedAfterItsURL(t *testing.T) {
 	f := newFakeLS(t, false)
-	f.loginEndsAfterURL = true
+	f.loginEndsOnSwitch = true
 	c := f.coordinator()
-	if _, _, err := c.Begin(context.Background()); err == nil || c.pending != nil {
-		t.Fatalf("Begin = %v; want an error and no attempt", err)
+	if _, _, err := c.Begin(context.Background()); !errors.Is(err, errEndedEarly) || c.pending != nil {
+		t.Fatalf("Begin = %v; want errEndedEarly and no attempt", err)
 	}
 }
 
-// A caller that has already given up must not start a Login it will not use.
-func TestBeginGivesUpBeforeStartingLogin(t *testing.T) {
+// After the language server gives up, as it does 5 minutes in, the next page
+// load must start a new attempt rather than hand out the old URL.
+func TestBeginReplacesEndedAttempt(t *testing.T) {
 	f := newFakeLS(t, true)
 	c := f.coordinator()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, _, err := c.Begin(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Begin = %v, want context.Canceled", err)
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if n := f.loginCount(); n != 0 {
-		t.Errorf("Login ran %d times for a cancelled Begin", n)
+	f.end(false)
+	waitEnded(t, c)
+
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.loginCount(); n != 2 {
+		t.Fatalf("Login ran %d times, want a fresh attempt", n)
+	}
+	if !c.pending.live() {
+		t.Fatal("the new attempt must be live")
+	}
+}
+
+// A code can be accepted and the token exchange still fail, which ends Login.
+// That is known within a moment, so Complete must not wait out its polling.
+func TestCompleteStopsWaitingWhenLoginEnds(t *testing.T) {
+	f := newFakeLS(t, true)
+	c := f.coordinator()
+	ctx := context.Background()
+	if _, _, err := c.Begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if err := c.Complete(ctx, "4/exchange-fails"); !errors.Is(err, ErrExpired) {
+		t.Fatalf("Complete = %v, want ErrExpired", err)
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Errorf("Complete took %v after Login ended", elapsed)
+	}
+	if c.pending != nil {
+		t.Error("the ended attempt must be cleared")
+	}
+}
+
+// A second Begin waiting behind a stuck first one must give up with its own
+// deadline.
+func TestBeginWaitHonoursContext(t *testing.T) {
+	f := newFakeLS(t, true)
+	f.switchHang = true
+	c := f.coordinator()
+
+	first, cancelFirst := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFirst()
+	go func() { _, _, _ = c.Begin(first) }()
+	time.Sleep(100 * time.Millisecond)
+
+	second, cancelSecond := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelSecond()
+	start := time.Now()
+	if _, _, err := c.Begin(second); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second Begin = %v, want its deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("second Begin waited %v", elapsed)
 	}
 }
 
@@ -386,7 +461,7 @@ func TestBeginDropsAttemptWhenSwitchIsInterrupted(t *testing.T) {
 	f.switchHang = true
 	c := f.coordinator()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if _, _, err := c.Begin(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Begin = %v, want the deadline", err)

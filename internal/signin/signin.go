@@ -71,6 +71,8 @@ var (
 	// errNoAuthCode means the language server did not switch to the auth-code
 	// flow, so the loopback flow Login started is still the one to use.
 	errNoAuthCode = errors.New("no auth-code sign-in")
+	// errEndedEarly means Login returned before its URL could be handed out.
+	errEndedEarly = errors.New("the language server ended the sign-in before it could be used")
 )
 
 type session struct {
@@ -97,11 +99,12 @@ type Coordinator struct {
 	instance *lsproc.Instance
 	urlFile  string
 
-	// beginMu serialises Begin, so two tabs opening the page share one attempt
-	// instead of the second Login replacing the first.
-	beginMu sync.Mutex
-	mu      sync.Mutex
-	pending *session
+	// beginning serialises Begin, so two tabs opening the page share one
+	// attempt instead of the second Login replacing the first. It is a channel
+	// so a caller can stop waiting for it.
+	beginning chan struct{}
+	mu        sync.Mutex
+	pending   *session
 
 	authMu     sync.Mutex
 	cached     authState
@@ -114,7 +117,7 @@ type Coordinator struct {
 // disables sign-in, which is the right behaviour when the desktop app owns the
 // language server.
 func New(instance *lsproc.Instance, urlFile string) *Coordinator {
-	return &Coordinator{instance: instance, urlFile: urlFile}
+	return &Coordinator{instance: instance, urlFile: urlFile, beginning: make(chan struct{}, 1)}
 }
 
 // Available reports whether sign-in can be driven from here.
@@ -246,8 +249,12 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 		return "", "", ErrUnavailable
 	}
 
-	c.beginMu.Lock()
-	defer c.beginMu.Unlock()
+	select {
+	case c.beginning <- struct{}{}:
+		defer func() { <-c.beginning }()
+	case <-ctx.Done():
+		return "", "", ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
@@ -308,7 +315,7 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 	// send the user through Google for nothing.
 	if !sess.live() {
 		cancel()
-		return "", "", fmt.Errorf("the language server ended the sign-in before it could be used")
+		return "", "", errEndedEarly
 	}
 
 	c.mu.Lock()
@@ -320,12 +327,20 @@ func (c *Coordinator) Begin(ctx context.Context) (string, Mode, error) {
 
 // switchToAuthCode asks the language server to move the attempt in flight to
 // the auth-code flow and returns the consent URL for it. Language servers older
-// than 2.31 do not have the RPC; that and any answer that leaves the attempt in
-// loopback mode come back as errNoAuthCode.
+// than 2.31 do not have the RPC. They answer 404, or serve the web UI with 200;
+// those and any answer that leaves the attempt in loopback mode come back as
+// errNoAuthCode. Anything else, such as a dropped connection or a 5xx, may have
+// switched, so it comes back as a plain error.
 func (c *Coordinator) switchToAuthCode(ctx context.Context) (string, error) {
 	data, err := c.instance.Call(ctx, "SwitchLoginToAuthCode", map[string]any{"openBrowser": false})
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
+		// A 4xx was refused before anything happened, and 501 is Connect's
+		// unimplemented.
+		var status *lsproc.StatusError
+		if errors.As(err, &status) && (status.Code/100 == 4 || status.Code == http.StatusNotImplemented) {
+			return "", fmt.Errorf("%w: %v", errNoAuthCode, err)
+		}
+		return "", err
 	}
 
 	var out struct {
@@ -378,7 +393,7 @@ func (c *Coordinator) waitForURL(ctx context.Context, done <-chan struct{}) (str
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-done:
-			return "", fmt.Errorf("the language server ended the sign-in before producing a URL")
+			return "", errEndedEarly
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -443,15 +458,32 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 		}
 	}
 
-	// The Login RPC needs a moment to exchange the code for a token.
+	// The Login RPC needs a moment to exchange the code for a token. If it
+	// returns without credentials, the exchange failed and the attempt is
+	// over, so there is no point waiting the full time. A few checks after it
+	// returns cover GetAuthStatus catching up.
+	checksAfterLogin := 3
 	for i := 0; i < 20; i++ {
 		if c.instance.SignedIn(ctx) {
 			c.authMu.Lock()
 			c.cached = authSignedIn
 			c.cachedAt = time.Now()
 			c.authMu.Unlock()
+			// Let Login finish on its own rather than cancel it mid-reply.
+			select {
+			case <-pending.done:
+			case <-ctx.Done():
+			case <-time.After(3 * time.Second):
+			}
 			c.finish(pending)
 			return nil
+		}
+		if !pending.live() {
+			if checksAfterLogin == 0 {
+				c.finish(pending)
+				return ErrExpired
+			}
+			checksAfterLogin--
 		}
 		select {
 		case <-ctx.Done():
