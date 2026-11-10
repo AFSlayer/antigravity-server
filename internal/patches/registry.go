@@ -277,7 +277,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoButtonRe,
-			Replace: `${1}${2}${3}${7}==="background"&&!window.__agyNewRowOnTop?((_m,_a,_r)=>_m.get(_a)||(_r=[{type:"header",id:"header-__agy_new__",label:"New Conversation"},...(_a.length>0?[{type:"spacer",id:"spacer-__agy_new__",height:6},..._a]:[])],_m.set(_a,_r),_r))(window.__agyBgMap||(window.__agyBgMap=new WeakMap),${5}):${5}${6}${7}${8}(window.__agyFocusComposer=window.__agyFocusComposer||(()=>{var _af=0,_t1=0,_t2=0,_clr=()=>{cancelAnimationFrame(_af);clearTimeout(_t1);clearTimeout(_t2);_af=_t1=_t2=0},_f=()=>{var _e=document.querySelector('[data-testid="agent-input-box"] [data-lexical-editor="true"]')||document.querySelector('[data-lexical-editor="true"]');if(_e&&document.activeElement!==_e){var _ev=!1,_h=()=>{_ev=!0};_e.addEventListener?.("focusin",_h,{once:!0});_e.focus({preventScroll:!0});_e.removeEventListener?.("focusin",_h);if(!_ev)_e.dispatchEvent(new FocusEvent("focusin",{bubbles:!0}))}if(_e&&document.activeElement===_e&&document.querySelector('[data-testid="mobile-new-convo-empty"]'))_clr()};document.addEventListener?.("pointerdown",_e=>{if(!_e.target?.closest?.('[data-testid="agent-input-box"]'))_clr()},!0);return()=>{if(!(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))return;_clr();_f();if(document.activeElement?.getAttribute?.("data-lexical-editor")!=="true"||!document.querySelector('[data-testid="mobile-new-convo-empty"]')){_af=requestAnimationFrame(_f);_t1=setTimeout(_f,50);_t2=setTimeout(_f,150)}}})(),${7}==="background"&&(window.__agyStartNewConversation=()=>{window.__agyFocusComposer&&window.__agyFocusComposer();${2}("outside-of-project")}),${7}==="background"?(${9}.__agyHdr||(${9}.__agyHdr=_h=>_h.id==="header-__agy_new__"?${4}.createElement("button",{type:"button","data-testid":"new-conversation-button","aria-label":"New Conversation",onClick:()=>{window.__agyFocusComposer&&window.__agyFocusComposer();${2}("outside-of-project")},className:"group/headerbtn flex items-center pl-1 pr-2 rounded-lg select-none [-webkit-touch-callout:none] cursor-pointer w-full border-none outline-none text-left text-secondary-foreground hover:bg-muted hover:text-foreground h-11 bg-background"},${4}.createElement("div",{className:"flex-1 min-w-0 flex justify-start h-full items-center"},${4}.createElement("div",{className:"flex items-center gap-0.5 h-full min-w-0"},${4}.createElement("div",{className:"w-6 h-6 shrink-0 flex items-center justify-center"},${4}.createElement("svg",{xmlns:"http://www.w3.org/2000/svg",width:16,height:16,viewBox:"0 -960 960 960",fill:"currentColor",className:"shrink-0","aria-hidden":"true"},${4}.createElement("path",{d:"M450-450H250q-12.75,0-21.37-8.63T220-480.01t8.62-21.37T250-510H450V-710q0-12.75 8.63-21.37T480.01-740t21.37,8.62T510-710v200H710q12.75,0 21.37,8.63T740-479.99t-8.62,21.37T710-450H510v200q0,12.75-8.63,21.37T479.99-220t-21.37-8.62T450-250V-450Z"}))),${4}.createElement("span",{className:"truncate text-base"},"New Conversation")))):${9}(_h))):${9})`,
+			Replace: `${1}${2}${3}${7}==="background"&&!window.__agyNewRowOnTop?((_m,_a,_r)=>_m.get(_a)||(_r=[{type:"header",id:"header-__agy_new__",label:"New Conversation"},...(_a.length>0?[{type:"spacer",id:"spacer-__agy_new__",height:6},..._a]:[])],_m.set(_a,_r),_r))(window.__agyBgMap||(window.__agyBgMap=new WeakMap),${5}):${5}${6}${7}${8}(window.__agyFocusComposer=window.__agyFocusComposer||(()=>{var _af=0,_t1=0,_t2=0,_clr=()=>{cancelAnimationFrame(_af);clearTimeout(_t1);clearTimeout(_t2);_af=_t1=_t2=0;window.__agyComposerFocusAt=-Infinity},_f=()=>{var _e=document.querySelector('[data-testid="agent-input-box"] [data-lexical-editor="true"]')||document.querySelector('[data-lexical-editor="true"]');if(_e&&document.activeElement!==_e){var _ev=!1,_h=()=>{_ev=!0};_e.addEventListener?.("focusin",_h,{once:!0});_e.focus({preventScroll:!0});_e.removeEventListener?.("focusin",_h);if(!_ev)_e.dispatchEvent(new FocusEvent("focusin",{bubbles:!0}))}if(_e&&document.activeElement===_e&&document.querySelector('[data-testid="mobile-new-convo-empty"]'))_clr()};document.addEventListener?.("pointerdown",_e=>{if(!_e.target?.closest?.('[data-testid="agent-input-box"]'))_clr()},!0);return()=>{if(!(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))return;_clr();window.__agyComposerFocusAt=typeof performance!=="undefined"?performance.now():-Infinity;_f();if(document.activeElement?.getAttribute?.("data-lexical-editor")!=="true"||!document.querySelector('[data-testid="mobile-new-convo-empty"]')){_af=requestAnimationFrame(_f);_t1=setTimeout(_f,50);_t2=setTimeout(_f,150)}}})(),${7}==="background"&&(window.__agyStartNewConversation=()=>{window.__agyFocusComposer&&window.__agyFocusComposer();${2}("outside-of-project")}),${7}==="background"?(${9}.__agyHdr||(${9}.__agyHdr=_h=>_h.id==="header-__agy_new__"?${4}.createElement("button",{type:"button","data-testid":"new-conversation-button","aria-label":"New Conversation",onClick:()=>{window.__agyFocusComposer&&window.__agyFocusComposer();${2}("outside-of-project")},className:"group/headerbtn flex items-center pl-1 pr-2 rounded-lg select-none [-webkit-touch-callout:none] cursor-pointer w-full border-none outline-none text-left text-secondary-foreground hover:bg-muted hover:text-foreground h-11 bg-background"},${4}.createElement("div",{className:"flex-1 min-w-0 flex justify-start h-full items-center"},${4}.createElement("div",{className:"flex items-center gap-0.5 h-full min-w-0"},${4}.createElement("div",{className:"w-6 h-6 shrink-0 flex items-center justify-center"},${4}.createElement("svg",{xmlns:"http://www.w3.org/2000/svg",width:16,height:16,viewBox:"0 -960 960 960",fill:"currentColor",className:"shrink-0","aria-hidden":"true"},${4}.createElement("path",{d:"M450-450H250q-12.75,0-21.37-8.63T220-480.01t8.62-21.37T250-510H450V-710q0-12.75 8.63-21.37T480.01-740t21.37,8.62T510-710v200H710q12.75,0 21.37,8.63T740-479.99t-8.62,21.37T710-450H510v200q0,12.75-8.63,21.37T479.99-220t-21.37-8.62T450-250V-450Z"}))),${4}.createElement("span",{className:"truncate text-base"},"New Conversation")))):${9}(_h))):${9})`,
 		},
 		{
 			ID:      "mobile-home-new-conversation-row",
@@ -1703,21 +1703,120 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   }, { capture: true, passive: true });
 
-  // Track touch coordinates for swipe-down keyboard dismiss
+  // Track touch coordinates and tap state for swipe-down dismiss and keyboard prediction
   var touchStartY = 0;
   var touchStartX = 0;
+  var suppressComposerUntil = 0;
+  var lastComposerTouchTime = -Infinity;
+  var lastTouchTarget = null;
+  var lastTouchAt = -Infinity;
+  var touchMoved = false;
+  var TAP_SLOP_PX = 10;
+  // Buttons, links, popup triggers, focusable chips, and opted-out wrappers
+  // inside agent-input-box do not open the keyboard when tapped, even when the
+  // bundle restores focus to the editor afterwards.
+  var COMPOSER_CONTROL_SELECTOR = 'button, [role="button"], a, input, select, textarea, label, summary, [aria-haspopup], [tabindex]:not([tabindex^="-"]), .no-focus-agent-input, [data-overlay-scrollbar-track]';
 
-  // Cancel pending auto-scroll if user touches the conversation view during open
+  function touchElement(t) {
+    if (!t) return null;
+    return t.closest ? t : (t.parentElement || null);
+  }
+
+  function clearLastTouch() {
+    lastTouchTarget = null;
+    lastTouchAt = -Infinity;
+  }
+
+  function isComposerTapTarget(el) {
+    if (!el || !el.closest) return false;
+    var box = el.closest('[data-testid="agent-input-box"]');
+    if (!box) return false;
+    var ctrl = el.closest(COMPOSER_CONTROL_SELECTOR);
+    if (!ctrl || !box.contains(ctrl)) return true;
+    return isTextInput(ctrl) && (ctrl === el || !!(ctrl.contains && ctrl.contains(el)));
+  }
+
+  // justTouched reports whether the user's last tap, begun or lifted within the
+  // last second without dragging, landed on the field now taking focus (or on
+  // non-control padding of its composer box), or whether __agyFocusComposer
+  // just requested focus from a New Conversation tap.
+  function justTouched(field) {
+    if (!field) return false;
+    var now = performance.now();
+    var box = field.closest && field.closest('[data-testid="agent-input-box"]');
+    var isComposer = Boolean(box || (field.getAttribute && field.getAttribute("data-lexical-editor") === "true"));
+    var reqAt = window.__agyComposerFocusAt;
+    if (isComposer && typeof reqAt === "number" && now >= reqAt && now - reqAt <= 250) {
+      return true;
+    }
+    if (!lastTouchTarget || now < lastTouchAt || now - lastTouchAt > 1000) return false;
+    var area = box || field;
+    if (area !== lastTouchTarget && !(area.contains && area.contains(lastTouchTarget))) return false;
+    var ctrl = lastTouchTarget.closest && lastTouchTarget.closest(COMPOSER_CONTROL_SELECTOR);
+    if (ctrl && (area === ctrl || (area.contains && area.contains(ctrl))) &&
+        ctrl !== field && !(ctrl.contains && ctrl.contains(field))) {
+      return false;
+    }
+    return true;
+  }
+
   document.addEventListener("touchstart", function (e) {
+    window.__agyComposerFocusAt = -Infinity;
+    var el = touchElement(e.target);
+    // Cancel pending auto-scroll if user touches the conversation view during open
+    if (el && el.closest && el.closest('[data-testid="conversation-view"]')) {
+      shouldScrollOnOpen = false;
+    }
+    if (e.touches && e.touches.length > 1) {
+      touchMoved = true;
+      clearLastTouch();
+      return;
+    }
+    touchMoved = false;
     if (e.touches && e.touches.length === 1) {
       touchStartY = e.touches[0].clientY;
       touchStartX = e.touches[0].clientX;
+    } else {
+      touchStartY = 0;
+      touchStartX = 0;
     }
-    var t = e.target;
-    if (t && t.closest && t.closest('[data-testid="conversation-view"]')) {
-      shouldScrollOnOpen = false;
+    lastTouchTarget = el;
+    lastTouchAt = performance.now();
+    if (isComposerTapTarget(el)) {
+      lastComposerTouchTime = lastTouchAt;
     }
-  }, { passive: true });
+  }, { capture: true, passive: true });
+
+  document.addEventListener("touchmove", function (e) {
+    if (!e.touches) return;
+    if (e.touches.length !== 1 ||
+        Math.abs(e.touches[0].clientX - touchStartX) > TAP_SLOP_PX ||
+        Math.abs(e.touches[0].clientY - touchStartY) > TAP_SLOP_PX) {
+      touchMoved = true;
+      clearLastTouch();
+    }
+  }, { capture: true, passive: true });
+
+  // A long press focuses the field when it is lifted, not when it began.
+  // Drags and canceled touches do not focus anything.
+  document.addEventListener("touchend", function (e) {
+    if (touchMoved) return;
+    if (e.touches && e.touches.length > 0) return;
+    var el = touchElement(e.target);
+    if (el) {
+      lastTouchTarget = el;
+      lastTouchAt = performance.now();
+      if (isComposerTapTarget(el)) {
+        lastComposerTouchTime = lastTouchAt;
+      }
+    }
+  }, { capture: true, passive: true });
+
+  document.addEventListener("touchcancel", function () {
+    touchMoved = true;
+    clearLastTouch();
+    window.__agyComposerFocusAt = -Infinity;
+  }, { capture: true, passive: true });
 
   window.addEventListener("touchmove", function (e) {
     if (hasActiveQuestion) return;
@@ -1752,36 +1851,6 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     predicted = loadPredicted();
     track(500);
   });
-
-  var suppressComposerUntil = 0;
-  var lastComposerTouchTime = 0;
-  var lastTouchTarget = null;
-  var lastTouchAt = -Infinity;
-
-  // justTouched reports whether the user's last touch, begun or lifted within
-  // the last second, landed on the field now taking focus. A touch anywhere in
-  // the composer counts for its editor, which the app focuses for taps on its
-  // padding too.
-  function justTouched(field) {
-    if (!lastTouchTarget || performance.now() - lastTouchAt > 1000) return false;
-    var area = (field.closest && field.closest('[data-testid="agent-input-box"]')) || field;
-    return area === lastTouchTarget || !!(area.contains && area.contains(lastTouchTarget));
-  }
-
-  document.addEventListener("touchstart", function (e) {
-    var t = e.target;
-    lastTouchTarget = t;
-    lastTouchAt = performance.now();
-    if (t && t.closest && t.closest('[data-testid="agent-input-box"]')) {
-      lastComposerTouchTime = performance.now();
-    }
-  }, { capture: true, passive: true });
-
-  // A long press focuses the field when it is lifted, not when it began.
-  document.addEventListener("touchend", function (e) {
-    lastTouchTarget = e.target;
-    lastTouchAt = performance.now();
-  }, { capture: true, passive: true });
 
   // When an objective option (radio) in ask_question is selected on mobile devices:
   // Suppress spurious auto-focus jumping into the main agent composer after modal completion
@@ -1834,7 +1903,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       if (isMobileDevice() && performance.now() < suppressComposerUntil) {
         var isMainComposer = t.closest && t.closest('[data-testid="agent-input-box"]');
         if (isMainComposer) {
-          var isDirectUserTap = (performance.now() - lastComposerTouchTime) < 500;
+          var now = performance.now();
+          var focusReqAt = window.__agyComposerFocusAt;
+          var isDirectUserTap = (now - lastComposerTouchTime) < 500 ||
+            (typeof focusReqAt === "number" && now >= focusReqAt && now - focusReqAt <= 250);
           if (!isDirectUserTap) {
             if (t.blur) t.blur();
             return;
@@ -1854,6 +1926,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
       if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && justTouched(t)) {
+        clearLastTouch();
+        window.__agyComposerFocusAt = -Infinity;
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         moveAt = performance.now();

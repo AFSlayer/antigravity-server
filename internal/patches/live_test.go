@@ -85,6 +85,9 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if !bytes.Contains(mainJS, []byte("autoscroll-viewport")) {
 		t.Error("the bundle no longer has autoscroll-viewport; scroll-input-tracker may stop working")
 	}
+	if !bytes.Contains(mainJS, []byte("agent-input-box")) {
+		t.Error("the bundle no longer has agent-input-box; keyboard-detect may stop working")
+	}
 
 	// mobile-user-message-actions and autoscroll-distance-fix are optional because 2.31 does both itself. A bundle with
 	// neither the code they patch nor that would lose them without a word.
