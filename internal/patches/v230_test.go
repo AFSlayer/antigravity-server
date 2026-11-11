@@ -98,4 +98,17 @@ func TestAntigravity230PatchShapes(t *testing.T) {
 			}
 		}
 	})
+	// Five arguments to GNb, with no credential callback in catch.
+	t.Run("user-status-keep-on-error", func(t *testing.T) {
+		v230 := `async function GNb(a,b,c,d,f){var g=e,h=e;try{try{if(typeof a.getUserStatus!=="function")b(Kq(Wb(E.UserStatusSchema)));else{var {userStatus:k}=h(await g(a.getUserStatus()));!f()&&k&&(b(Kq(Opa(k,c))),k.email&&d?.(!k.disableTelemetry&&!k.userDataCollectionForceDisabled))}}catch(l){h(),console.warn("[UserStatusSync] Failed to fetch user status:",l),f()||b(Kq(Wb(E.UserStatusSchema)))}}finally{g()}}` + "\n" + `function HNb(){var a=fk(),b=ek(),c=(0,B.useContext)(zt),d=gk(Zj),f=ed()?.core.authService,g=dl(),h=Zi(),k=h.get("models")?.geminiModelsOnly===!0,l=h.get("settings")?.onTelemetrySettingChanged;(0,B.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(Kq(Wb(E.UserStatusSchema)));else{var p=!1,q=()=>p;GNb(c,a,k,l,q);var u=setInterval(()=>{GNb(c,a,k,l,q)},6E5);return()=>{p=!0;clearInterval(u)}}},[a,c,d,k,l]);return null}`
+		got := applyOnly(t, "user-status-keep-on-error", v230, Options{})
+		for _, want := range []string{
+			`catch(l){return h(),console.warn("[UserStatusSync] Failed to fetch user status:",l),!1}`,
+			`try{_ok=(await GNb(c,a,k,l,q))!==!1}catch{_ok=!1}`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.30 shape missing %q in:\n%s", want, got)
+			}
+		}
+	})
 }

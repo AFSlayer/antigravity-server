@@ -60,6 +60,23 @@ func TestAntigravity231PatchShapes(t *testing.T) {
 			t.Errorf("2.31 shape missing %q in:\n%s", want, got)
 		}
 	})
+	// 2.31.0 passes a sixth callback to RPb that checks whether the server still holds a credential; keep that call
+	// while dropping the empty UserStatusSchema reset on errors.
+	t.Run("user-status-keep-on-error", func(t *testing.T) {
+		v231 := `async function RPb(a,b,c,d,f,g){var h=e,k=e;try{try{if(typeof a.getUserStatus!=="function")b(Xq(Wb(E.UserStatusSchema)));else{var {userStatus:l}=k(await h(a.getUserStatus()));f()||(l&&(b(Xq(Opa(l,c))),l.email&&d?.(!l.disableTelemetry&&!l.userDataCollectionForceDisabled)),l?.email&&!l.cascadeModelConfigData?.errorMessage||g?.())}}catch(m){k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||(b(Xq(Wb(E.UserStatusSchema))),g?.())}}finally{h()}}` + "\n" + `function SPb(){var a=nk(),b=mk(),c=(0,B.useContext)(Pt),d=ok(ik),f=fd()?.core.authService,g=ol(),h=gj(),k=h.get("models")?.geminiModelsOnly===!0,l=h.get("settings")?.onTelemetrySettingChanged;(0,B.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(Xq(Wb(E.UserStatusSchema)));else{var p=!1,q=()=>p,t=()=>{ik(b.getState())?.state==="signedIn"&&f?.signOutIfServerHasNoCredential?.()};RPb(c,a,k,l,q,t);var u=setInterval(()=>{RPb(c,a,k,l,q,t)},6E5);return()=>{p=!0;clearInterval(u)}}},[a,c,d,f,b,k,l]);return null}`
+		if userStatusNoResetOnErrorRe.MatchString(v231) || !userStatusKeepOnErrorRe.MatchString(v231) {
+			t.Error("2.31 UserStatusSync guard patterns did not recognize the 2.31 shape")
+		}
+		got := applyOnly(t, "user-status-keep-on-error", v231, Options{})
+		for _, want := range []string{
+			`catch(m){return k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||g?.(),!1}`,
+			`try{_ok=(await RPb(c,a,k,l,q,t))!==!1}catch{_ok=!1}`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.31 shape missing %q in:\n%s", want, got)
+			}
+		}
+	})
 	// Two patches are optional since 2.31.0 does what they did, and the live bundle test checks that it still does.
 	t.Run("done by the bundle itself", func(t *testing.T) {
 		buttons := `className:Ai("flex flex-row items-center justify-end gap-0.5 select-none",` + "\n" + `f?"px-1 transition-opacity":"px-1 can-hover:absolute can-hover:bottom-1 can-hover:right-1 can-hover:p-1 can-hover:rounded-full can-hover:bg-card can-hover:border can-hover:border-card-border can-hover:shadow-sm user-input-buttons-container transition-all","can-hover:opacity-0 can-hover:pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto group-has-[:focus-visible]/user-input-step:opacity-100 group-has-[:focus-visible]/user-input-step:pointer-events-auto")`
