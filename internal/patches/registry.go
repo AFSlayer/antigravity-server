@@ -102,7 +102,7 @@ var (
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!?\s*[a-zA-Z0-9_$]+\(\))\s*(\|\||&&)\s*` +
 			`(?:\(\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusSchemaDispatchExpr + `)\s*\}` +
-			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?state===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
+			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
 	)
@@ -116,15 +116,20 @@ const (
 func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar, callExpr, timerVar string) string {
 	return `catch(` + errVar + `){return ` + warnExpr + credCheck + `,!1}` +
 		bridge +
-		`let _agyRetry,_agyInFlight=!1,_agyDeferred=!1,_agyFails=0,_agyLastOk=0,` +
+		`let _agyRetry,_agyInFlight=!1,_agyDeferred=!1,_agyStale=!1,_agyQueued=!1,_agyFails=0,_agyLastOk=0,` +
 		`_agyHidden=()=>typeof document!=="undefined"&&document.visibilityState==="hidden",` +
 		`_agyRun=async _init=>{` +
 		`if(` + cancelVar + `||_agyInFlight)return;` +
 		`if(!_init&&_agyHidden()){_agyDeferred=!0;return}` +
-		`clearTimeout(_agyRetry);_agyRetry=void 0;_agyDeferred=!1;_agyInFlight=!0;` +
+		`clearTimeout(_agyRetry);_agyRetry=void 0;_agyDeferred=!1;_agyStale=!1;_agyInFlight=!0;` +
 		`let _ok=!1;try{_ok=(await ` + callExpr + `)!==!1}catch{_ok=!1}` +
 		`_agyInFlight=!1;` +
 		`if(` + cancelVar + `)return;` +
+		`if(_agyQueued){` +
+		`_agyQueued=!1;` +
+		`if(_agyHidden()){_agyDeferred=!0;return}` +
+		`_agyFails=0;_agyRun(!1);return` +
+		`}` +
 		`if(!_ok){` +
 		`if(_agyHidden()){_agyDeferred=!0;return}` +
 		`_agyFails++;` +
@@ -133,21 +138,22 @@ func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar,
 		`}else{_agyDeferred=!1;_agyFails=0;_agyLastOk=Date.now()}` +
 		`},` +
 		`_agyWake=_ev=>{` +
-		`if(` + cancelVar + `||_agyHidden())return;` +
+		`if(` + cancelVar + `)return;` +
+		`if(_agyHidden()||_ev?.type==="pagehide"){if(_agyInFlight)_agyStale=!0;return}` +
 		`let _now=Date.now();` +
-		`if(_agyDeferred||_agyFails>0||_ev?.persisted||_now<_agyLastOk||_now-_agyLastOk>=6E4){` +
-		`_agyFails=0;` +
-		`_agyInFlight?(_agyDeferred=!0):_agyRun(!1)` +
+		`if(_agyDeferred||_agyFails>0||_agyStale||_ev?.persisted||_ev?.type==="online"||_now<_agyLastOk||_now-_agyLastOk>=6E4){` +
+		`if(_agyInFlight){if(_agyStale||_ev?.type==="online"){_agyFails=0;_agyQueued=!0}}` +
+		`else{_agyFails=0;_agyRun(!1)}` +
 		`}` +
 		`};` +
 		`_agyRun(!0);` +
 		`var ` + timerVar + `=setInterval(()=>{_agyRun(!1)},6E5);` +
 		`typeof document!=="undefined"&&document.addEventListener&&document.addEventListener("visibilitychange",_agyWake);` +
-		`typeof window!=="undefined"&&window.addEventListener&&(window.addEventListener("pageshow",_agyWake),window.addEventListener("online",_agyWake));` +
+		`typeof window!=="undefined"&&window.addEventListener&&(window.addEventListener("pageshow",_agyWake),window.addEventListener("pagehide",_agyWake),window.addEventListener("online",_agyWake));` +
 		`return()=>{` +
 		cancelVar + `=!0;clearInterval(` + timerVar + `);clearTimeout(_agyRetry);` +
 		`typeof document!=="undefined"&&document.removeEventListener&&document.removeEventListener("visibilitychange",_agyWake);` +
-		`typeof window!=="undefined"&&window.removeEventListener&&(window.removeEventListener("pageshow",_agyWake),window.removeEventListener("online",_agyWake))` +
+		`typeof window!=="undefined"&&window.removeEventListener&&(window.removeEventListener("pageshow",_agyWake),window.removeEventListener("pagehide",_agyWake),window.removeEventListener("online",_agyWake))` +
 		`}`
 }
 

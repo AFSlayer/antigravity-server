@@ -80,6 +80,9 @@ func TestUserStatusKeepOnErrorShapesAndGuards(t *testing.T) {
 			",", ",\n",
 			"||", "||\n",
 			"&&", "&&\n",
+			"=>", "=>\n",
+			"===", "\n===\n",
+			"!==", "\n!==\n",
 		).Replace(v231UserStatusSync)
 		out, status := applyUserStatusPatch(t, wrapped)
 		if status != StatusApplied {
@@ -92,6 +95,25 @@ func TestUserStatusKeepOnErrorShapesAndGuards(t *testing.T) {
 			}
 			if checkOut, err := exec.Command(node, "--check", f).CombinedOutput(); err != nil {
 				t.Fatalf("syntax error in wrapped output: %v\n%s", err, checkOut)
+			}
+		}
+	})
+
+	t.Run("reset moved before console.warn is rejected by both guard regexes", func(t *testing.T) {
+		oldCatch := `catch(m){k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||(b(Xq(Wb(E.UserStatusSchema))),g?.())}`
+		for _, driftedCatch := range []string{
+			`catch(m){k(),b(Xq(Wb(E.UserStatusSchema))),console.warn("[UserStatusSync] Failed to fetch user status:",m)}`,
+			`catch(m){b(Xq(Wb(E.UserStatusSchema)));console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||g?.()}`,
+		} {
+			drifted := strings.Replace(v231UserStatusSync, oldCatch, driftedCatch, 1)
+			if drifted == v231UserStatusSync {
+				t.Fatal("failed to construct drifted catch fixture")
+			}
+			if userStatusKeepOnErrorRe.MatchString(drifted) {
+				t.Errorf("userStatusKeepOnErrorRe unexpectedly matched drifted catch:\n%s", driftedCatch)
+			}
+			if userStatusNoResetOnErrorRe.MatchString(drifted) {
+				t.Errorf("userStatusNoResetOnErrorRe unexpectedly matched drifted catch:\n%s", driftedCatch)
 			}
 		}
 	})
@@ -231,6 +253,7 @@ function createEnv(source, version) {
   const Opa = (u, geminiOnly) => u;
 
   let mount;
+  let callDirect5Args;
   if (version === "231") {
     const fn = new Function(
       "Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
@@ -263,6 +286,13 @@ function createEnv(source, version) {
       Opa
     );
     mount = () => exports.SPb();
+    callDirect5Args = (cancelled = () => false) => exports.RPb(
+      client,
+      dispatch,
+      false,
+      settingsMap.get("settings").onTelemetrySettingChanged,
+      cancelled
+    );
   } else {
     const fn = new Function(
       "Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
@@ -295,6 +325,13 @@ function createEnv(source, version) {
       Opa
     );
     mount = () => exports.bCb();
+    callDirect5Args = (cancelled = () => false) => exports.aCb(
+      client,
+      dispatch,
+      false,
+      settingsMap.get("settings").onTelemetrySettingChanged,
+      cancelled
+    );
   }
 
   const flushMicrotasks = async (rounds = 8) => {
@@ -335,6 +372,7 @@ function createEnv(source, version) {
 
   return {
     mount,
+    callDirect5Args,
     unmount: () => {
       if (effectCleanup) {
         const c = effectCleanup;
@@ -603,6 +641,134 @@ function createEnv(source, version) {
     await env.setVisibility("visible");
     await env.fireWindow("online");
     assert.strictEqual(lateCalls, 1, "no calls after unmount");
+  }
+
+  // 7. Direct 5-argument RPb callsite (refreshAuthStatus omits the 6th credential callback) keeps status on error
+  //    without throwing on undefined g?.(), returns false on catch, and updates normally on success.
+  {
+    const env = createEnv(patched231Src, "231");
+    env.mount();
+    await env.flushMicrotasks();
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro");
+
+    env.setRpc(async () => { throw new Error("refreshAuthStatus transient error"); });
+    const errRet = await env.callDirect5Args();
+    assert.strictEqual(errRet, false);
+    assert.strictEqual(env.getState().userStatus.email, "dev@example.com");
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro");
+    assert.strictEqual(env.getSignOutChecks(), 0, "omitted 6th callback must not invoke signOut check");
+
+    env.setRpc(async () => ({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, direct: true }] },
+      },
+    }));
+    const okRet = await env.callDirect5Args();
+    assert.notStrictEqual(okRet, false);
+    assert.strictEqual(env.selectedModel()?.direct, true);
+    env.unmount();
+  }
+
+  // 8. In-flight request across a hidden transition:
+  //    (a) if the tab hides and wakes while an old request is still pending, even a stale success triggers an
+  //        immediate follow-up refresh as soon as it settles (and concurrent visibilitychange + pageshow only queue once);
+  //    (b) if the in-flight request finishes while hidden (updating _agyLastOk), waking <60s later still refreshes.
+  {
+    const env = createEnv(patched231Src, "231");
+    env.mount();
+    await env.flushMicrotasks();
+    assert.strictEqual(env.getRpcCalls(), 1);
+
+    let resolveInFlight;
+    env.setRpc(() => new Promise(r => { resolveInFlight = r; }));
+    await env.advance(600_000);
+    assert.strictEqual(env.getRpcCalls(), 2);
+
+    await env.setVisibility("hidden");
+    await env.advance(20_000);
+    await env.setVisibility("visible");
+    await env.fireWindow("pageshow", { type: "pageshow", persisted: true });
+    assert.strictEqual(env.getRpcCalls(), 2, "still waiting on in-flight request");
+
+    env.setRpc(async () => ({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, v: "fresh-after-wake" }] },
+      },
+    }));
+    resolveInFlight({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, v: "stale-pre-freeze" }] },
+      },
+    });
+    await env.flushMicrotasks();
+    assert.strictEqual(env.getRpcCalls(), 3, "queued follow-up fired immediately on settlement");
+    assert.strictEqual(env.selectedModel()?.v, "fresh-after-wake");
+    assert.deepStrictEqual(env.getTimerDelays(), []);
+    env.unmount();
+  }
+  {
+    const env = createEnv(patched231Src, "231");
+    env.mount();
+    await env.flushMicrotasks();
+
+    let resolveBg;
+    env.setRpc(() => new Promise(r => { resolveBg = r; }));
+    await env.advance(600_000);
+    assert.strictEqual(env.getRpcCalls(), 2);
+
+    await env.setVisibility("hidden");
+    resolveBg({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, v: "bg-settled" }] },
+      },
+    });
+    await env.flushMicrotasks();
+
+    await env.advance(5_000);
+    env.setRpc(async () => ({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, v: "refreshed-on-show" }] },
+      },
+    }));
+    await env.setVisibility("visible");
+    assert.strictEqual(env.getRpcCalls(), 3, "refreshed immediately despite <60s elapsed since background settlement");
+    assert.strictEqual(env.selectedModel()?.v, "refreshed-on-show");
+    env.unmount();
+  }
+
+  // 9. Online event arriving while an offline request is still in flight triggers an immediate retry when that
+  //    request rejects, without waiting for the 1s backoff timer.
+  {
+    const env = createEnv(patched231Src, "231");
+    env.mount();
+    await env.flushMicrotasks();
+    assert.strictEqual(env.getRpcCalls(), 1);
+
+    let rejectOffline;
+    env.setRpc(() => new Promise((_, rej) => { rejectOffline = rej; }));
+    await env.advance(600_000);
+    assert.strictEqual(env.getRpcCalls(), 2);
+
+    env.setRpc(async () => ({
+      userStatus: {
+        email: "dev@example.com",
+        cascadeModelConfigData: { clientModelConfigs: [{ label: "Gemini 2.5 Pro", value: 101, v: "online-immediate" }] },
+      },
+    }));
+    await env.fireWindow("online");
+    assert.strictEqual(env.getRpcCalls(), 2, "waits for in-flight offline attempt to settle");
+
+    rejectOffline(new Error("offline socket closed"));
+    await env.flushMicrotasks();
+    assert.strictEqual(env.getRpcCalls(), 3, "retried at 0ms as soon as offline attempt rejected");
+    assert.strictEqual(env.selectedModel()?.v, "online-immediate");
+    assert.deepStrictEqual(env.getTimerDelays(), []);
+    env.unmount();
   }
 })().catch(err => {
   console.error(err);

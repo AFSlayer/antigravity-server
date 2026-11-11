@@ -31,8 +31,9 @@ var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
 
 // userStatusNoResetOnErrorRe matches builds where UserStatusSync logs a failed getUserStatus call without wiping
-// Redux userStatus (2.28 and earlier, or a future build that drops the reset upstream).
-var userStatusNoResetOnErrorRe = regexp.MustCompile(`console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
+// Redux userStatus (2.28 and earlier, or a future build that drops the reset upstream). Anchoring from catch{ ensures a
+// reset moved before console.warn does not slip past the guard.
+var userStatusNoResetOnErrorRe = regexp.MustCompile(`catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+\(\)\s*[;,]\s*)?console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
