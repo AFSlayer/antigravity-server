@@ -96,6 +96,7 @@ var regexpFixtures = map[string]string{
 	"websocket-liveness-probe-relax": `function QJ(a,b){var c=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{if(b.readyState!==WebSocket.OPEN)OJ(a,b);else if(lZa(a,b))if(a.inboundFrameSeq!==c)QJ(a,b);else{b.send(JSON.stringify({streamId:Ke(),type:"ping"}));var e=a.inboundFrameSeq;a.probeTimer=setTimeout(()=>{b.readyState!==WebSocket.OPEN?OJ(a,b):a.inboundFrameSeq!==e?QJ(a,b):(PJ(a),a.options.recordError?.("websocket_liveness_probe_failed",Error("no frames for 4000ms and ping unanswered; closing socket")),b.close(),OJ(a,b))},2E3)}else PJ(a)},
 2E3)}`,
 	"auth-startup-retry":              `if(a._authState.state==="uninitialized"){let n=j0a(m);if(b>0&&n){let p=4-b;d(await c(new Promise(r=>{setTimeout(r,1E3*2**p)})));return a.isLoggingOut||a._currentSessionId!==f?void 0:k0a(a,b-1)}a._authActor.send({type:"SIGN_OUT"})}`,
+	"user-status-keep-on-error":       `async function RPb(a,b,c,d,f,g){var h=e,k=e;try{try{var {userStatus:l}=k(await h(a.getUserStatus()));f()||(l&&b(Xq(Opa(l,c))),l?.email||g?.())}catch(m){k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||(b(Xq(Wb(E.UserStatusSchema))),g?.())}}finally{h()}}` + "\n" + `function SPb(){var a=nk(),b=mk(),c=Pt,d=ok(ik),f=fd()?.core.authService,k=!1,l=void 0;(0,B.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(Xq(Wb(E.UserStatusSchema)));else{var p=!1,q=()=>p,t=()=>{ik(b.getState())?.state==="signedIn"&&f?.signOutIfServerHasNoCredential?.()};RPb(c,a,k,l,q,t);var u=setInterval(()=>{RPb(c,a,k,l,q,t)},6E5);return()=>{p=!0;clearInterval(u)}}},[a,c,d,f,b,k,l]);return null}`,
 	"bootstrap-local-user-info-retry": `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
 }
 
@@ -202,6 +203,8 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`OJ(a,b))},3E4)}else PJ(a)},
 2E3)}`,
 		`for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}`,
+		`catch(m){return k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||g?.(),!1}`,
+		`try{_ok=(await RPb(c,a,k,l,q,t))!==!1}catch{_ok=!1}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {

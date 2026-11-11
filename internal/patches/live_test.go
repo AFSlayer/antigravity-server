@@ -30,6 +30,11 @@ var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
 
+// userStatusNoResetOnErrorRe matches builds where UserStatusSync logs a failed getUserStatus call without wiping
+// Redux userStatus (2.28 and earlier, or a future build that drops the reset upstream). Anchoring from catch{ ensures a
+// reset moved before console.warn does not slip past the guard.
+var userStatusNoResetOnErrorRe = regexp.MustCompile(`catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+\(\)\s*[;,]\s*)?console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
+
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
 // so CI skips it and no part of Antigravity's bundle needs to live in this
@@ -102,6 +107,12 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// a moving reader without a word.
 	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !pagingTrimWaitsRe.Match(mainJS) {
 		t.Error("paging-trim-waits-for-still: the paging code is there but its update decision was not found; rows above drop while the reader scrolls")
+	}
+
+	// user-status-keep-on-error is optional for 2.28 and earlier, which did not clear userStatus in catch. A newer
+	// bundle whose UserStatusSync rewraps without matching would silently wipe loaded models on transient socket drops.
+	if !userStatusKeepOnErrorRe.Match(mainJS) && !userStatusNoResetOnErrorRe.Match(mainJS) {
+		t.Error("user-status-keep-on-error: UserStatusSync neither matches the patch nor leaves userStatus intact on fetch errors")
 	}
 
 	// mobile-home-new-conversation-row is optional for older bundles, and would fall back to the row in the list without

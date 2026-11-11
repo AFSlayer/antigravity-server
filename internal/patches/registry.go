@@ -97,7 +97,65 @@ var (
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
 	authStartupRetryRe                    = regexp.MustCompile(`(_authState\.state==="uninitialized"\)\{let [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);if\(([a-zA-Z0-9_$]+)>0&&[a-zA-Z0-9_$]+\)\{let [a-zA-Z0-9_$]+=4-[a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+\(await [a-zA-Z0-9_$]+\(new Promise\([a-zA-Z0-9_$]+=>\{setTimeout\([a-zA-Z0-9_$]+,1E3\*2\*\*[a-zA-Z0-9_$]+\)\}\)\)\);return ([a-zA-Z0-9_$]+)\.isLoggingOut\|\|[a-zA-Z0-9_$]+(?:\._currentSessionId|\.sessionTracker\.id)!==[a-zA-Z0-9_$]+\?void 0:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,)[a-zA-Z0-9_$]+-1(\)\})`)
+	userStatusKeepOnErrorRe               = regexp.MustCompile(
+		`catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*` +
+			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
+			`(!?\s*[a-zA-Z0-9_$]+\(\))\s*(\|\||&&)\s*` +
+			`(?:\(\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusSchemaDispatchExpr + `)\s*\}` +
+			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
+			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
+			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
+	)
 )
+
+const (
+	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
+	userStatusSyncCallExpr       = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+(?:\s*,\s*[a-zA-Z0-9_$]+){3,7}\s*\)`
+)
+
+func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar, callExpr, timerVar string) string {
+	return `catch(` + errVar + `){return ` + warnExpr + credCheck + `,!1}` +
+		bridge +
+		`let _agyRetry,_agyInFlight=!1,_agyDeferred=!1,_agyStale=!1,_agyQueued=!1,_agyFails=0,_agyLastOk=0,` +
+		`_agyHidden=()=>typeof document!=="undefined"&&document.visibilityState==="hidden",` +
+		`_agyRun=async _init=>{` +
+		`if(` + cancelVar + `||_agyInFlight)return;` +
+		`if(!_init&&_agyHidden()){_agyDeferred=!0;return}` +
+		`clearTimeout(_agyRetry);_agyRetry=void 0;_agyDeferred=!1;_agyStale=!1;_agyInFlight=!0;` +
+		`let _ok=!1;try{_ok=(await ` + callExpr + `)!==!1}catch{_ok=!1}` +
+		`_agyInFlight=!1;` +
+		`if(` + cancelVar + `)return;` +
+		`if(_agyQueued){` +
+		`_agyQueued=!1;` +
+		`if(_agyHidden()){_agyDeferred=!0;return}` +
+		`_agyFails=0;_agyRun(!1);return` +
+		`}` +
+		`if(!_ok){` +
+		`if(_agyHidden()){_agyDeferred=!0;return}` +
+		`_agyFails++;` +
+		`clearTimeout(_agyRetry);` +
+		`_agyRetry=setTimeout(()=>{_agyRetry=void 0;_agyRun(!1)},Math.min(6E4,1E3*(2**Math.min(_agyFails-1,6))))` +
+		`}else{_agyDeferred=!1;_agyFails=0;_agyLastOk=Date.now()}` +
+		`},` +
+		`_agyWake=_ev=>{` +
+		`if(` + cancelVar + `)return;` +
+		`if(_agyHidden()||_ev?.type==="pagehide"){if(_agyInFlight)_agyStale=!0;return}` +
+		`let _now=Date.now();` +
+		`if(_agyDeferred||_agyFails>0||_agyStale||_ev?.persisted||_ev?.type==="online"||_now<_agyLastOk||_now-_agyLastOk>=6E4){` +
+		`if(_agyInFlight){if(_agyStale||_ev?.type==="online"){_agyFails=0;_agyQueued=!0}}` +
+		`else{_agyFails=0;_agyRun(!1)}` +
+		`}` +
+		`};` +
+		`_agyRun(!0);` +
+		`var ` + timerVar + `=setInterval(()=>{_agyRun(!1)},6E5);` +
+		`typeof document!=="undefined"&&document.addEventListener&&document.addEventListener("visibilitychange",_agyWake);` +
+		`typeof window!=="undefined"&&window.addEventListener&&(window.addEventListener("pageshow",_agyWake),window.addEventListener("pagehide",_agyWake),window.addEventListener("online",_agyWake));` +
+		`return()=>{` +
+		cancelVar + `=!0;clearInterval(` + timerVar + `);clearTimeout(_agyRetry);` +
+		`typeof document!=="undefined"&&document.removeEventListener&&document.removeEventListener("visibilitychange",_agyWake);` +
+		`typeof window!=="undefined"&&window.removeEventListener&&(window.removeEventListener("pageshow",_agyWake),window.removeEventListener("pagehide",_agyWake),window.removeEventListener("online",_agyWake))` +
+		`}`
+}
 
 func mobile(o Options) bool { return o.MobileUX }
 
@@ -852,6 +910,41 @@ func All() []Patch {
 			Optional: true,
 			FindRe:   authStartupRetryRe,
 			Replace:  `${1}${2}>1?${2}-1:Date.now()<(${3}.__agyAuthRetryUntil??=Date.now()+3E5)?1:0${4}`,
+		},
+
+		// Since 2.29 UserStatusSync polls getUserStatus every ten minutes and wipes
+		// the Redux userStatus slice to an empty schema whenever that RPC throws.
+		// When an iOS PWA returns after ten to fifteen minutes in the background, the
+		// overdue timer fires on the closed WebSocket before the transport redials,
+		// clearing the model list and the selected model until the next ten-minute
+		// tick. Keep the previous userStatus on RPC errors (signedOut still clears it
+		// through its own branch and signOutIfServerHasNoCredential still runs when
+		// present), retry with exponential backoff, and refresh on foreground wake.
+		// Optional because builds up to 2.28 already leave userStatus untouched on
+		// errors; the live bundle test checks that one or the other holds.
+		{
+			ID:       "user-status-keep-on-error",
+			Desc:     "Keep loaded models and retry when a user-status refresh fails on a dropped socket",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   userStatusKeepOnErrorRe,
+			Replace:  renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${6}", "${7}", "${8}", "${9}"),
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				credCheck := ""
+				if g[5] != nil {
+					credCheck = "," + string(g[3]) + string(g[4]) + string(g[5])
+				}
+				return renderUserStatusKeepOnError(
+					string(g[1]),
+					string(g[2]),
+					credCheck,
+					string(g[6]),
+					string(g[7]),
+					string(g[8]),
+					string(g[9]),
+				)
+			},
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
