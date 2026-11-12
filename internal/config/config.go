@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,7 +46,17 @@ type Config struct {
 	// of the proxy that mishandles compressed frames.
 	DisableWSRelay bool `json:"-"`
 
-	dir string
+	// IDEVersionFromEnv records whether IDEVersion came from AGY_IDE_VERSION so
+	// automatic binary detection does not clobber an explicit environment override.
+	IDEVersionFromEnv bool `json:"-"`
+
+	// TrustedProxiesExplicit records whether trusted_proxies was explicitly configured
+	// via config.json, AGY_TRUSTED_PROXIES, or --trusted-proxies (including an empty
+	// value to disable automatic loopback proxy trust).
+	TrustedProxiesExplicit bool `json:"-"`
+
+	runtimeMu sync.RWMutex
+	dir       string
 }
 
 // Default returns the configuration used when nothing has been set.
@@ -72,14 +84,126 @@ func HomeDir() string {
 		return home
 	}
 	if runtime.GOOS == "windows" {
-		return os.Getenv("USERPROFILE")
+		if up := os.Getenv("USERPROFILE"); up != "" {
+			return up
+		}
+	} else if home := os.Getenv("HOME"); home != "" {
+		return home
 	}
-	return os.Getenv("HOME")
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	return ""
 }
 
 // GeminiDir is where Antigravity keeps its settings and OAuth token.
 func GeminiDir() string {
 	return filepath.Join(HomeDir(), ".gemini")
+}
+
+// NormalizeWorkspacePath expands a leading ~ to HomeDir() and resolves relative
+// paths to a clean absolute path so rules, uploads, and workspace picker checks
+// agree on the same directory root.
+func NormalizeWorkspacePath(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	expanded := trimmed
+	if trimmed == "~" {
+		if home := HomeDir(); home != "" {
+			expanded = home
+		}
+	} else if strings.HasPrefix(trimmed, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(trimmed, `~\`)) {
+		if home := HomeDir(); home != "" {
+			expanded = filepath.Join(home, trimmed[2:])
+		}
+	}
+	if abs, err := filepath.Abs(expanded); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(expanded)
+}
+
+// EffectiveWorkspaceRoot returns WorkspaceRoot when explicitly configured, or
+// falls back to ~/antigravity/workspace while preserving legacy ~/workspace
+// setups when ~/workspace already exists and ~/antigravity/workspace does not.
+func (c *Config) EffectiveWorkspaceRoot() string {
+	if c != nil && strings.TrimSpace(c.WorkspaceRoot) != "" {
+		return NormalizeWorkspacePath(c.WorkspaceRoot)
+	}
+	home := HomeDir()
+	if home == "" {
+		return ""
+	}
+	preferred := filepath.Join(home, "antigravity", "workspace")
+	if info, err := os.Stat(preferred); err == nil && info.IsDir() {
+		return preferred
+	}
+	legacy := filepath.Join(home, "workspace")
+	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+		return legacy
+	}
+	return preferred
+}
+
+// PatchWorkspaceRoot returns the workspace directory injected into the web
+// folder picker patch: an explicit WorkspaceRoot always wins, otherwise the
+// default EffectiveWorkspaceRoot is used when that directory exists on disk.
+func (c *Config) PatchWorkspaceRoot() string {
+	if c == nil {
+		return ""
+	}
+	if strings.TrimSpace(c.WorkspaceRoot) != "" {
+		return NormalizeWorkspacePath(c.WorkspaceRoot)
+	}
+	effective := c.EffectiveWorkspaceRoot()
+	if effective != "" {
+		if info, err := os.Stat(effective); err == nil && info.IsDir() {
+			return effective
+		}
+	}
+	return ""
+}
+
+// RuntimeIDEVersion reads IDEVersion safely across background updater goroutines.
+func (c *Config) RuntimeIDEVersion() string {
+	if c == nil {
+		return ""
+	}
+	c.runtimeMu.RLock()
+	defer c.runtimeMu.RUnlock()
+	return c.IDEVersion
+}
+
+// SetRuntimeIDEVersion updates IDEVersion safely across background updater goroutines.
+func (c *Config) SetRuntimeIDEVersion(v string) {
+	if c == nil {
+		return
+	}
+	c.runtimeMu.Lock()
+	c.IDEVersion = v
+	c.runtimeMu.Unlock()
+}
+
+// RuntimeLanguageServer reads LanguageServer safely across background updater goroutines.
+func (c *Config) RuntimeLanguageServer() string {
+	if c == nil {
+		return ""
+	}
+	c.runtimeMu.RLock()
+	defer c.runtimeMu.RUnlock()
+	return c.LanguageServer
+}
+
+// SetRuntimeLanguageServer updates LanguageServer safely across background updater goroutines.
+func (c *Config) SetRuntimeLanguageServer(p string) {
+	if c == nil {
+		return
+	}
+	c.runtimeMu.Lock()
+	c.LanguageServer = p
+	c.runtimeMu.Unlock()
 }
 
 // Dir is the data directory holding credentials and sessions.
@@ -135,6 +259,12 @@ func Load() (*Config, error) {
 		if err := json.Unmarshal(data, c); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", c.Path("config.json"), err)
 		}
+		var rawKeys map[string]json.RawMessage
+		if json.Unmarshal(data, &rawKeys) == nil {
+			if rawVal, ok := rawKeys["trusted_proxies"]; ok && strings.TrimSpace(string(rawVal)) != "null" {
+				c.TrustedProxiesExplicit = true
+			}
+		}
 		c.dir = DefaultDir()
 	} else if !os.IsNotExist(err) {
 		return nil, err
@@ -171,6 +301,7 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("AGY_IDE_VERSION"); v != "" {
 		c.IDEVersion = v
+		c.IDEVersionFromEnv = true
 	}
 	if v := os.Getenv("AGY_DISABLE_PATCHES"); v != "" {
 		c.DisabledPatches = splitList(v)
@@ -182,8 +313,9 @@ func (c *Config) applyEnv() {
 	case "off", "0", "false", "no":
 		c.DisableWSRelay = true
 	}
-	if v := os.Getenv("AGY_TRUSTED_PROXIES"); v != "" {
+	if v, ok := os.LookupEnv("AGY_TRUSTED_PROXIES"); ok {
 		c.TrustedProxies = splitList(v)
+		c.TrustedProxiesExplicit = true
 	}
 	if v := os.Getenv("AGY_SESSION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -203,16 +335,73 @@ func splitList(v string) []string {
 	return out
 }
 
-// Save writes config.json with owner-only permissions.
+type persistedConfig struct {
+	Port            int       `json:"port"`
+	BindAddr        string    `json:"bind_addr"`
+	PublicURL       string    `json:"public_url,omitempty"`
+	WorkspaceRoot   string    `json:"workspace_root,omitempty"`
+	SessionDays     int       `json:"session_days"`
+	TrustedProxies  *[]string `json:"trusted_proxies,omitempty"`
+	MobileUX        bool      `json:"mobile_ux"`
+	DisabledPatches []string  `json:"disabled_patches,omitempty"`
+	LanguageServer  string    `json:"language_server,omitempty"`
+	IDEVersion      string    `json:"ide_version,omitempty"`
+}
+
+// Save writes config.json atomically with owner-only permissions.
 func (c *Config) Save() error {
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	c.runtimeMu.RLock()
+	var tp *[]string
+	if len(c.TrustedProxies) > 0 || c.TrustedProxiesExplicit {
+		copied := make([]string, len(c.TrustedProxies))
+		copy(copied, c.TrustedProxies)
+		tp = &copied
+	}
+	disk := persistedConfig{
+		Port:            c.Port,
+		BindAddr:        c.BindAddr,
+		PublicURL:       c.PublicURL,
+		WorkspaceRoot:   c.WorkspaceRoot,
+		SessionDays:     c.SessionDays,
+		TrustedProxies:  tp,
+		MobileUX:        c.MobileUX,
+		DisabledPatches: c.DisabledPatches,
+		LanguageServer:  c.LanguageServer,
+		IDEVersion:      c.IDEVersion,
+	}
+	data, err := json.MarshalIndent(disk, "", "  ")
+	c.runtimeMu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.Path("config.json"), append(data, '\n'), 0o600)
+	data = append(data, '\n')
+
+	tmp, err := os.CreateTemp(c.dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, c.Path("config.json"))
 }
 
 // DisabledPatchSet turns DisabledPatches into a lookup for patches.Options.

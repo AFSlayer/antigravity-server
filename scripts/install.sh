@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO="AFSlayer/antigravity-server"
+RELEASES_URL="https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases"
 DOWNLOAD_PAGE="https://antigravity.google/download"
 
 DEFAULT_LS_DIR="/opt/agy-server"
@@ -59,7 +60,7 @@ Usage: install.sh [options]
 
   --domain HOST         Serve over HTTPS on this domain (sets up Caddy)
   --password SECRET     Access password (generated if omitted)
-  --workspace-root DIR  Where new projects are created (default \$HOME/workspace)
+  --workspace-root DIR  Where new projects are created (default \$HOME/antigravity/workspace)
   --port N              Local port for agy-server (default 8765)
   --prefix DIR          Where to install the agy-server binary (default /usr/local/bin)
   --ls-dir DIR          Where to install language_server (default $DEFAULT_LS_DIR)
@@ -92,6 +93,28 @@ done
 
 require() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed."
+}
+
+validate_domain() {
+  DOMAIN="${DOMAIN#"${DOMAIN%%[![:space:]]*}"}"
+  DOMAIN="${DOMAIN%"${DOMAIN##*[![:space:]]}"}"
+  [ -n "$DOMAIN" ] || return 0
+  case "$DOMAIN" in
+    *://*) die "Invalid domain '$DOMAIN': pass a bare hostname such as agy.example.com without http:// or https://." ;;
+  esac
+  if [ "${#DOMAIN}" -gt 253 ] || ! [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+    die "Invalid domain '$DOMAIN': expected a valid hostname."
+  fi
+}
+
+validate_options() {
+  if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    die "Invalid --port '$PORT': must be an integer between 1 and 65535."
+  fi
+  if ! [[ "$SERVICE_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    die "Invalid --service-name '$SERVICE_NAME': use only letters, digits, hyphens, and underscores."
+  fi
+  validate_domain
 }
 
 detect_platform() {
@@ -135,10 +158,42 @@ resolve_binary_url() {
   printf 'https://github.com/%s/releases/latest/download/agy-server_linux_%s.tar.gz' "$REPO" "$ARCH"
 }
 
+resolve_hub_url_from_releases() {
+  local feed_url="$1" json first ver eid
+  json="$(curl -fsSL --compressed "$feed_url" 2>/dev/null || true)"
+  [ -n "$json" ] || return 1
+  first="$(printf '%s' "$json" | tr -d '\r\n' | grep -oE '\{[^{}]*\}' | head -1 || true)"
+  [ -n "$first" ] || return 1
+  ver="$(printf '%s' "$first" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+(\.[0-9]+)*)".*/\1/p')"
+  eid="$(printf '%s' "$first" | sed -nE 's/.*"execution_id"[[:space:]]*:[[:space:]]*"([0-9]+)".*/\1/p')"
+  if [ -n "$ver" ] && [ -n "$eid" ]; then
+    printf 'https://storage.googleapis.com/antigravity-public/antigravity-hub/%s-%s/%s/Antigravity.tar.gz' "$ver" "$eid" "$HUB_SLUG"
+    return 0
+  fi
+  return 1
+}
+
 resolve_hub_url() {
-  curl -fsSL --compressed "$DOWNLOAD_PAGE" |
-    grep -oE "https://storage\.googleapis\.com/antigravity-public/antigravity-hub/[^\"'<> ]+/${HUB_SLUG}/Antigravity\.tar\.gz" |
-    head -1
+  local resolved html dyn_url
+  if resolved="$(resolve_hub_url_from_releases "$RELEASES_URL")" && [ -n "$resolved" ]; then
+    printf '%s' "$resolved"
+    return
+  fi
+
+  html="$(curl -fsSL --compressed "$DOWNLOAD_PAGE" 2>/dev/null || true)"
+  [ -n "$html" ] || return 0
+
+  dyn_url="$(printf '%s' "$html" | grep -oE 'https://antigravity-hub-auto-updater-[a-z0-9-]+\.[a-z0-9.-]+\.run\.app/releases' | head -1 || true)"
+  if [ -n "$dyn_url" ] && [ "$dyn_url" != "$RELEASES_URL" ]; then
+    if resolved="$(resolve_hub_url_from_releases "$dyn_url")" && [ -n "$resolved" ]; then
+      printf '%s' "$resolved"
+      return
+    fi
+  fi
+
+  printf '%s' "$html" |
+    grep -oE "https://storage\.googleapis\.com/antigravity-public/antigravity-hub/[0-9][0-9.]*-[0-9]+/${HUB_SLUG}/Antigravity\.tar\.gz" |
+    head -1 || true
 }
 
 hub_version() {
@@ -170,31 +225,70 @@ install_agy_server() {
   fi
 }
 
+reject_symlink_ls_paths() {
+  local dir="$1"
+  [ ! -L "$dir" ] || die "Refusing to use symlinked language_server directory: $dir"
+  [ ! -L "$dir/language_server" ] || die "Refusing to operate on symlink: $dir/language_server"
+  [ ! -L "$dir/language_server.bak" ] || die "Refusing to operate on symlink: $dir/language_server.bak"
+}
+
+chown_ls_target() {
+  reject_symlink_ls_paths "$LS_DIR"
+  local owner
+  owner="$(id -un):$(id -gn)"
+  if [ "$LS_DIR" = "$DEFAULT_LS_DIR" ] || [ "$LS_DIR" = "$LEGACY_LS_DIR" ] || [ "${LS_DIR_CREATED:-no}" = "yes" ]; then
+    sudo_run chown -h "$owner" "$LS_DIR" 2>/dev/null || true
+  fi
+  if [ -e "$LS_DIR/language_server" ] && [ ! -L "$LS_DIR/language_server" ]; then
+    sudo_run chown -h "$owner" "$LS_DIR/language_server" 2>/dev/null || true
+  fi
+  if [ -e "$LS_DIR/language_server.bak" ] && [ ! -L "$LS_DIR/language_server.bak" ]; then
+    sudo_run chown -h "$owner" "$LS_DIR/language_server.bak" 2>/dev/null || true
+  fi
+}
+
+default_workspace_root() {
+  local cfg_dir="${AGY_HOME:-$HOME/.agy-remote}"
+  local cfg_file="$cfg_dir/config.json"
+  if [ -f "$cfg_file" ]; then
+    local existing=""
+    if command -v python3 >/dev/null 2>&1; then
+      existing="$(python3 -c 'import json,sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        v = json.load(f).get("workspace_root", "")
+        if isinstance(v, str):
+            sys.stdout.write(v)
+except Exception:
+    pass' "$cfg_file" 2>/dev/null || true)"
+    else
+      existing="$(sed -nE 's/.*"workspace_root"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' "$cfg_file" | head -1 | sed 's/\\"/"/g; s/\\\//\//g; s/\\\\/\\/g')"
+    fi
+    if [ -n "$existing" ]; then
+      printf '%s' "$existing"
+      return
+    fi
+  fi
+  if [ ! -d "$HOME/antigravity/workspace" ] && [ -d "$HOME/workspace" ]; then
+    printf '%s' "$HOME/workspace"
+    return
+  fi
+  printf '%s' "$HOME/antigravity/workspace"
+}
+
 install_language_server() {
+  reject_symlink_ls_paths "$LS_DIR"
   if [ -x "$LS_DIR/language_server" ]; then
     ok "language_server already present at $LS_DIR/language_server"
-    if [ -z "${IDE_VERSION:-}" ]; then
-      local hub_url
-      hub_url="$(resolve_hub_url 2>/dev/null || true)"
-      if [ -n "$hub_url" ]; then
-        IDE_VERSION="$(hub_version "$hub_url")"
-      fi
-    fi
-    sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR" 2>/dev/null || true
+    chown_ls_target
     return
   fi
 
-  if [ "$LS_DIR_EXPLICIT" = "no" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
+  if [ "$LS_DIR_EXPLICIT" = "no" ] && [ ! -L "$LEGACY_LS_DIR" ] && [ ! -L "$LEGACY_LS_DIR/language_server" ] && [ -x "$LEGACY_LS_DIR/language_server" ]; then
+    reject_symlink_ls_paths "$LEGACY_LS_DIR"
     LS_DIR="$LEGACY_LS_DIR"
     ok "Reusing language_server from $LS_DIR"
-    if [ -z "${IDE_VERSION:-}" ]; then
-      local hub_url
-      hub_url="$(resolve_hub_url 2>/dev/null || true)"
-      if [ -n "$hub_url" ]; then
-        IDE_VERSION="$(hub_version "$hub_url")"
-      fi
-    fi
-    sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR" 2>/dev/null || true
+    chown_ls_target
     return
   fi
 
@@ -213,13 +307,28 @@ install_language_server() {
     die "Could not download the Antigravity build."
 
   say "Extracting language_server…"
-  tar -xzf "$tmp/Antigravity.tar.gz" -C "$tmp" --wildcards --strip-components=3 \
-    'Antigravity-*/resources/bin/language_server' ||
+  local archive_member
+  archive_member="$(
+    tar -tzf "$tmp/Antigravity.tar.gz" | awk '
+      !found && /(^|\/)resources\/bin\/language_server$/ { found = $0 }
+      !fallback && /(^|\/)language_server(_linux_(x64|arm64))?$/ { fallback = $0 }
+      END { if (found != "") print found; else if (fallback != "") print fallback }
+    '
+  )" || die "Could not inspect the Antigravity archive."
+  [ -n "$archive_member" ] || die "Could not find language_server inside the archive."
+  tar -xzf "$tmp/Antigravity.tar.gz" -O "$archive_member" >"$tmp/language_server" ||
     die "Could not extract language_server from the archive."
+  [ -s "$tmp/language_server" ] ||
+    die "Extracted language_server binary is empty."
 
+  reject_symlink_ls_paths "$LS_DIR"
+  if [ ! -d "$LS_DIR" ]; then
+    LS_DIR_CREATED="yes"
+  fi
   sudo_run install -d "$LS_DIR"
+  reject_symlink_ls_paths "$LS_DIR"
   sudo_run install -m 0755 "$tmp/language_server" "$LS_DIR/language_server"
-  sudo_run chown -R "$(id -un):$(id -gn)" "$LS_DIR"
+  chown_ls_target
   ok "Installed $LS_DIR/language_server"
 
   IDE_VERSION="$version"
@@ -229,23 +338,35 @@ write_config() {
   local args=(config --port "$PORT" --language-server "$LS_DIR/language_server")
 
   if [ -n "$WORKSPACE_ROOT" ]; then
+    # shellcheck disable=SC2088
+    case "$WORKSPACE_ROOT" in
+      "~") WORKSPACE_ROOT="$HOME" ;;
+      "~/"*) WORKSPACE_ROOT="$HOME/${WORKSPACE_ROOT#\~/}" ;;
+    esac
     args+=(--workspace-root "$WORKSPACE_ROOT")
   fi
   if [ -n "$DOMAIN" ]; then
-    args+=(--public-url "https://$DOMAIN" --trusted-proxies "127.0.0.1/32,::1/128")
+    args+=(--public-url "https://$DOMAIN")
   fi
 
-  mkdir -p "${WORKSPACE_ROOT:-$HOME/workspace}"
+  mkdir -p "${WORKSPACE_ROOT:-$HOME/antigravity/workspace}"
 
   AGY_IDE_VERSION="${IDE_VERSION:-}" "$PREFIX/agy-server" "${args[@]}" >/dev/null
-  ok "Wrote $HOME/.agy-remote/config.json"
+  ok "Wrote ${AGY_HOME:-$HOME/.agy-remote}/config.json"
 }
 
 set_password() {
+  local creds_file="${AGY_HOME:-$HOME/.agy-remote}/credentials.json"
+  if [ -z "$PASSWORD" ] && [ -s "$creds_file" ]; then
+    ok "Access password unchanged"
+    return
+  fi
   if [ -z "$PASSWORD" ]; then
-    PASSWORD="$("$PREFIX/agy-server" passwd '' 2>/dev/null)"
+    PASSWORD="$("$PREFIX/agy-server" passwd '' 2>/dev/null)" ||
+      die "Could not generate an initial access password."
   else
-    "$PREFIX/agy-server" passwd "$PASSWORD" >/dev/null 2>&1
+    printf '%s\n' "$PASSWORD" | "$PREFIX/agy-server" passwd --stdin >/dev/null ||
+      die "Could not set the access password."
   fi
   ok "Access password set"
 }
@@ -264,8 +385,23 @@ disable_legacy_service() {
   ok "Stopped the older $LEGACY_NAME service"
 }
 
+systemd_quote() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//%/%%}"
+  printf '"%s"' "$s"
+}
+
 install_service() {
   local unit="/etc/systemd/system/${SERVICE_NAME}.service"
+  local home_env work_dir exec_bin extra_env=""
+  home_env="Environment=$(systemd_quote "HOME=$HOME")"
+  work_dir="$(systemd_quote "$HOME")"
+  exec_bin="$(systemd_quote "$PREFIX/agy-server")"
+  if [ -n "${AGY_HOME:-}" ]; then
+    extra_env=$'\n'"Environment=$(systemd_quote "AGY_HOME=$AGY_HOME")"
+  fi
 
   sudo_run tee "$unit" >/dev/null <<EOF
 [Unit]
@@ -276,9 +412,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$(id -un)
-Environment=HOME=$HOME
-WorkingDirectory=$HOME
-ExecStart=$PREFIX/agy-server serve
+${home_env}${extra_env}
+WorkingDirectory=${work_dir}
+ExecStart=${exec_bin} serve
 Restart=always
 RestartSec=5
 KillMode=mixed
@@ -340,6 +476,7 @@ main() {
   printf '\n  %sAntigravity Server installer%s\n' "$BOLD" "$OFF"
 
   detect_platform
+  validate_options
   require curl
   require tar
 
@@ -349,9 +486,10 @@ main() {
   heading "Setup"
   if [ -z "$DOMAIN" ]; then
     DOMAIN="$(ask 'Domain for HTTPS (blank to skip)' '')"
+    validate_domain
   fi
   if [ -z "$WORKSPACE_ROOT" ]; then
-    WORKSPACE_ROOT="$(ask 'Workspace folder' "$HOME/workspace")"
+    WORKSPACE_ROOT="$(ask 'Workspace folder' "$(default_workspace_root)")"
   fi
 
   heading "Downloading"
@@ -389,17 +527,9 @@ main() {
     say "               tunnel if you are connecting from outside the network${OFF}"
   fi
 
-  if [ ! -s "$HOME/.gemini/jetski-standalone-oauth-token" ]; then
-    printf '\n'
-    warn "This machine is not signed in to Antigravity yet."
-    say "${DIM}Antigravity signs in through a localhost callback, which a remote"
-    say "server cannot receive. Copy the token from a computer where you already"
-    say "use the Antigravity desktop app:${OFF}"
-    printf '\n'
-    say "  ${CYAN}scp ~/.gemini/jetski-standalone-oauth-token $(id -un)@$(hostname):~/.gemini/${OFF}"
-    printf '\n'
-    say "${DIM}Then: sudo systemctl restart ${SERVICE_NAME}${OFF}"
-  fi
+  printf '\n'
+  say "Sign in        Open ${CYAN}/__agy/signin${OFF} in your browser after entering the access password"
+  say "               ${DIM}to complete Google account sign-in directly from the web UI.${OFF}"
 
   printf '\n  %sLogs%s   sudo journalctl -u %s -f\n' "$DIM" "$OFF" "$SERVICE_NAME"
   printf '  %sCheck%s  agy-server doctor\n\n' "$DIM" "$OFF"

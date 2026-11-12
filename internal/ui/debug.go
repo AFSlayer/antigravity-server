@@ -2,6 +2,7 @@ package ui
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -22,11 +23,14 @@ const (
 // Debug appends client traces to a log file. It is only constructed when
 // AGY_DEBUG is set, so the route does not exist in a normal run.
 type Debug struct {
-	path string
+	path      string
+	trusted   []*net.IPNet
+	publicURL string
 
 	mu      sync.Mutex
 	file    *os.File
 	written int64
+	closed  bool
 }
 
 // NewDebug opens path for appending.
@@ -38,6 +42,13 @@ func NewDebug(path string) (*Debug, error) {
 	return d, nil
 }
 
+// WithSameOrigin configures reverse-proxy origin verification to match Authenticator.
+func (d *Debug) WithSameOrigin(trusted []*net.IPNet, publicURL string) *Debug {
+	d.trusted = trusted
+	d.publicURL = publicURL
+	return d
+}
+
 // Register mounts the collector on mux.
 func (d *Debug) Register(mux *http.ServeMux) {
 	mux.HandleFunc(DebugLogPath, d.collect)
@@ -45,6 +56,19 @@ func (d *Debug) Register(mux *http.ServeMux) {
 
 // Path is where traces land, so the startup banner can point at it.
 func (d *Debug) Path() string { return d.path }
+
+// Close releases the underlying debug log file handle.
+func (d *Debug) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.closed = true
+	if d.file == nil {
+		return nil
+	}
+	err := d.file.Close()
+	d.file = nil
+	return err
+}
 
 func (d *Debug) open(truncate bool) error {
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
@@ -68,7 +92,7 @@ func (d *Debug) open(truncate bool) error {
 }
 
 func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
-	if !isPost(w, r) {
+	if !isPublicPost(w, r, d.trusted, d.publicURL) {
 		return
 	}
 
@@ -86,6 +110,11 @@ func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if d.closed || d.file == nil {
+		http.Error(w, "closed", http.StatusServiceUnavailable)
+		return
+	}
 
 	// The traces are verbose by design; recycling the file keeps a long session
 	// from filling the disk.

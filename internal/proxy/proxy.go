@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
 
@@ -37,6 +38,7 @@ type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
 	PublicURL       string
+	TrustedProxies  []*net.IPNet
 	// DisableWSRelay passes the RPC WebSocket through untouched instead of
 	// terminating and compressing it in the proxy.
 	DisableWSRelay bool
@@ -46,16 +48,18 @@ type Options struct {
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
-	handler        *httputil.ReverseProxy
-	transport      *http.Transport
-	target         *url.URL
-	opts           Options
-	reported       sync.Map
-	activeConns    atomic.Int64
-	lastActivityNs atomic.Int64
-	mainJSMu       sync.RWMutex
-	cachedMainJS   []byte
-	cachedMainTag  string
+	handler             *httputil.ReverseProxy
+	transport           *http.Transport
+	target              *url.URL
+	opts                Options
+	reported            sync.Map
+	activeConns         atomic.Int64
+	activeHTTPReqs      atomic.Int64
+	activePassthroughWS atomic.Int64
+	lastActivityNs      atomic.Int64
+	mainJSMu            sync.RWMutex
+	cachedMainJS        []byte
+	cachedMainTag       string
 
 	htmlMu              sync.RWMutex
 	cachedHTML          []byte
@@ -89,13 +93,16 @@ func New(opts Options) (*Proxy, error) {
 	host := target.Host
 	base := rp.Director
 	rp.Director = func(req *http.Request) {
-		if orig := req.Header.Get("Origin"); orig != "" {
+		req.Header.Del("X-Original-Origin")
+		if orig := strings.TrimSpace(req.Header.Get("Origin")); orig != "" && p.sameOriginRequest(req) {
 			req.Header.Set("X-Original-Origin", orig)
 		}
-		if clientHost := req.Header.Get("X-Forwarded-Host"); clientHost != "" {
+		if clientHost := p.trustedForwardedHost(req); clientHost != "" {
 			req.Header.Set("X-Client-Host", clientHost)
-		} else if req.Host != "" {
-			req.Header.Set("X-Client-Host", req.Host)
+		} else if safeHost := auth.SanitizeHostPort(req.Host); safeHost != "" {
+			req.Header.Set("X-Client-Host", safeHost)
+		} else {
+			req.Header.Del("X-Client-Host")
 		}
 		base(req)
 		req.Host = host
@@ -124,19 +131,37 @@ func New(opts Options) (*Proxy, error) {
 // Handler returns the HTTP handler to mount, tracking in-flight streams and activity for idle detection.
 func (p *Proxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isWS := isWebSocketUpgrade(r)
+		isRelayWS := isWS && r.URL.Path == relayPath && !p.opts.DisableWSRelay
+		isPassthroughWS := isWS && !isRelayWS
 		p.activeConns.Add(1)
+		if !isWS {
+			p.activeHTTPReqs.Add(1)
+		} else if isPassthroughWS {
+			p.activePassthroughWS.Add(1)
+		}
 		p.touchActivity()
 		defer func() {
+			if !isWS {
+				p.activeHTTPReqs.Add(-1)
+				p.touchActivity()
+			} else if isPassthroughWS {
+				p.activePassthroughWS.Add(-1)
+				p.touchActivity()
+			}
 			p.activeConns.Add(-1)
-			p.touchActivity()
 		}()
 
-		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
+		if isWS && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
 			return
 		}
+		if !isWS && isStateChangingHTTP(r.Method) && !p.sameOriginRequest(r) {
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return
+		}
 
-		if isWebSocketUpgrade(r) && r.URL.Path == relayPath && !p.opts.DisableWSRelay {
+		if isRelayWS {
 			p.relayWebSocket(w, r)
 			return
 		}
@@ -197,10 +222,11 @@ func (p *Proxy) LastActivity() time.Time {
 	return time.Unix(0, ns)
 }
 
-// IsIdle returns true if there are zero active connections and no request activity has occurred
-// for at least the specified threshold duration.
+// IsIdle returns true if there are zero active HTTP requests or pass-through
+// WebSockets and no request or WebSocket data frame activity has occurred for
+// at least the specified threshold duration.
 func (p *Proxy) IsIdle(threshold time.Duration) bool {
-	if p.activeConns.Load() != 0 {
+	if p.activeHTTPReqs.Load() != 0 || p.activePassthroughWS.Load() != 0 {
 		return false
 	}
 	last := p.LastActivity()
@@ -208,6 +234,15 @@ func (p *Proxy) IsIdle(threshold time.Duration) bool {
 		return true
 	}
 	return time.Since(last) >= threshold
+}
+
+func isStateChangingHTTP(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	default:
+		return true
+	}
 }
 
 func wantsPatch(req *http.Request) bool {
@@ -243,20 +278,17 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
 			orig := resp.Request.Header.Get("X-Original-Origin")
 			if orig == "" {
-				proto := resp.Request.Header.Get("X-Forwarded-Proto")
-				if proto == "" {
+				proto := "http"
+				if auth.RequestIsSecure(resp.Request, p.opts.TrustedProxies) {
 					proto = "https"
 				}
-				host := resp.Request.Header.Get("X-Forwarded-Host")
-				if host == "" {
-					host = resp.Request.Header.Get("X-Client-Host")
+				if host := auth.SanitizeHostPort(resp.Request.Header.Get("X-Client-Host")); host != "" {
+					orig = proto + "://" + host
 				}
-				if host == "" {
-					host = resp.Request.Host
-				}
-				orig = proto + "://" + host
 			}
-			resp.Header.Set("Access-Control-Allow-Origin", orig)
+			if orig != "" {
+				resp.Header.Set("Access-Control-Allow-Origin", orig)
+			}
 		}
 	}
 
@@ -337,7 +369,15 @@ const prewarmTimeout = 30 * time.Second
 // hand over the roughly 9 MB bundle and for the regexp patches to run over it,
 // which takes several seconds on top of the download itself.
 func (p *Proxy) Prewarm() error {
-	ctx, cancel := context.WithTimeout(context.Background(), prewarmTimeout)
+	return p.PrewarmContext(context.Background())
+}
+
+// PrewarmContext is Prewarm bounded by the caller's lifecycle context.
+func (p *Proxy) PrewarmContext(parent context.Context) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, prewarmTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.target.String()+"/main.js", nil)
@@ -358,6 +398,13 @@ func (p *Proxy) Prewarm() error {
 		return fmt.Errorf("language server answered %s for /main.js", resp.Status)
 	}
 	return p.modifyResponse(resp)
+}
+
+// Close releases idle upstream transport connections when a proxy instance is retired.
+func (p *Proxy) Close() {
+	if p != nil && p.transport != nil {
+		p.transport.CloseIdleConnections()
+	}
 }
 
 // transportPatchMissing reports whether the WebSocket transport patch was
@@ -464,6 +511,14 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
+func (p *Proxy) sameOriginRequest(r *http.Request) bool {
+	ok, unverified := auth.CheckSameOrigin(r, p.opts.TrustedProxies, p.opts.PublicURL)
+	if ok && unverified {
+		auth.WarnUnverifiedOriginFallback()
+	}
+	return ok
+}
+
 // sameOriginUpgrade rejects cross-origin WebSocket handshakes. The Director
 // rewrites Origin to the loopback target, which disables the language
 // server's own Origin check, and browsers apply no CORS to WebSockets, so a
@@ -472,82 +527,26 @@ func isWebSocketUpgrade(r *http.Request) bool {
 //
 // When the reverse proxy forwards neither Host nor X-Forwarded-Host, only
 // loopback names are left to compare against; the check is skipped with a
-// warning rather than breaking every handshake.
+// warning only when Sec-Fetch-Site does not contradict same-origin.
 func (p *Proxy) sameOriginUpgrade(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
-		log.Printf("[proxy] rejecting WebSocket upgrade: malformed Origin %q", origin)
+		log.Printf("[proxy] rejected WebSocket upgrade with missing Origin header: Sec-Fetch-Site=%q Host=%q X-Forwarded-Host=%q", r.Header.Get("Sec-Fetch-Site"), r.Host, r.Header.Get("X-Forwarded-Host"))
 		return false
 	}
-	originHost := u.Hostname()
-	originPort := u.Port()
-	if originPort == "" {
-		if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
-			originPort = "443"
-		} else if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "ws") {
-			originPort = "80"
+	ok, unverified := auth.CheckSameOrigin(r, p.opts.TrustedProxies, p.opts.PublicURL)
+	if ok {
+		if unverified {
+			log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
 		}
-	}
-
-	candidates := []string{
-		r.Host,
-		firstValue(r.Header.Get("X-Forwarded-Host")),
-	}
-	if p.opts.PublicURL != "" {
-		if pu, err := url.Parse(p.opts.PublicURL); err == nil && pu.Host != "" {
-			candidates = append(candidates, pu.Host)
-		}
-	}
-
-	verifiable := false
-	for _, h := range candidates {
-		candHost, candPort := splitHostMaybePort(h)
-		if candHost == "" {
-			continue
-		}
-		if strings.EqualFold(candHost, originHost) {
-			if candPort == "" || candPort == originPort {
-				return true
-			}
-		}
-		if !isLoopbackName(candHost) {
-			verifiable = true
-		}
-	}
-
-	if !verifiable {
-		log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
 		return true
 	}
-
-	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q does not match Host=%q or X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Host, r.Header.Get("X-Forwarded-Host"))
+	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q Sec-Fetch-Site=%q Host=%q X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Header.Get("Sec-Fetch-Site"), r.Host, r.Header.Get("X-Forwarded-Host"))
 	return false
 }
 
-func splitHostMaybePort(hostport string) (string, string) {
-	if h, port, err := net.SplitHostPort(hostport); err == nil {
-		return h, port
-	}
-	return strings.Trim(hostport, "[]"), ""
-}
-
-func firstValue(v string) string {
-	if i := strings.IndexByte(v, ','); i >= 0 {
-		v = v[:i]
-	}
-	return strings.TrimSpace(v)
-}
-
-func isLoopbackName(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+func (p *Proxy) trustedForwardedHost(r *http.Request) string {
+	return auth.TrustedForwardedHost(r, p.opts.TrustedProxies)
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {
