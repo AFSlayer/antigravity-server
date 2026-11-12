@@ -49,9 +49,14 @@ type Options struct {
 	// IsReservedPort reports whether port belongs to agy-server, the language
 	// server, or an active sidecar and must never be reachable via FetchAPIPath.
 	IsReservedPort func(ctx context.Context, port int) bool
-	// AllowOAuthPort reports whether port is an unreserved listener owned by the
-	// language server process tree and may receive an OAuth callback GET.
-	AllowOAuthPort func(ctx context.Context, port int) bool
+	// ResolveFetchTarget verifies that port is an unreserved listener of the
+	// language server's process tree, such as a dev server the agent started,
+	// and returns the loopback IP literal ("127.0.0.1" or "::1") it listens on.
+	// FetchAPIPath serves only such ports: a preview page's scripts can ask for
+	// any port, and must not reach other services on the host. Any other port
+	// is reported as having no listener without being dialed. Without a
+	// resolver, no port is served.
+	ResolveFetchTarget func(ctx context.Context, port int) (dialHost string, allowed bool)
 	// ResolveOAuthTarget verifies that port is an unreserved listener owned by
 	// the language server process tree and returns the exact loopback IP literal
 	// ("127.0.0.1" or "::1") to dial for urlHost without cross-family fallback.
@@ -63,7 +68,7 @@ type Handler struct {
 	trusted            []*net.IPNet
 	publicURL          string
 	isReservedPort     func(ctx context.Context, port int) bool
-	allowOAuthPort     func(ctx context.Context, port int) bool
+	resolveFetchTarget func(ctx context.Context, port int) (string, bool)
 	resolveOAuthTarget func(ctx context.Context, port int, urlHost string) (string, bool)
 	transport          *http.Transport
 	oauthTransport     *http.Transport
@@ -85,7 +90,7 @@ func New(opts Options) *Handler {
 		MaxIdleConnsPerHost:   8,
 		IdleConnTimeout:       60 * time.Second,
 		ResponseHeaderTimeout: fetchTimeout,
-		DialContext:           dialLoopbackOnly,
+		DialContext:           dialLoopbackExact,
 	}
 	oauthTr := &http.Transport{
 		MaxIdleConns:          16,
@@ -98,7 +103,7 @@ func New(opts Options) *Handler {
 		trusted:            opts.Trusted,
 		publicURL:          opts.PublicURL,
 		isReservedPort:     opts.IsReservedPort,
-		allowOAuthPort:     opts.AllowOAuthPort,
+		resolveFetchTarget: opts.ResolveFetchTarget,
 		resolveOAuthTarget: opts.ResolveOAuthTarget,
 		transport:          tr,
 		oauthTransport:     oauthTr,
@@ -252,6 +257,18 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "port is reserved by Antigravity", http.StatusForbidden)
 		return
 	}
+	dialHost, served := "", false
+	if h.resolveFetchTarget != nil {
+		dialHost, served = h.resolveFetchTarget(ctx, req.Port)
+	}
+	if !served || (dialHost != "127.0.0.1" && dialHost != "::1") {
+		// Answer as if nothing listened, which lets the preview offer to
+		// start the server and retry. Nothing is dialed, so the answer is the
+		// same whether or not another service holds the port, and a preview
+		// page cannot use it to map the host's open ports.
+		writeJSON(w, http.StatusOK, fetchResponse{NoListener: true})
+		return
+	}
 
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
@@ -295,7 +312,7 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		bodyReader = bytes.NewReader(reqBody)
 	}
 
-	targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", req.Port, reqPath)
+	targetURL := fmt.Sprintf("http://%s%s", net.JoinHostPort(dialHost, strconv.Itoa(req.Port)), reqPath)
 	outReq, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
 	if err != nil {
 		http.Error(w, "invalid upstream request", http.StatusBadRequest)
@@ -303,7 +320,7 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	outReq.Host = fmt.Sprintf("localhost:%d", req.Port)
 	outReq.ContentLength = int64(len(reqBody))
-	sanitizeFetchHeaders(outReq.Header, req.Headers)
+	sanitizeFetchHeaders(outReq.Header, req.Headers, req.Port)
 
 	resp, err := h.client.Do(outReq)
 	if err != nil {
@@ -407,29 +424,14 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), oauthTimeout)
 	defer cancel()
 
-	dialHost := "127.0.0.1"
-	doClient := h.oauthClient
-	if h.resolveOAuthTarget != nil {
-		resolvedHost, ok := h.resolveOAuthTarget(ctx, port, host)
-		if !ok || (resolvedHost != "127.0.0.1" && resolvedHost != "::1") {
-			writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
-			return
-		}
-		dialHost = resolvedHost
-	} else {
-		if h.allowOAuthPort == nil || !h.allowOAuthPort(ctx, port) {
-			writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
-			return
-		}
-		switch host {
-		case "::1":
-			dialHost = "::1"
-		case "127.0.0.1":
-			dialHost = "127.0.0.1"
-		default:
-			dialHost = "127.0.0.1"
-			doClient = h.client
-		}
+	if h.resolveOAuthTarget == nil {
+		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
+		return
+	}
+	dialHost, ok := h.resolveOAuthTarget(ctx, port, host)
+	if !ok || (dialHost != "127.0.0.1" && dialHost != "::1") {
+		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
+		return
 	}
 
 	targetURL := fmt.Sprintf("http://%s%s", net.JoinHostPort(dialHost, strconv.Itoa(port)), escapedPath)
@@ -445,7 +447,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	outReq.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	outReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
 
-	resp, err := doClient.Do(outReq)
+	resp, err := h.oauthClient.Do(outReq)
 	if err != nil {
 		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
 		return
@@ -457,29 +459,6 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Delivered:  true,
 		StatusCode: resp.StatusCode,
 	})
-}
-
-func dialLoopbackOnly(ctx context.Context, network, addr string) (net.Conn, error) {
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("invalid loopback port %q", portStr)
-	}
-
-	dialer := &net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	if err == nil {
-		return conn, nil
-	}
-	if isConnRefused(err) {
-		if conn6, err6 := dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port))); err6 == nil {
-			return conn6, nil
-		}
-	}
-	return nil, err
 }
 
 func dialLoopbackExact(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -534,7 +513,7 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.RawStdEncoding.DecodeString(s)
 }
 
-func sanitizeFetchHeaders(dst http.Header, entries []headerEntry) {
+func sanitizeFetchHeaders(dst http.Header, entries []headerEntry, port int) {
 	for _, e := range entries {
 		name := strings.TrimSpace(e.Name)
 		if !isValidHeaderName(name) || hasInvalidHeaderValue(e.Value) {
@@ -550,14 +529,15 @@ func sanitizeFetchHeaders(dst http.Header, entries []headerEntry) {
 				dst.Add("Cookie", cleaned)
 			}
 		case "origin":
-			// Forward Origin only if the caller explicitly specified a loopback
-			// origin; never synthesize http://localhost:<port> for cross-origin
-			// callers, which would bypass Origin-based CSRF checks on local daemons.
-			if isLoopbackOriginURL(e.Value) {
+			// Forward Origin only when it is the target's own loopback origin,
+			// which is what a page served from that port sends. Any other
+			// origin, even another loopback port, would let a preview page
+			// pass the Origin-based CSRF checks of a different local service.
+			if isLoopbackOriginForPort(e.Value, port) {
 				dst.Set("Origin", strings.TrimSpace(e.Value))
 			}
 		case "referer":
-			if isLoopbackOriginURL(e.Value) {
+			if isLoopbackOriginForPort(e.Value, port) {
 				dst.Set("Referer", strings.TrimSpace(e.Value))
 			}
 		default:
@@ -617,13 +597,24 @@ func hasInvalidHeaderValue(s string) bool {
 	return false
 }
 
-func isLoopbackOriginURL(raw string) bool {
+// isLoopbackOriginForPort reports whether raw is a loopback URL on port.
+func isLoopbackOriginForPort(raw string, port int) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
-	return h == "localhost" || h == "127.0.0.1" || h == "::1"
+	if h != "localhost" && h != "127.0.0.1" && h != "::1" {
+		return false
+	}
+	urlPort := u.Port()
+	if urlPort == "" {
+		urlPort = "80"
+		if strings.EqualFold(u.Scheme, "https") {
+			urlPort = "443"
+		}
+	}
+	return urlPort == strconv.Itoa(port)
 }
 
 func stripProtectedCookies(raw string) string {

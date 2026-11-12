@@ -501,23 +501,6 @@ func ListeningPortsContext(ctx context.Context, pid int) ([]int, error) {
 	return listeningPortsContext(cctx, pid)
 }
 
-// ProcessTreeListeningPorts returns the TCP ports currently in LISTEN state
-// owned by rootPID or any of its descendant processes.
-func ProcessTreeListeningPorts(rootPID int) ([]int, error) {
-	return ProcessTreeListeningPortsContext(context.Background(), rootPID)
-}
-
-// ProcessTreeListeningPortsContext returns the TCP ports currently in LISTEN state
-// owned by rootPID or any of its descendant processes.
-func ProcessTreeListeningPortsContext(ctx context.Context, rootPID int) ([]int, error) {
-	if rootPID <= 0 {
-		return nil, errors.New("invalid root pid")
-	}
-	cctx, cancel := discoveryContext(ctx)
-	defer cancel()
-	return processTreeListeningPorts(cctx, rootPID)
-}
-
 // ProcessTreeListeningEndpoints returns the loopback-accessible TCP ports in
 // LISTEN state owned by rootPID or any of its descendants, paired with the
 // loopback address families each port is bound on.

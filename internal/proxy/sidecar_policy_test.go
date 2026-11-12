@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
@@ -432,5 +433,299 @@ func TestShimAccessFor(t *testing.T) {
 		if none != tc.none || got != tc.want {
 			t.Errorf("shimAccessFor(%q, %q) = %v, %v; want %v, %v", tc.tokens, tc.prefix, none, got, tc.none, tc.want)
 		}
+	}
+}
+
+// The entry URL mints a capability and redirects, so the document lives at a
+// URL its opaque-origin frame can request again: a reload, a form without an
+// action, or fetch("") all go to the capability URL and are served.
+func TestSidecarEntryRedirectsToCapability(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	f := newSidecarPolicyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method+" "+r.URL.RequestURI())
+		mu.Unlock()
+		htmlPage(w, "", `<html><head></head><body><form method="post"><button>go</button></form></body></html>`)
+	})
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		req, _ := http.NewRequest(method, fmt.Sprintf("%s/__agy/sidecar/%d/app/?x=1", f.front.URL, f.port), nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		loc := resp.Header.Get("Location")
+		if resp.StatusCode != http.StatusTemporaryRedirect || !strings.HasPrefix(loc, fmt.Sprintf("/__agy/sidecar/%d/~s/", f.port)) || !strings.HasSuffix(loc, "/app/?x=1") {
+			t.Fatalf("%s entry = %d to %q, want 307 to the capability URL keeping path and query", method, resp.StatusCode, loc)
+		}
+	}
+
+	// What a sandboxed document sends when it reloads or posts to itself.
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		req, _ := http.NewRequest(method, f.front.URL+f.capPrefix+"/", strings.NewReader("a=1"))
+		req.Header.Set("Origin", "null")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		if method == http.MethodPost {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s from the frame to its own capability URL = %d, want 200", method, resp.StatusCode)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) == 0 || methods[len(methods)-1] != "POST /" {
+		t.Errorf("the frame's POST did not reach the sidecar: %v", methods)
+	}
+}
+
+// A relative Location resolves against the upstream request's directory and
+// cannot climb out of the capability prefix.
+func TestSidecarRelativeLocation(t *testing.T) {
+	f := newSidecarPolicyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		// Set Location directly: http.Redirect would make it absolute.
+		redirect := func(loc string) {
+			w.Header().Set("Location", loc)
+			w.WriteHeader(http.StatusFound)
+		}
+		switch r.URL.Path {
+		case "/admin/":
+			redirect("login?next=1")
+		case "/admin/deep/page":
+			redirect("../../../../x")
+		case "/admin/abs":
+			redirect("/y")
+		default:
+			htmlPage(w, "", `<html><head></head><body></body></html>`)
+		}
+	})
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for path, want := range map[string]string{
+		"/admin/":          f.capPrefix + "/admin/login?next=1",
+		"/admin/deep/page": f.capPrefix + "/x",
+		"/admin/abs":       f.capPrefix + "/y",
+	} {
+		req, _ := http.NewRequest(http.MethodGet, f.front.URL+f.capPrefix+path, nil)
+		req.Header.Set("Origin", "null")
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("Location"); got != want {
+			t.Errorf("%s: Location = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// The idle limit applies to the connection: a sidecar that keeps pushing to a
+// page that never sends stays connected, and the connection closes once both
+// sides go quiet.
+func TestSidecarWebSocketIdleIsPerConnection(t *testing.T) {
+	saved := sidecarWSIdleTimeout
+	sidecarWSIdleTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { sidecarWSIdleTimeout = saved })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	scPort := ln.Addr().(*net.TCPAddr).Port
+	const pushes = 12
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				req, err := http.ReadRequest(bufio.NewReader(c))
+				if err != nil {
+					return
+				}
+				if req.Header.Get("Upgrade") == "" {
+					body := "<html><head></head><body>entry</body></html>"
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+					return
+				}
+				_, _ = fmt.Fprintf(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key")))
+				for i := 0; i < pushes; i++ {
+					if _, err := c.Write([]byte{0x81, 0x01, 'p'}); err != nil {
+						return
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				// Then go quiet without closing.
+				time.Sleep(10 * time.Second)
+			}(conn)
+		}
+	}()
+
+	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
+		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://127.0.0.1:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"}}
+	})
+	p, err := New(Options{TargetPort: upstreamPort(t, ls), Patch: patches.Options{CacheKey: "k1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	entry, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryBody, _ := io.ReadAll(entry.Body)
+	entry.Body.Close()
+	capPrefix := regexp.MustCompile(fmt.Sprintf(`/__agy/sidecar/%d/~s/[0-9a-f]{32}`, scPort)).FindString(string(entryBody))
+	if capPrefix == "" {
+		t.Fatalf("no capability in %s", entryBody)
+	}
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(front.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	host := strings.TrimPrefix(front.URL, "http://")
+	_, _ = fmt.Fprintf(conn, "GET %s/ws HTTP/1.1\r\nHost: %s\r\nOrigin: null\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n", capPrefix, host)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake: %v %v", resp, err)
+	}
+
+	start := time.Now()
+	frames := 0
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			break
+		}
+		if b == 'p' {
+			frames++
+		}
+	}
+	elapsed := time.Since(start)
+	if frames != pushes {
+		t.Fatalf("received %d of %d pushes; the quiet client direction closed the connection", frames, pushes)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("connection stayed open %v after both sides went quiet, want about the idle limit", elapsed)
+	}
+}
+
+func TestSidecarWebSocketCloseGraceIsNotExtended(t *testing.T) {
+	savedGrace := sidecarWSCloseGrace
+	sidecarWSCloseGrace = 300 * time.Millisecond
+	t.Cleanup(func() { sidecarWSCloseGrace = savedGrace })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	scPort := ln.Addr().(*net.TCPAddr).Port
+	upstreamClosed := make(chan time.Time, 1)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				req, err := http.ReadRequest(br)
+				if err != nil {
+					return
+				}
+				if req.Header.Get("Upgrade") == "" {
+					body := "<html><head></head><body>entry</body></html>"
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+					return
+				}
+				_, _ = fmt.Fprintf(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key")))
+				// The sidecar finishes its half, then waits for the proxy to
+				// close the connection.
+				_ = c.(*net.TCPConn).CloseWrite()
+				_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+				_, _ = io.Copy(io.Discard, br)
+				upstreamClosed <- time.Now()
+			}(conn)
+		}
+	}()
+
+	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
+		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://127.0.0.1:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"}}
+	})
+	p, err := New(Options{TargetPort: upstreamPort(t, ls), Patch: patches.Options{CacheKey: "k1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	entry, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryBody, _ := io.ReadAll(entry.Body)
+	entry.Body.Close()
+	capPrefix := regexp.MustCompile(fmt.Sprintf(`/__agy/sidecar/%d/~s/[0-9a-f]{32}`, scPort)).FindString(string(entryBody))
+	if capPrefix == "" {
+		t.Fatalf("no capability in %s", entryBody)
+	}
+
+	host := strings.TrimPrefix(front.URL, "http://")
+	conn, err := net.Dial("tcp", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = fmt.Fprintf(conn, "GET %s/ws HTTP/1.1\r\nHost: %s\r\nOrigin: null\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n", capPrefix, host)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake: %v %v", resp, err)
+	}
+
+	// The page keeps sending after the sidecar has finished. That must not
+	// keep the connection open past the close grace.
+	start := time.Now()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+			if _, err := conn.Write([]byte{0x81, 0x01, 'c'}); err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case at := <-upstreamClosed:
+		if d := at.Sub(start); d > 2*time.Second {
+			t.Fatalf("connection closed %v after the sidecar finished, want about the close grace", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a page that keeps sending held the connection open past the close grace")
 	}
 }

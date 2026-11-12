@@ -135,11 +135,6 @@ func processTreeListeners(ctx context.Context, rootPID int) ([]int, map[int]Loop
 	return ports, endpoints, nil
 }
 
-func processTreeListeningPorts(ctx context.Context, rootPID int) ([]int, error) {
-	ports, _, err := processTreeListeners(ctx, rootPID)
-	return ports, err
-}
-
 func processTreeListeningEndpoints(ctx context.Context, rootPID int) (map[int]LoopbackListenMask, error) {
 	_, endpoints, err := processTreeListeners(ctx, rootPID)
 	if err != nil {

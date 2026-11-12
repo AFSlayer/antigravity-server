@@ -104,15 +104,6 @@ func listeningPortsContext(ctx context.Context, pid int) ([]int, error) {
 	return ports, nil
 }
 
-func processTreeListeningPorts(ctx context.Context, rootPID int) ([]int, error) {
-	pids := descendantPIDs(ctx, rootPID)
-	ports, _, err := discoverPIDsListeners(ctx, pids)
-	if err != nil {
-		return nil, err
-	}
-	return ports, nil
-}
-
 func processTreeListeningEndpoints(ctx context.Context, rootPID int) (map[int]LoopbackListenMask, error) {
 	pids := descendantPIDs(ctx, rootPID)
 	_, endpoints, err := discoverPIDsListeners(ctx, pids)

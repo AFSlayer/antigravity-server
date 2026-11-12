@@ -20,10 +20,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
+)
+
+// Variables so tests can shorten them.
+var (
+	// sidecarWSIdleTimeout closes a sidecar WebSocket when neither direction
+	// has carried anything for this long.
+	sidecarWSIdleTimeout = 10 * time.Minute
+	// sidecarWSCloseGrace is how long the other direction may finish once one
+	// side has closed its half.
+	sidecarWSCloseGrace = 5 * time.Second
 )
 
 const (
@@ -48,9 +59,7 @@ const (
 	sidecarDialTimeout     = 5 * time.Second
 	sidecarHeaderTimeout   = 30 * time.Second
 	sidecarRPCTimeout      = 3 * time.Second
-	sidecarWSIdleTimeout   = 10 * time.Minute
 	sidecarWSWriteTimeout  = 30 * time.Second
-	sidecarWSCloseGrace    = 5 * time.Second
 
 	sidecarSandboxDirective = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
 	sidecarFrameAncestors   = "frame-ancestors 'self'"
@@ -313,20 +322,6 @@ func (p *Proxy) IsSidecarReservedPort(ctx context.Context, port int) bool {
 	}
 	_, isReserved := reserved[port]
 	return isReserved
-}
-
-// ReservedSidecarPorts returns a snapshot of all ports currently owned by
-// sidecars (both raw webPorts and auth gateway ports).
-func (p *Proxy) ReservedSidecarPorts(ctx context.Context) (map[int]struct{}, error) {
-	_, reserved, err := p.refreshSidecarPorts(ctx, false, time.Time{})
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[int]struct{}, len(reserved))
-	for port := range reserved {
-		out[port] = struct{}{}
-	}
-	return out, nil
 }
 
 func (p *Proxy) isForbiddenPort(port int) bool {
@@ -744,6 +739,56 @@ func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken s
 	return capSess, dialMode
 }
 
+// enterSidecar handles a navigation to the entry URL /__agy/sidecar/<port>/...
+// from the parent page. It checks the parent's session, issues or reuses the
+// capability for this port and redirects to the same path under it. The
+// document is served only from the capability URL: from the opaque-origin
+// frame a request back to the entry URL (a reload, a form without an action,
+// fetch("")) is cross-site and refused, while one to the capability URL is
+// not.
+func (p *Proxy) enterSidecar(w http.ResponseWriter, r *http.Request, port int, restEscaped string) {
+	if isWebSocketUpgrade(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		http.Error(w, "sidecar capability required", http.StatusForbidden)
+		return
+	}
+	if !p.sameOriginRequest(r) {
+		http.Error(w, "cross-origin sidecar request rejected", http.StatusForbidden)
+		return
+	}
+
+	parentSession := ""
+	if c, err := r.Cookie(auth.CookieName); err == nil {
+		parentSession = c.Value
+	}
+	if p.opts.ValidateSession != nil && (parentSession == "" || !p.opts.ValidateSession(parentSession)) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if _, allowed := p.allowedSidecarDialMode(r.Context(), port); !allowed {
+		http.Error(w, "sidecar port is not active", http.StatusForbidden)
+		return
+	}
+
+	capSess, err := p.issueOrReuseSidecarCap(parentSession, port)
+	if err != nil {
+		http.Error(w, "could not initialize sidecar sandbox", http.StatusInternalServerError)
+		return
+	}
+	httpPfx, wsPfx := p.externalSidecarPrefixURL(r, port, nil)
+	capSess.setExternalPrefixes(httpPfx, wsPfx)
+
+	if restEscaped == "" {
+		restEscaped = "/"
+	}
+	target := sidecarCapPrefix(port, capSess.token) + restEscaped
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+}
+
 func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTPReq func()) {
 	escaped := r.URL.EscapedPath()
 	port, capToken, restEscaped, needsSlash, invalidCap, ok := parseSidecarRoute(escaped)
@@ -756,78 +801,34 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		return
 	}
 
-	var (
-		capSess  *sidecarCapSession
-		dialMode string
-	)
 	if capToken == "" {
-		if isWebSocketUpgrade(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
-			http.Error(w, "sidecar capability required", http.StatusForbidden)
-			return
-		}
-		if !p.sameOriginRequest(r) {
-			http.Error(w, "cross-origin sidecar request rejected", http.StatusForbidden)
-			return
-		}
+		p.enterSidecar(w, r, port, restEscaped)
+		return
+	}
 
-		parentSession := ""
-		if c, err := r.Cookie(auth.CookieName); err == nil {
-			parentSession = c.Value
+	capSess, dialMode := p.authorizeSidecarCapRequest(r, port, capToken)
+	if capSess == nil {
+		http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
+		return
+	}
+	if needsSlash {
+		target := sidecarCapPrefix(port, capToken) + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
 		}
-		if p.opts.ValidateSession != nil && (parentSession == "" || !p.opts.ValidateSession(parentSession)) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var allowed bool
-		dialMode, allowed = p.allowedSidecarDialMode(r.Context(), port)
-		if !allowed {
-			http.Error(w, "sidecar port is not active", http.StatusForbidden)
-			return
-		}
-		if needsSlash {
-			target := fmt.Sprintf("%s%d/", SidecarPrefix, port)
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Referrer-Policy", "no-referrer")
-			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
-			return
-		}
-
-		var err error
-		capSess, err = p.issueOrReuseSidecarCap(parentSession, port)
-		if err != nil {
-			http.Error(w, "could not initialize sidecar sandbox", http.StatusInternalServerError)
-			return
-		}
-		httpPfx, wsPfx := p.externalSidecarPrefixURL(r, port, nil)
-		capSess.setExternalPrefixes(httpPfx, wsPfx)
-	} else {
-		capSess, dialMode = p.authorizeSidecarCapRequest(r, port, capToken)
-		if capSess == nil {
-			http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
-			return
-		}
-		if needsSlash {
-			target := sidecarCapPrefix(port, capToken) + "/"
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			applySidecarCORSHeaders(w.Header(), r)
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Referrer-Policy", "no-referrer")
-			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
-			return
-		}
-		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-			applySidecarCORSHeaders(w.Header(), r)
-			w.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
-			w.Header().Set("Referrer-Policy", "no-referrer")
-			w.Header().Set("Cache-Control", "no-store")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+		applySidecarCORSHeaders(w.Header(), r)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		return
+	}
+	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+		applySidecarCORSHeaders(w.Header(), r)
+		w.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 
 	capPrefix := sidecarCapPrefix(port, capSess.token)
@@ -967,8 +968,12 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 		resp.Header.Del("Set-Cookie")
 	}
 
+	reqPath := "/"
+	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path != "" {
+		reqPath = resp.Request.URL.Path
+	}
 	if loc := resp.Header.Get("Location"); loc != "" {
-		resp.Header.Set("Location", rewriteSidecarLocation(loc, port, capPrefix))
+		resp.Header.Set("Location", rewriteSidecarLocation(loc, port, capPrefix, sidecarBaseDir(reqPath)))
 	}
 
 	applySidecarCORSHeaders(resp.Header, clientReq)
@@ -993,10 +998,6 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 		return nil
 	}
 
-	reqPath := "/"
-	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path != "" {
-		reqPath = resp.Request.URL.Path
-	}
 	isHTML := strings.Contains(ct, "text/html")
 	isCSS := strings.Contains(ct, "text/css")
 	isPreloadJS := reqPath == "/preload.js" && (strings.Contains(ct, "javascript") || strings.Contains(ct, "ecmascript") || ct == "")
@@ -1446,7 +1447,10 @@ func appendUniqueCSPToken(tokens []string, candidate string) []string {
 	return append(tokens, candidate)
 }
 
-func rewriteSidecarLocation(loc string, port int, capPrefix string) string {
+// rewriteSidecarLocation keeps a redirect inside the capability prefix. A
+// relative Location resolves against reqDir, the upstream request's directory,
+// as the browser would resolve it against the request URL.
+func rewriteSidecarLocation(loc string, port int, capPrefix string, reqDir string) string {
 	loc = strings.TrimSpace(loc)
 	if loc == "" {
 		return loc
@@ -1490,7 +1494,7 @@ func rewriteSidecarLocation(loc string, port int, capPrefix string) string {
 		return out
 	}
 	if !strings.Contains(loc, "://") && !hasURIScheme(loc) {
-		return rewriteSidecarRelativeOrLoopbackURL(loc, port, capPrefix, "/")
+		return rewriteSidecarRelativeOrLoopbackURL(loc, port, capPrefix, reqDir)
 	}
 	return loc
 }
@@ -2493,13 +2497,28 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	// The idle limit is for the connection. A sidecar that only pushes, to a
+	// page that never sends, keeps it open, so a read timing out in one
+	// direction is retried while the other has been active. Once one side has
+	// closed its half, closeBy holds when the other must be done, and reads
+	// no longer extend past it.
+	idleLimit, closeGrace := sidecarWSIdleTimeout, sidecarWSCloseGrace
+	var lastActivity, closeBy atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
 	pipeConn := func(dst, src net.Conn) {
 		defer wg.Done()
 		buf := make([]byte, 32*1024)
 		for {
-			_ = src.SetReadDeadline(time.Now().Add(sidecarWSIdleTimeout))
+			_ = src.SetReadDeadline(time.Now().Add(idleLimit))
+			// Checked after setting the idle deadline: if the other side
+			// stores closeBy after this load, its own deadline call on this
+			// conn comes later and wins.
+			if by := closeBy.Load(); by != 0 {
+				_ = src.SetReadDeadline(time.Unix(0, by))
+			}
 			n, rErr := src.Read(buf)
 			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
 				p.touchActivity()
 				_ = dst.SetWriteDeadline(time.Now().Add(sidecarWSWriteTimeout))
 				if _, wErr := dst.Write(buf[:n]); wErr != nil {
@@ -2509,9 +2528,16 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 				}
 			}
 			if rErr != nil {
+				var netErr net.Error
+				if errors.As(rErr, &netErr) && netErr.Timeout() && closeBy.Load() == 0 &&
+					time.Since(time.Unix(0, lastActivity.Load())) < idleLimit {
+					continue
+				}
 				if hc, ok := dst.(halfCloseConn); ok && errors.Is(rErr, io.EOF) {
+					by := time.Now().Add(closeGrace)
+					closeBy.Store(by.UnixNano())
 					_ = hc.CloseWrite()
-					_ = dst.SetReadDeadline(time.Now().Add(sidecarWSCloseGrace))
+					_ = dst.SetReadDeadline(by)
 				} else {
 					_ = dst.Close()
 				}

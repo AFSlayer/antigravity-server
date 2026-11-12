@@ -156,7 +156,7 @@ func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 	}
 
 	// Raw webPort behind a gateway must NOT be directly reachable via sidecar route,
-	// yet MUST appear in ReservedSidecarPorts / IsSidecarReservedPort so generic loopback fetch blocks it too.
+	// yet MUST be reported by IsSidecarReservedPort so generic loopback fetch blocks it too.
 	for _, blocked := range []int{rawPort, stoppedPort, unrelatedPort, forbiddenPort, upstreamPort(t, ls)} {
 		r, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, blocked))
 		if err != nil {
@@ -168,15 +168,11 @@ func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 		}
 	}
 
-	reserved, err := p.ReservedSidecarPorts(context.Background())
-	if err != nil {
-		t.Fatalf("ReservedSidecarPorts failed: %v", err)
+	if !p.IsSidecarReservedPort(context.Background(), activePort) {
+		t.Errorf("gateway port %d is not reported as reserved", activePort)
 	}
-	if _, ok := reserved[activePort]; !ok {
-		t.Errorf("expected gateway port %d in ReservedSidecarPorts", activePort)
-	}
-	if _, ok := reserved[rawPort]; !ok {
-		t.Errorf("expected raw webPort %d in ReservedSidecarPorts", rawPort)
+	if !p.IsSidecarReservedPort(context.Background(), rawPort) {
+		t.Errorf("raw webPort %d is not reported as reserved", rawPort)
 	}
 
 	// Unrelated dev server port is NOT reserved while GetSidecars is healthy.
@@ -334,7 +330,8 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 		t.Fatalf("cross-site initial entry status = %d, want 403", crossNavResp.StatusCode)
 	}
 
-	// 3. Missing trailing slash redirects with query preserved.
+	// 3. Missing trailing slash redirects straight to the capability URL with
+	// the query preserved.
 	slashReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d?token=t1", front.URL, scPort), nil)
 	slashReq.Header.Set("Cookie", auth.CookieName+"="+sessToken)
 	slashReq.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -346,12 +343,14 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 	if slashResp.StatusCode != http.StatusTemporaryRedirect {
 		t.Fatalf("slash redirect status = %d, want 307", slashResp.StatusCode)
 	}
-	if got, want := slashResp.Header.Get("Location"), fmt.Sprintf("/__agy/sidecar/%d/?token=t1", scPort); got != want {
-		t.Fatalf("Location = %q, want %q", got, want)
+	if got := slashResp.Header.Get("Location"); !regexp.MustCompile(fmt.Sprintf(`^/__agy/sidecar/%d/~s/[0-9a-f]{32}/\?token=t1$`, scPort)).MatchString(got) {
+		t.Fatalf("Location = %q, want the capability URL with a trailing slash and the query", got)
 	}
 
 	// 4. Authenticated initial entry isolates sidecar in an opaque-origin CSP sandbox,
 	// never forwards browser cookies or X-Forwarded-For upstream, and vaults Set-Cookie server-side.
+	// The entry mints a capability and redirects to it, so the document is
+	// served from a URL the opaque-origin frame can request again.
 	entryReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/?token=t1", front.URL, scPort), nil)
 	entryReq.Header.Set("Cookie", auth.CookieName+"="+sessToken+"; browser_other=do_not_forward")
 	entryReq.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -359,9 +358,28 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	resp.Body.Close()
+	entryLoc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusTemporaryRedirect || !regexp.MustCompile(fmt.Sprintf(`^/__agy/sidecar/%d/~s/[0-9a-f]{32}/\?token=t1$`, scPort)).MatchString(entryLoc) {
+		t.Fatalf("entry = %d to %q, want 307 to the capability URL with the query", resp.StatusCode, entryLoc)
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Referrer-Policy") != "no-referrer" || len(resp.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("entry redirect headers: %v", resp.Header)
+	}
+
+	capEntryReq, _ := http.NewRequest(http.MethodGet, front.URL+entryLoc, nil)
+	capEntryReq.Header.Set("Cookie", auth.CookieName+"="+sessToken+"; browser_other=do_not_forward")
+	capEntryReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, err = noRedirectClient.Do(capEntryReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	html := string(bodyBytes)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("capability entry status = %d, want 200", resp.StatusCode)
+	}
 
 	if got, _ := gotCookieHeader.Load().(string); got != "" {
 		t.Fatalf("initial entry forwarded browser Cookie upstream: %q, want empty", got)

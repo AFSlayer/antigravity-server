@@ -505,6 +505,19 @@ func (r *runner) start(runCtx context.Context) error {
 		IsReservedPort: func(ctx context.Context, port int) bool {
 			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port)
 		},
+		// A preview page's scripts choose the port, so only listeners the
+		// language server or its children opened, such as a dev server the
+		// agent started, are fetched.
+		ResolveFetchTarget: func(ctx context.Context, port int) (string, bool) {
+			if isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port) {
+				return "", false
+			}
+			mask, ok := treeEndpoints.Lookup(ctx, port)
+			if !ok {
+				return "", false
+			}
+			return mask.ResolveDialHost("localhost")
+		},
 		ResolveOAuthTarget: func(ctx context.Context, port int, urlHost string) (string, bool) {
 			if isCoreReservedPort(ctx, port) {
 				return "", false

@@ -92,9 +92,18 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 	reservedControlPort := 54321
 	reservedLSPort := 54322
 
+	// closedPort is set below: a port the language server's tree owned whose
+	// server has since gone away.
+	var closedPort int
 	h := New(Options{
 		IsReservedPort: func(_ context.Context, port int) bool {
 			return port == reservedControlPort || port == reservedLSPort
+		},
+		ResolveFetchTarget: func(_ context.Context, port int) (string, bool) {
+			if port == devPort || (closedPort != 0 && port == closedPort) {
+				return "127.0.0.1", true
+			}
+			return "", false
 		},
 	})
 	t.Cleanup(h.Close)
@@ -221,7 +230,7 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 		}
 	}
 
-	// 6. Unbound local port returns HTTP 200 with {"noListener": true}, and Windows WSAECONNREFUSED (10061) is recognized.
+	// 6. A served port with nothing bound returns HTTP 200 with {"noListener": true}, and Windows WSAECONNREFUSED (10061) is recognized.
 	if !isConnRefused(syscall.Errno(10061)) {
 		t.Fatal("expected Windows WSAECONNREFUSED (errno 10061) to be recognized by isConnRefused")
 	}
@@ -229,7 +238,7 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closedPort := closedLn.Addr().(*net.TCPAddr).Port
+	closedPort = closedLn.Addr().(*net.TCPAddr).Port
 	_ = closedLn.Close()
 
 	nlResp := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: closedPort, Path: "/"})
@@ -273,8 +282,11 @@ func TestOAuthCallbackRelaysOnlyToAllowedProcessTreePortAndDiscardsBody(t *testi
 	unownedPort := serverPort(t, unownedSrv.URL)
 
 	h := New(Options{
-		AllowOAuthPort: func(_ context.Context, port int) bool {
-			return port == allowedPort
+		ResolveOAuthTarget: func(_ context.Context, port int, _ string) (string, bool) {
+			if port == allowedPort {
+				return "127.0.0.1", true
+			}
+			return "", false
 		},
 	})
 	t.Cleanup(h.Close)
@@ -418,5 +430,139 @@ func TestOAuthCallbackIsolatesLoopbackAddressFamily(t *testing.T) {
 	}
 	if v6Hits.Load() != 1 || v6Code.Load() != "safe_v6_code" {
 		t.Fatalf("expected 1 delivery to [::1] with safe_v6_code, got hits=%d code=%v", v6Hits.Load(), v6Code.Load())
+	}
+}
+
+// A preview page's scripts choose the port, so the fetch reaches only listeners
+// of the language server's process tree. Any other port answers 403 without
+// being dialed, whether something listens there or not, so the answer says
+// nothing about the host's other ports. A served port whose server has gone
+// away reads as "no listener".
+func TestLoopbackFetchOnlyServesProcessTreePorts(t *testing.T) {
+	var hits atomic.Int32
+	var gotOrigin, gotReferer atomic.Value
+	devSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOrigin.Store(r.Header.Get("Origin"))
+		gotReferer.Store(r.Header.Get("Referer"))
+		_, _ = w.Write([]byte("dev"))
+	}))
+	t.Cleanup(devSrv.Close)
+	devPort := serverPort(t, devSrv.URL)
+
+	otherSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("someone else's service"))
+	}))
+	t.Cleanup(otherSrv.Close)
+	otherPort := serverPort(t, otherSrv.URL)
+
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedPort := closed.Addr().(*net.TCPAddr).Port
+	_ = closed.Close()
+
+	goneServer := httptest.NewServer(http.NotFoundHandler())
+	gonePort := serverPort(t, goneServer.URL)
+	goneServer.Close()
+
+	h := New(Options{
+		ResolveFetchTarget: func(_ context.Context, port int) (string, bool) {
+			if port == devPort || port == gonePort {
+				return "127.0.0.1", true
+			}
+			return "", false
+		},
+	})
+	t.Cleanup(h.Close)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	// A port outside the tree gets the same answer whether or not something
+	// listens on it, and is never contacted.
+	for _, port := range []int{otherPort, closedPort} {
+		r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: port, Path: "/"})
+		var out fetchResponse
+		_ = json.NewDecoder(r.Body).Decode(&out)
+		r.Body.Close()
+		if r.StatusCode != http.StatusOK || !out.NoListener || out.StatusCode != 0 || out.BodyBase64 != "" {
+			t.Fatalf("port %d outside the process tree: status %d %+v, want noListener only", port, r.StatusCode, out)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("a listener outside the process tree was contacted %d times", hits.Load())
+	}
+
+	r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: gonePort, Path: "/"})
+	var out fetchResponse
+	_ = json.NewDecoder(r.Body).Decode(&out)
+	r.Body.Close()
+	if r.StatusCode != http.StatusOK || !out.NoListener {
+		t.Fatalf("a served port whose server is gone: status %d %+v, want noListener", r.StatusCode, out)
+	}
+
+	// Origin and Referer pass only when they name the target port itself.
+	for _, tc := range []struct {
+		origin, referer string
+		forwarded       bool
+	}{
+		{fmt.Sprintf("http://localhost:%d", devPort), fmt.Sprintf("http://localhost:%d/page", devPort), true},
+		{fmt.Sprintf("http://localhost:%d", otherPort), fmt.Sprintf("http://127.0.0.1:%d/page", otherPort), false},
+		{"http://localhost", "http://localhost/page", false},
+	} {
+		gotOrigin.Store("")
+		gotReferer.Store("")
+		r = postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{
+			Port: devPort,
+			Path: "/",
+			Headers: []headerEntry{
+				{Name: "Origin", Value: tc.origin},
+				{Name: "Referer", Value: tc.referer},
+			},
+		})
+		r.Body.Close()
+		o, _ := gotOrigin.Load().(string)
+		ref, _ := gotReferer.Load().(string)
+		if tc.forwarded && (o != tc.origin || ref != tc.referer) {
+			t.Errorf("same-port Origin/Referer dropped: got %q %q", o, ref)
+		}
+		if !tc.forwarded && (o != "" || ref != "") {
+			t.Errorf("Origin %q / Referer %q from another port were forwarded as %q %q", tc.origin, tc.referer, o, ref)
+		}
+	}
+}
+
+// Without a resolver nothing is fetched or delivered.
+func TestLoopbackFailsClosedWithoutResolvers(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	t.Cleanup(srv.Close)
+	port := serverPort(t, srv.URL)
+
+	h := New(Options{})
+	t.Cleanup(h.Close)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: port, Path: "/"})
+	var fetched fetchResponse
+	_ = json.NewDecoder(r.Body).Decode(&fetched)
+	r.Body.Close()
+	if r.StatusCode != http.StatusOK || !fetched.NoListener {
+		t.Errorf("fetch without a resolver: status %d %+v, want noListener", r.StatusCode, fetched)
+	}
+	r = postJSON(t, front.URL, OAuthCallbackAPIPath, front.URL, oauthCallbackRequest{URL: fmt.Sprintf("http://localhost:%d/cb?code=x", port)})
+	var out oauthCallbackResponse
+	_ = json.NewDecoder(r.Body).Decode(&out)
+	r.Body.Close()
+	if out.Delivered || hits.Load() != 0 {
+		t.Errorf("oauth-callback without a resolver delivered=%v hits=%d", out.Delivered, hits.Load())
 	}
 }

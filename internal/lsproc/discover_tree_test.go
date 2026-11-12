@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestListeningPortsAndProcessTreeListeningPorts(t *testing.T) {
+func TestListeningPortsAndProcessTreeListeningEndpoints(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -32,19 +32,12 @@ func TestListeningPortsAndProcessTreeListeningPorts(t *testing.T) {
 		t.Fatalf("ListeningPorts(self) = %v, missing %d", ownPorts, selfPort)
 	}
 
-	treePorts, err := ProcessTreeListeningPorts(os.Getpid())
+	treeEndpoints, err := ProcessTreeListeningEndpoints(context.Background(), os.Getpid())
 	if err != nil {
-		t.Fatalf("ProcessTreeListeningPorts(self): %v", err)
+		t.Fatalf("ProcessTreeListeningEndpoints(self): %v", err)
 	}
-	foundInTree := false
-	for _, p := range treePorts {
-		if p == selfPort {
-			foundInTree = true
-			break
-		}
-	}
-	if !foundInTree {
-		t.Fatalf("ProcessTreeListeningPorts(self) = %v, missing %d", treePorts, selfPort)
+	if _, ok := treeEndpoints[selfPort]; !ok {
+		t.Fatalf("ProcessTreeListeningEndpoints(self) = %v, missing %d", treeEndpoints, selfPort)
 	}
 
 	// If python3 or node is available, verify descendant child listener discovery too.
@@ -87,22 +80,15 @@ srv.listen(0, "127.0.0.1", () => {
 		var sawChild bool
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			ports, err := ProcessTreeListeningPorts(os.Getpid())
-			if err == nil {
-				for _, p := range ports {
-					if p == childPort {
-						sawChild = true
-						break
-					}
-				}
-			}
-			if sawChild {
+			endpoints, err := ProcessTreeListeningEndpoints(context.Background(), os.Getpid())
+			if _, ok := endpoints[childPort]; err == nil && ok {
+				sawChild = true
 				break
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
 		if !sawChild {
-			t.Fatalf("ProcessTreeListeningPorts(self) did not include child process port %d", childPort)
+			t.Fatalf("ProcessTreeListeningEndpoints(self) did not include child process port %d", childPort)
 		}
 	}
 }
