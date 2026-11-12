@@ -30,14 +30,15 @@ const (
 	// HTTP/WebSocket gateways are reverse-proxied.
 	SidecarPrefix = "/__agy/sidecar/"
 
-	sidecarShimName            = "__agy_sidecar_shim.js"
-	sidecarCapSegment          = "~s"
-	sidecarCapHexLen           = 32
-	sidecarCapIdleTTL          = 2 * time.Hour
-	sidecarCapMaxLifetime      = 12 * time.Hour
-	sidecarCapMaxEntries       = 256
-	sidecarVaultMaxCookies     = 64
-	sidecarVaultMaxCookieBytes = 8192
+	sidecarShimName             = "__agy_sidecar_shim.js"
+	sidecarCapSegment           = "~s"
+	sidecarCapHexLen            = 32
+	sidecarCapIdleTTL           = 2 * time.Hour
+	sidecarCapMaxLifetime       = 12 * time.Hour
+	sidecarCapReuseMinRemaining = 30 * time.Minute
+	sidecarCapMaxEntries        = 256
+	sidecarVaultMaxCookies      = 64
+	sidecarVaultMaxCookieBytes  = 8192
 
 	sidecarCacheTTL        = 2 * time.Second
 	sidecarMissRefreshMin  = 200 * time.Millisecond
@@ -62,8 +63,29 @@ type sidecarCapSession struct {
 	createdAt     time.Time
 	lastUsedAt    time.Time
 
-	cookieMu sync.Mutex
-	cookies  map[string]string
+	cookieMu      sync.Mutex
+	cookies       map[string]string
+	extHTTPPrefix string
+	extWSPrefix   string
+}
+
+func (s *sidecarCapSession) setExternalPrefixes(httpPrefix, wsPrefix string) {
+	if s == nil {
+		return
+	}
+	s.cookieMu.Lock()
+	s.extHTTPPrefix = httpPrefix
+	s.extWSPrefix = wsPrefix
+	s.cookieMu.Unlock()
+}
+
+func (s *sidecarCapSession) externalPrefixes() (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	return s.extHTTPPrefix, s.extWSPrefix
 }
 
 func (s *sidecarCapSession) cookieHeader() string {
@@ -88,6 +110,19 @@ func (s *sidecarCapSession) cookieHeader() string {
 		parts = append(parts, name+"="+s.cookies[name])
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (s *sidecarCapSession) snapshotCookies() map[string]string {
+	if s == nil {
+		return make(map[string]string)
+	}
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	out := make(map[string]string, len(s.cookies))
+	for k, v := range s.cookies {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *sidecarCapSession) storeSetCookies(rawHeaders []string) {
@@ -186,12 +221,17 @@ func newSidecarTransport() *http.Transport {
 		MaxIdleConnsPerHost:   16,
 		IdleConnTimeout:       60 * time.Second,
 		ResponseHeaderTimeout: sidecarHeaderTimeout,
-		DialContext:           dialLoopbackOnly,
+		DialContext:           dialSidecarAddress,
 	}
 }
 
-func dialLoopbackOnly(ctx context.Context, network, addr string) (net.Conn, error) {
-	_, portStr, err := net.SplitHostPort(addr)
+// dialSidecarAddress dials a loopback sidecar endpoint while honoring explicit
+// address families ("127.0.0.1" or "::1") without cross-family fallback so an
+// unrelated process bound to the other loopback family on the same port cannot
+// be reached. Only ambiguous "localhost" targets fall back from IPv4 to IPv6 on
+// ECONNREFUSED.
+func dialSidecarAddress(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -201,16 +241,40 @@ func dialLoopbackOnly(ctx context.Context, network, addr string) (net.Conn, erro
 	}
 
 	dialer := &net.Dialer{Timeout: sidecarDialTimeout}
-	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	if err == nil {
-		return conn, nil
-	}
-	if isConnRefused(err) {
-		if conn6, err6 := dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port))); err6 == nil {
-			return conn6, nil
+	cleanHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	switch cleanHost {
+	case "127.0.0.1":
+		return dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	case "::1":
+		return dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port)))
+	default:
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			return conn, nil
 		}
+		if isConnRefused(err) {
+			if conn6, err6 := dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port))); err6 == nil {
+				return conn6, nil
+			}
+		}
+		return nil, err
 	}
-	return nil, err
+}
+
+func (p *Proxy) resolveSidecarDialAddr(ctx context.Context, dialMode string, port int) string {
+	switch dialMode {
+	case "127.0.0.1":
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	case "::1":
+		return net.JoinHostPort("::1", strconv.Itoa(port))
+	default:
+		if p.opts.ResolveSidecarHost != nil {
+			if exact, ok := p.opts.ResolveSidecarHost(ctx, port, "localhost"); ok && (exact == "127.0.0.1" || exact == "::1") {
+				return net.JoinHostPort(exact, strconv.Itoa(port))
+			}
+		}
+		return net.JoinHostPort("localhost", strconv.Itoa(port))
+	}
 }
 
 func isConnRefused(err error) bool {
@@ -276,33 +340,33 @@ func (p *Proxy) isForbiddenPort(port int) bool {
 	return false
 }
 
-func (p *Proxy) isAllowedSidecarPort(ctx context.Context, port int) bool {
+func (p *Proxy) allowedSidecarDialMode(ctx context.Context, port int) (string, bool) {
 	if p.isForbiddenPort(port) {
-		return false
+		return "", false
 	}
 	now := time.Now()
 	p.sidecarMu.Lock()
 	if !p.sidecarCachedAt.IsZero() && now.Sub(p.sidecarCachedAt) < sidecarCacheTTL && p.sidecarLastErr == nil {
-		if _, ok := p.sidecarAllowed[port]; ok {
+		if mode, ok := p.sidecarAllowed[port]; ok {
 			p.sidecarMu.Unlock()
-			return true
+			return mode, true
 		}
 		if !p.sidecarLastProbe.IsZero() && now.Sub(p.sidecarLastProbe) < sidecarMissRefreshMin {
 			p.sidecarMu.Unlock()
-			return false
+			return "", false
 		}
 	}
 	p.sidecarMu.Unlock()
 
 	allowed, _, err := p.refreshSidecarPorts(ctx, true, now)
 	if err != nil {
-		return false
+		return "", false
 	}
-	_, ok := allowed[port]
-	return ok
+	mode, ok := allowed[port]
+	return mode, ok
 }
 
-func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart time.Time) (allowed, reserved map[int]struct{}, err error) {
+func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart time.Time) (allowed map[int]string, reserved map[int]struct{}, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -369,7 +433,7 @@ func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart ti
 	return nil, nil, errors.New("sidecar port refresh aborted")
 }
 
-func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed, reserved map[int]struct{}, err error) {
+func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed map[int]string, reserved map[int]struct{}, err error) {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -413,7 +477,7 @@ func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed, reserved map
 		return nil, nil, err
 	}
 
-	allowed = make(map[int]struct{})
+	allowed = make(map[int]string)
 	reserved = make(map[int]struct{})
 
 	for _, sc := range payload.Sidecars {
@@ -421,13 +485,13 @@ func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed, reserved map
 		if webPort > 0 && webPort <= 65535 {
 			reserved[webPort] = struct{}{}
 		}
-		if gwPort, ok := loopbackPortFromURL(sc.BaseURL); ok && !p.isForbiddenPort(gwPort) {
+		if gwHost, gwPort, ok := loopbackEndpointFromURL(sc.BaseURL); ok && !p.isForbiddenPort(gwPort) {
 			reserved[gwPort] = struct{}{}
-			allowed[gwPort] = struct{}{}
+			allowed[gwPort] = gwHost
 			continue
 		}
 		if sc.BaseURL == "" && !p.isForbiddenPort(webPort) && sidecarStatusRunning(sc.Status) {
-			allowed[webPort] = struct{}{}
+			allowed[webPort] = "localhost"
 		}
 	}
 	return allowed, reserved, nil
@@ -450,23 +514,28 @@ func sidecarStatusRunning(raw json.RawMessage) bool {
 	return s == `"SIDECAR_STATUS_RUNNING"` || s == "2"
 }
 
-func loopbackPortFromURL(raw string) (int, bool) {
+func loopbackEndpointFromURL(raw string) (hostMode string, port int, ok bool) {
 	if raw == "" {
-		return 0, false
+		return "", 0, false
 	}
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Scheme, "http") {
-		return 0, false
+		return "", 0, false
 	}
 	host := strings.ToLower(u.Hostname())
 	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		return 0, false
+		return "", 0, false
 	}
-	port, err := strconv.Atoi(u.Port())
+	port, err = strconv.Atoi(u.Port())
 	if err != nil || port <= 0 || port > 65535 {
-		return 0, false
+		return "", 0, false
 	}
-	return port, true
+	return host, port, true
+}
+
+func loopbackPortFromURL(raw string) (int, bool) {
+	_, port, ok := loopbackEndpointFromURL(raw)
+	return port, ok
 }
 
 func isValidSidecarCapHex(s string) bool {
@@ -547,10 +616,14 @@ func (p *Proxy) issueOrReuseSidecarCap(parentSession string, port int) (*sidecar
 
 	p.pruneExpiredSidecarCapsLocked(now)
 
+	var inheritedCookies map[string]string
 	for _, existing := range p.sidecarCaps {
 		if existing.port == port && existing.parentSession == parentSession {
-			existing.lastUsedAt = now
-			return existing, nil
+			if sidecarCapMaxLifetime-now.Sub(existing.createdAt) >= sidecarCapReuseMinRemaining {
+				existing.lastUsedAt = now
+				return existing, nil
+			}
+			inheritedCookies = existing.snapshotCookies()
 		}
 	}
 
@@ -574,13 +647,16 @@ func (p *Proxy) issueOrReuseSidecarCap(parentSession string, port int) (*sidecar
 		return nil, err
 	}
 	tok := hex.EncodeToString(raw[:])
+	if inheritedCookies == nil {
+		inheritedCookies = make(map[string]string)
+	}
 	sess := &sidecarCapSession{
 		token:         tok,
 		port:          port,
 		parentSession: parentSession,
 		createdAt:     now,
 		lastUsedAt:    now,
-		cookies:       make(map[string]string),
+		cookies:       inheritedCookies,
 	}
 	p.sidecarCaps[tok] = sess
 	return sess, nil
@@ -634,35 +710,37 @@ func (p *Proxy) ValidateSidecarCapability(r *http.Request) bool {
 	if !ok || invalidCap || capToken == "" {
 		return false
 	}
-	return p.authorizeSidecarCapRequest(r, port, capToken) != nil
+	sess, _ := p.authorizeSidecarCapRequest(r, port, capToken)
+	return sess != nil
 }
 
-func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) *sidecarCapSession {
+func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) (*sidecarCapSession, string) {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if isWebSocketUpgrade(r) {
 		if origin != "null" && !p.sameOriginUpgrade(r) {
-			return nil
+			return nil, ""
 		}
 	} else {
 		if origin != "" && origin != "null" && !p.sameOriginRequest(r) {
-			return nil
+			return nil, ""
 		}
 	}
 
 	capSess := p.lookupSidecarCap(capToken, port)
 	if capSess == nil {
-		return nil
+		return nil, ""
 	}
 	if p.opts.ValidateSession != nil {
 		if capSess.parentSession == "" || !p.opts.ValidateSession(capSess.parentSession) {
 			p.deleteSidecarCap(capToken)
-			return nil
+			return nil, ""
 		}
 	}
-	if !p.isAllowedSidecarPort(r.Context(), port) {
-		return nil
+	dialMode, ok := p.allowedSidecarDialMode(r.Context(), port)
+	if !ok {
+		return nil, ""
 	}
-	return capSess
+	return capSess, dialMode
 }
 
 func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTPReq func()) {
@@ -677,26 +755,18 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		return
 	}
 
-	var capSess *sidecarCapSession
+	var (
+		capSess  *sidecarCapSession
+		dialMode string
+	)
 	if capToken == "" {
 		if isWebSocketUpgrade(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			http.Error(w, "sidecar capability required", http.StatusForbidden)
 			return
 		}
-		if sfs := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); sfs == "cross-site" || sfs == "same-site" {
-			http.Error(w, "cross-site sidecar navigation rejected", http.StatusForbidden)
-			return
-		}
-		if orig := strings.TrimSpace(r.Header.Get("Origin")); orig != "" && !p.sameOriginRequest(r) {
+		if !p.sameOriginRequest(r) {
 			http.Error(w, "cross-origin sidecar request rejected", http.StatusForbidden)
 			return
-		}
-		if ref := strings.TrimSpace(r.Header.Get("Referer")); ref != "" {
-			refURL, err := url.Parse(ref)
-			if err != nil || (refURL.Host != "" && !p.sameRefererHost(r, refURL.Host)) {
-				http.Error(w, "cross-origin sidecar referer rejected", http.StatusForbidden)
-				return
-			}
 		}
 
 		parentSession := ""
@@ -707,7 +777,9 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if !p.isAllowedSidecarPort(r.Context(), port) {
+		var allowed bool
+		dialMode, allowed = p.allowedSidecarDialMode(r.Context(), port)
+		if !allowed {
 			http.Error(w, "sidecar port is not active", http.StatusForbidden)
 			return
 		}
@@ -728,8 +800,10 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 			http.Error(w, "could not initialize sidecar sandbox", http.StatusInternalServerError)
 			return
 		}
+		httpPfx, wsPfx := p.externalSidecarPrefixURL(r, port, nil)
+		capSess.setExternalPrefixes(httpPfx, wsPfx)
 	} else {
-		capSess = p.authorizeSidecarCapRequest(r, port, capToken)
+		capSess, dialMode = p.authorizeSidecarCapRequest(r, port, capToken)
 		if capSess == nil {
 			http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
 			return
@@ -756,6 +830,7 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 	}
 
 	capPrefix := sidecarCapPrefix(port, capSess.token)
+	dialAddr := p.resolveSidecarDialAddr(r.Context(), dialMode, port)
 
 	decodedRest, err := url.PathUnescape(restEscaped)
 	if err != nil {
@@ -780,7 +855,7 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 	}
 
 	if isWebSocketUpgrade(r) {
-		p.proxySidecarWebSocket(w, r, port, capPrefix, capSess, decodedRest, restEscaped)
+		p.proxySidecarWebSocket(w, r, port, dialAddr, capPrefix, capSess, decodedRest, restEscaped)
 		return
 	}
 
@@ -793,12 +868,12 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		FlushInterval: -1,
 		Director: func(req *http.Request) {
 			req.URL.Scheme = "http"
-			req.URL.Host = fmt.Sprintf("127.0.0.1:%d", port)
+			req.URL.Host = dialAddr
 			req.URL.Path = decodedRest
 			req.URL.RawPath = restEscaped
 			req.Host = upstreamHost
 
-			prepareSidecarUpstreamHeaders(req.Header, port, capPrefix, upstreamOrigin, vaultCookie)
+			prepareSidecarUpstreamHeaders(req.Header, upstreamOrigin, vaultCookie)
 			req.Header["X-Forwarded-For"] = nil
 			req.Header.Del("Accept-Encoding")
 			req.Header.Del("If-None-Match")
@@ -842,133 +917,7 @@ func applySidecarCORSHeaders(h http.Header, r *http.Request) {
 	}
 }
 
-func (p *Proxy) redirectSidecarOrphanRequest(w http.ResponseWriter, r *http.Request) bool {
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")), "document") {
-		return false
-	}
-	path := r.URL.Path
-	if path == "/" ||
-		strings.HasPrefix(path, "/__agy/") ||
-		strings.HasPrefix(path, "/exa.") ||
-		path == "/connect-websocket" ||
-		path == "/main.js" ||
-		path == "/favicon.ico" ||
-		path == "/apple-touch-icon.png" ||
-		isParentSPARoute(path) {
-		return false
-	}
-
-	ref := strings.TrimSpace(r.Header.Get("Referer"))
-	if ref == "" {
-		return false
-	}
-	refURL, err := url.Parse(ref)
-	if err != nil {
-		return false
-	}
-	if refURL.Host != "" && !p.sameRefererHostWithScheme(r, refURL.Host, refURL.Scheme) {
-		return false
-	}
-	port, capToken, _, _, invalidCap, ok := parseSidecarRoute(refURL.EscapedPath())
-	if !ok || invalidCap {
-		return false
-	}
-
-	var targetPrefix string
-	if capToken != "" {
-		if p.authorizeSidecarCapRequest(r, port, capToken) == nil {
-			return false
-		}
-		targetPrefix = sidecarCapPrefix(port, capToken)
-	} else {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			return false
-		}
-		if !p.isAllowedSidecarPort(r.Context(), port) {
-			return false
-		}
-		targetPrefix = fmt.Sprintf("%s%d", SidecarPrefix, port)
-	}
-
-	target := targetPrefix + r.URL.EscapedPath()
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	applySidecarCORSHeaders(w.Header(), r)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	http.Redirect(w, r, target, http.StatusTemporaryRedirect)
-	return true
-}
-
-func isParentSPARoute(p string) bool {
-	for _, prefix := range []string{"/onboarding", "/c", "/customizations", "/settings", "/login", "/signin", "/workspace", "/projects"} {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *Proxy) sameRefererHost(r *http.Request, refHost string) bool {
-	scheme := "http"
-	if auth.RequestIsSecure(r, p.opts.TrustedProxies) {
-		scheme = "https"
-	}
-	return p.sameRefererHostWithScheme(r, refHost, scheme)
-}
-
-func (p *Proxy) sameRefererHostWithScheme(r *http.Request, refHost, refScheme string) bool {
-	reqScheme := "http"
-	if auth.RequestIsSecure(r, p.opts.TrustedProxies) {
-		reqScheme = "https"
-	}
-	if refScheme == "" {
-		refScheme = reqScheme
-	}
-	refNorm := normalizeAuthorityHostPort(refHost, refScheme)
-	if refNorm == "" {
-		return false
-	}
-	if fwd := p.trustedForwardedHost(r); fwd != "" && refNorm == normalizeAuthorityHostPort(fwd, reqScheme) {
-		return true
-	}
-	if reqHost := auth.SanitizeHostPort(r.Host); reqHost != "" && refNorm == normalizeAuthorityHostPort(reqHost, reqScheme) {
-		return true
-	}
-	if p.opts.PublicURL != "" {
-		if pub, err := url.Parse(p.opts.PublicURL); err == nil {
-			if pubNorm := normalizeAuthorityHostPort(pub.Host, pub.Scheme); pubNorm != "" && refNorm == pubNorm {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func normalizeAuthorityHostPort(rawHost, scheme string) string {
-	clean := strings.ToLower(auth.SanitizeHostPort(rawHost))
-	if clean == "" {
-		return ""
-	}
-	h, port, err := net.SplitHostPort(clean)
-	if err != nil {
-		h = strings.Trim(clean, "[]")
-		port = ""
-	}
-	if (strings.EqualFold(scheme, "http") && port == "80") || (strings.EqualFold(scheme, "https") && port == "443") {
-		port = ""
-	}
-	if port == "" {
-		if strings.Contains(h, ":") {
-			return "[" + h + "]"
-		}
-		return h
-	}
-	return net.JoinHostPort(h, port)
-}
-
-func prepareSidecarUpstreamHeaders(h http.Header, port int, capPrefix string, upstreamOrigin string, vaultCookie string) {
+func prepareSidecarUpstreamHeaders(h http.Header, upstreamOrigin string, vaultCookie string) {
 	// Never forward browser cookies to sidecar servers; inject only cookies
 	// stored in the server-side capability vault for this sidecar session.
 	h.Del("Cookie")
@@ -978,39 +927,7 @@ func prepareSidecarUpstreamHeaders(h http.Header, port int, capPrefix string, up
 
 	h.Set("Origin", upstreamOrigin)
 	h.Set("Sec-Fetch-Site", "same-origin")
-
-	if ref := strings.TrimSpace(h.Get("Referer")); ref != "" {
-		if refURL, err := url.Parse(ref); err == nil {
-			basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
-			esc := refURL.EscapedPath()
-			switch {
-			case capPrefix != "" && (esc == capPrefix || strings.HasPrefix(esc, capPrefix+"/")):
-				sub := strings.TrimPrefix(esc, capPrefix)
-				if sub == "" {
-					sub = "/"
-				}
-				rewritten := upstreamOrigin + sub
-				if refURL.RawQuery != "" {
-					rewritten += "?" + refURL.RawQuery
-				}
-				h.Set("Referer", rewritten)
-			case esc == basePrefix || strings.HasPrefix(esc, basePrefix+"/"):
-				sub := strings.TrimPrefix(esc, basePrefix)
-				if sub == "" {
-					sub = "/"
-				}
-				rewritten := upstreamOrigin + sub
-				if refURL.RawQuery != "" {
-					rewritten += "?" + refURL.RawQuery
-				}
-				h.Set("Referer", rewritten)
-			default:
-				h.Del("Referer")
-			}
-		} else {
-			h.Del("Referer")
-		}
-	}
+	h.Del("Referer")
 
 	h.Del("X-Original-Origin")
 	h.Del("X-Client-Host")
@@ -1050,7 +967,7 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 	}
 
 	applySidecarCORSHeaders(resp.Header, clientReq)
-	shimNonce := p.enforceSidecarSecurityHeaders(resp.Header, clientReq, port)
+	shimNonce := p.enforceSidecarSecurityHeaders(resp.Header, clientReq, port, capSess)
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(ct, "text/event-stream") {
@@ -1124,68 +1041,146 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 	return nil
 }
 
-func (p *Proxy) enforceSidecarSecurityHeaders(h http.Header, clientReq *http.Request, port int) (shimNonce string) {
+func (p *Proxy) enforceSidecarSecurityHeaders(h http.Header, clientReq *http.Request, port int, capSess *sidecarCapSession) (shimNonce string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Del("Content-Security-Policy-Report-Only")
 
-	upstreamCSPs := h.Values("Content-Security-Policy")
+	policies := splitCSPPolicies(h.Values("Content-Security-Policy"))
 	h.Del("Content-Security-Policy")
-	if len(upstreamCSPs) == 0 {
+	if len(policies) == 0 {
 		h.Set("Content-Security-Policy", sidecarDefaultCSP)
 		return ""
 	}
 
-	httpPrefix, wsPrefix := p.externalSidecarPrefixURL(clientReq, port)
-	merged, nonce := rewriteUpstreamSidecarCSP(strings.Join(upstreamCSPs, "; "), httpPrefix, wsPrefix)
-	h.Set("Content-Security-Policy", merged)
-	return nonce
-}
+	httpPrefix, wsPrefix := p.externalSidecarPrefixURL(clientReq, port, capSess)
 
-func (p *Proxy) externalSidecarPrefixURL(r *http.Request, port int) (httpPrefix, wsPrefix string) {
-	proto := "http"
-	if r != nil && auth.RequestIsSecure(r, p.opts.TrustedProxies) {
-		proto = "https"
-	}
-	host := ""
-	if r != nil {
-		if fwd := p.trustedForwardedHost(r); fwd != "" {
-			host = fwd
-		} else if safe := auth.SanitizeHostPort(r.Host); safe != "" {
-			host = safe
-		}
-	}
-	if host == "" && p.opts.PublicURL != "" {
-		if pub, err := url.Parse(p.opts.PublicURL); err == nil && pub.Host != "" {
-			host = auth.SanitizeHostPort(pub.Host)
-			if strings.EqualFold(pub.Scheme, "https") {
-				proto = "https"
+	var candidateNonce string
+	var nonceUsed bool
+	rewrittenPolicies := make([]string, 0, len(policies))
+	for _, pol := range policies {
+		if candidateNonce == "" && cspPolicyNeedsShimNonce(pol, httpPrefix) {
+			var nb [12]byte
+			if _, err := rand.Read(nb[:]); err == nil {
+				candidateNonce = hex.EncodeToString(nb[:])
 			}
 		}
+		rewritten, used := rewriteSingleSidecarCSP(pol, httpPrefix, wsPrefix, candidateNonce)
+		if used {
+			nonceUsed = true
+		}
+		rewrittenPolicies = append(rewrittenPolicies, rewritten)
+	}
+
+	for _, pol := range rewrittenPolicies {
+		h.Add("Content-Security-Policy", pol)
+	}
+	if nonceUsed {
+		return candidateNonce
+	}
+	return ""
+}
+
+func splitCSPPolicies(headerValues []string) []string {
+	var out []string
+	for _, hv := range headerValues {
+		for _, part := range strings.Split(hv, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
+func (p *Proxy) externalSidecarPrefixURL(r *http.Request, port int, capSess *sidecarCapSession) (httpPrefix, wsPrefix string) {
+	if capSess != nil {
+		if savedHTTP, savedWS := capSess.externalPrefixes(); savedHTTP != "" {
+			return savedHTTP, savedWS
+		}
+	}
+
+	var (
+		pubHostPort string
+		pubHost     string
+		pubIsHTTPS  bool
+	)
+	if p.opts.PublicURL != "" {
+		if pub, err := url.Parse(p.opts.PublicURL); err == nil && pub.Host != "" {
+			pubHostPort = auth.SanitizeHostPort(pub.Host)
+			pubHost, _ = auth.SplitHostOptionalPort(pubHostPort)
+			pubIsHTTPS = strings.EqualFold(pub.Scheme, "https")
+		}
+	}
+
+	var (
+		reqHostPort string
+		reqHost     string
+		reqIsHTTPS  bool
+		sourceHost  string
+	)
+	if r != nil {
+		reqIsHTTPS = auth.RequestIsSecure(r, p.opts.TrustedProxies)
+		if fwd := p.trustedForwardedHost(r); fwd != "" {
+			reqHostPort = fwd
+		} else if safe := auth.SanitizeHostPort(r.Host); safe != "" {
+			reqHostPort = safe
+		}
+		reqHost, _ = auth.SplitHostOptionalPort(reqHostPort)
+
+		src := strings.TrimSpace(r.Header.Get("Origin"))
+		if src == "" || src == "null" {
+			src = strings.TrimSpace(r.Header.Get("Referer"))
+		}
+		if src != "" && src != "null" {
+			if su, err := url.Parse(src); err == nil {
+				sourceHost = su.Hostname()
+			}
+		}
+	}
+
+	directLoopback := sourceHost != "" && auth.IsLoopbackHost(sourceHost) && strings.EqualFold(sourceHost, reqHost)
+
+	var (
+		host  string
+		https bool
+	)
+	switch {
+	case directLoopback && reqHostPort != "":
+		host = reqHostPort
+		https = reqIsHTTPS
+	case reqHostPort == "" || (auth.IsLoopbackHost(reqHost) && pubHost != "" && !auth.IsLoopbackHost(pubHost)):
+		host = pubHostPort
+		https = pubIsHTTPS
+	default:
+		host = reqHostPort
+		https = reqIsHTTPS || (pubHost != "" && strings.EqualFold(reqHost, pubHost) && pubIsHTTPS)
 	}
 	if host == "" {
 		return "", ""
 	}
+
+	proto := "http"
 	wsProto := "ws"
-	if proto == "https" {
+	if https {
+		proto = "https"
 		wsProto = "wss"
 	}
 	suffix := fmt.Sprintf("%s%d/", SidecarPrefix, port)
 	return proto + "://" + host + suffix, wsProto + "://" + host + suffix
 }
 
-func rewriteUpstreamSidecarCSP(csp, httpPrefix, wsPrefix string) (rewritten string, shimNonce string) {
-	rawDirs := strings.Split(csp, ";")
-	type parsedDir struct {
-		name   string
-		tokens []string
-	}
-	var dirs []parsedDir
-	scriptElemIdx := -1
-	scriptIdx := -1
-	defaultIdx := -1
+type parsedCSPDirective struct {
+	name   string
+	tokens []string
+}
 
-	for _, raw := range rawDirs {
+func parseCSPDirectives(csp string) (dirs []parsedCSPDirective, scriptElemIdx, scriptIdx, defaultIdx int) {
+	scriptElemIdx = -1
+	scriptIdx = -1
+	defaultIdx = -1
+	for _, raw := range strings.Split(csp, ";") {
 		fields := strings.Fields(strings.TrimSpace(raw))
 		if len(fields) == 0 {
 			continue
@@ -1209,8 +1204,63 @@ func rewriteUpstreamSidecarCSP(csp, httpPrefix, wsPrefix string) (rewritten stri
 				defaultIdx = idx
 			}
 		}
-		dirs = append(dirs, parsedDir{name: name, tokens: fields[1:]})
+		dirs = append(dirs, parsedCSPDirective{name: name, tokens: fields[1:]})
 	}
+	return dirs, scriptElemIdx, scriptIdx, defaultIdx
+}
+
+func effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx int) int {
+	if scriptElemIdx >= 0 {
+		return scriptElemIdx
+	}
+	if scriptIdx >= 0 {
+		return scriptIdx
+	}
+	return defaultIdx
+}
+
+func cspTokensRequireNonce(tokens []string, httpPrefix string) (hasNone bool, needsNonce bool) {
+	hasSelf := false
+	hasWildcard := false
+	hasCrypto := false
+	for _, tok := range tokens {
+		low := strings.ToLower(tok)
+		switch {
+		case low == "'none'":
+			hasNone = true
+		case low == "'self'":
+			hasSelf = true
+		case low == "*" || low == "http:" || low == "https:":
+			hasWildcard = true
+		case low == "'strict-dynamic'":
+			hasCrypto = true
+		case strings.HasPrefix(low, "'nonce-") && strings.HasSuffix(tok, "'") && len(tok) > 8:
+			hasCrypto = true
+		case strings.HasPrefix(low, "'sha256-") || strings.HasPrefix(low, "'sha384-") || strings.HasPrefix(low, "'sha512-"):
+			hasCrypto = true
+		}
+	}
+	if hasNone || hasCrypto {
+		return hasNone, true
+	}
+	if !hasWildcard && (!hasSelf || httpPrefix == "") {
+		return false, true
+	}
+	return false, false
+}
+
+func cspPolicyNeedsShimNonce(csp, httpPrefix string) bool {
+	dirs, scriptElemIdx, scriptIdx, defaultIdx := parseCSPDirectives(csp)
+	effIdx := effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx)
+	if effIdx < 0 {
+		return false
+	}
+	_, needs := cspTokensRequireNonce(dirs[effIdx].tokens, httpPrefix)
+	return needs
+}
+
+func rewriteSingleSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) (rewritten string, usedNonce bool) {
+	dirs, scriptElemIdx, scriptIdx, defaultIdx := parseCSPDirectives(csp)
 
 	for i := range dirs {
 		hasSelf := false
@@ -1228,53 +1278,48 @@ func rewriteUpstreamSidecarCSP(csp, httpPrefix, wsPrefix string) (rewritten stri
 		}
 	}
 
-	effectiveIdx := scriptElemIdx
-	if effectiveIdx < 0 {
-		effectiveIdx = scriptIdx
-	}
-	if effectiveIdx < 0 {
-		effectiveIdx = defaultIdx
-	}
-
-	if effectiveIdx >= 0 {
-		toks := dirs[effectiveIdx].tokens
-		existingNonce := ""
-		hasHash := false
-		hasNone := false
-		for _, tok := range toks {
-			low := strings.ToLower(tok)
-			if low == "'none'" {
-				hasNone = true
-			}
-			if strings.HasPrefix(low, "'nonce-") && strings.HasSuffix(tok, "'") && len(tok) > 8 {
-				existingNonce = tok[7 : len(tok)-1]
-			}
-			if strings.HasPrefix(low, "'sha256-") || strings.HasPrefix(low, "'sha384-") || strings.HasPrefix(low, "'sha512-") {
-				hasHash = true
-			}
-		}
-		if hasNone && httpPrefix != "" {
-			filtered := make([]string, 0, len(toks)+1)
-			for _, tok := range toks {
-				if !strings.EqualFold(tok, "'none'") {
-					filtered = append(filtered, tok)
+	effIdx := effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx)
+	if effIdx >= 0 {
+		toks := dirs[effIdx].tokens
+		hasNone, needsNonce := cspTokensRequireNonce(toks, httpPrefix)
+		if hasNone {
+			if dirs[effIdx].name == "default-src" {
+				// Preserve default-src 'none' for non-script directives while permitting
+				// only the injected capability shim via an explicit script-src nonce.
+				if shimNonce != "" {
+					dirs = append(dirs, parsedCSPDirective{
+						name:   "script-src",
+						tokens: []string{"'nonce-" + shimNonce + "'"},
+					})
+					usedNonce = true
+				} else if httpPrefix != "" {
+					dirs = append(dirs, parsedCSPDirective{
+						name:   "script-src",
+						tokens: []string{httpPrefix},
+					})
 				}
+			} else {
+				filtered := make([]string, 0, len(toks)+1)
+				for _, tok := range toks {
+					if !strings.EqualFold(tok, "'none'") {
+						filtered = append(filtered, tok)
+					}
+				}
+				if shimNonce != "" {
+					filtered = appendUniqueCSPToken(filtered, "'nonce-"+shimNonce+"'")
+					usedNonce = true
+				} else if httpPrefix != "" {
+					filtered = appendUniqueCSPToken(filtered, httpPrefix)
+				}
+				dirs[effIdx].tokens = filtered
 			}
-			toks = appendUniqueCSPToken(filtered, httpPrefix)
-		} else if httpPrefix != "" {
-			toks = appendUniqueCSPToken(toks, httpPrefix)
-		}
-
-		if existingNonce != "" && isSafeCSPNonce(existingNonce) {
-			shimNonce = existingNonce
-		} else if hasHash {
-			var nb [12]byte
-			if _, err := rand.Read(nb[:]); err == nil {
-				shimNonce = hex.EncodeToString(nb[:])
-				toks = append(toks, "'nonce-"+shimNonce+"'")
+		} else {
+			if needsNonce && shimNonce != "" {
+				toks = appendUniqueCSPToken(toks, "'nonce-"+shimNonce+"'")
+				usedNonce = true
 			}
+			dirs[effIdx].tokens = toks
 		}
-		dirs[effectiveIdx].tokens = toks
 	}
 
 	out := make([]string, 0, len(dirs)+2)
@@ -1286,7 +1331,7 @@ func rewriteUpstreamSidecarCSP(csp, httpPrefix, wsPrefix string) (rewritten stri
 		}
 	}
 	out = append(out, sidecarSandboxDirective, sidecarFrameAncestors)
-	return strings.Join(out, "; "), shimNonce
+	return strings.Join(out, "; "), usedNonce
 }
 
 func appendUniqueCSPToken(tokens []string, candidate string) []string {
@@ -1296,20 +1341,6 @@ func appendUniqueCSPToken(tokens []string, candidate string) []string {
 		}
 	}
 	return append(tokens, candidate)
-}
-
-func isSafeCSPNonce(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-		if !isAlphaNum && c != '+' && c != '/' && c != '=' && c != '-' && c != '_' {
-			return false
-		}
-	}
-	return true
 }
 
 func rewriteSidecarLocation(loc string, port int, capPrefix string) string {
@@ -1709,10 +1740,12 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) 
 
 func rewriteTagAttrValue(attrName, rawVal string, port int, capPrefix string, baseDir string) string {
 	switch attrName {
-	case "src", "href", "action", "poster":
+	case "src", "href", "action", "poster", "formaction", "data":
 		return rewriteSidecarRelativeOrLoopbackURL(rawVal, port, capPrefix, baseDir)
-	case "srcset":
+	case "srcset", "imagesrcset":
 		return rewriteSrcsetValue(rawVal, port, capPrefix, baseDir)
+	case "style":
+		return string(rewriteSidecarCSS([]byte(rawVal), port, capPrefix, baseDir))
 	default:
 		return rawVal
 	}
@@ -1818,19 +1851,101 @@ func rewriteSidecarRelativeOrLoopbackURL(val string, port int, capPrefix string,
 	return lead + capPrefix + joined + suffix + trail
 }
 
+func isSrcsetSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f'
+}
+
 func rewriteSrcsetValue(val string, port int, capPrefix string, baseDir string) string {
-	parts := strings.Split(val, ",")
-	for idx, p := range parts {
-		trimmed := strings.TrimLeft(p, " \t\r\n")
-		lead := p[:len(p)-len(trimmed)]
-		space := strings.IndexAny(trimmed, " \t\r\n")
-		if space < 0 {
-			parts[idx] = lead + rewriteSidecarRelativeOrLoopbackURL(trimmed, port, capPrefix, baseDir)
-		} else {
-			parts[idx] = lead + rewriteSidecarRelativeOrLoopbackURL(trimmed[:space], port, capPrefix, baseDir) + trimmed[space:]
+	var out strings.Builder
+	out.Grow(len(val) + 64)
+	n := len(val)
+	i := 0
+	for i < n {
+		sepStart := i
+		for i < n && (isSrcsetSpace(val[i]) || val[i] == ',') {
+			i++
 		}
+		out.WriteString(val[sepStart:i])
+		if i >= n {
+			break
+		}
+
+		if i+5 <= n && strings.EqualFold(val[i:i+5], "data:") {
+			dataStart := i
+			commaIdx := strings.IndexByte(val[i:], ',')
+			if commaIdx < 0 {
+				out.WriteString(val[dataStart:])
+				break
+			}
+			i += commaIdx + 1
+			var quote byte
+			parenDepth := 0
+			inAngle := false
+			for i < n {
+				c := val[i]
+				if quote != 0 {
+					if c == quote {
+						quote = 0
+					}
+					i++
+					continue
+				}
+				if c == '"' || c == '\'' {
+					quote = c
+					i++
+					continue
+				}
+				if c == '<' {
+					inAngle = true
+				} else if c == '>' {
+					inAngle = false
+				} else if c == '(' {
+					parenDepth++
+				} else if c == ')' && parenDepth > 0 {
+					parenDepth--
+				} else if c == ',' && parenDepth == 0 && !inAngle {
+					break
+				}
+				i++
+			}
+			out.WriteString(val[dataStart:i])
+			continue
+		}
+
+		urlStart := i
+		for i < n && !isSrcsetSpace(val[i]) {
+			i++
+		}
+		rawURL := val[urlStart:i]
+		trailingCommas := 0
+		for len(rawURL) > 0 && rawURL[len(rawURL)-1] == ',' {
+			rawURL = rawURL[:len(rawURL)-1]
+			trailingCommas++
+		}
+		out.WriteString(rewriteSidecarRelativeOrLoopbackURL(rawURL, port, capPrefix, baseDir))
+		if trailingCommas > 0 {
+			for k := 0; k < trailingCommas; k++ {
+				out.WriteByte(',')
+			}
+			continue
+		}
+
+		descStart := i
+		parenDepth := 0
+		for i < n {
+			c := val[i]
+			if c == '(' {
+				parenDepth++
+			} else if c == ')' && parenDepth > 0 {
+				parenDepth--
+			} else if c == ',' && parenDepth == 0 {
+				break
+			}
+			i++
+		}
+		out.WriteString(val[descStart:i])
 	}
-	return strings.Join(parts, ",")
+	return out.String()
 }
 
 func rewriteSidecarCSS(body []byte, port int, capPrefix string, baseDir string) []byte {
@@ -1917,6 +2032,24 @@ func rewriteSidecarCSS(body []byte, port int, capPrefix string, baseDir string) 
 			continue
 		}
 
+		if body[i] == '"' || body[i] == '\'' {
+			q := body[i]
+			start := i
+			i++
+			for i < n && body[i] != q {
+				if body[i] == '\\' && i+1 < n {
+					i += 2
+					continue
+				}
+				i++
+			}
+			if i < n && body[i] == q {
+				i++
+			}
+			out.Write(body[start:i])
+			continue
+		}
+
 		out.WriteByte(body[i])
 		i++
 	}
@@ -1986,7 +2119,7 @@ type halfCloseConn interface {
 	CloseWrite() error
 }
 
-func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, port int, capPrefix string, capSess *sidecarCapSession, decodedPath, rawPath string) {
+func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, port int, dialAddr string, capPrefix string, capSess *sidecarCapSession, decodedPath, rawPath string) {
 	if !isValidWebSocketHandshake(r) {
 		http.Error(w, "invalid websocket upgrade request", http.StatusBadRequest)
 		return
@@ -1997,7 +2130,7 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 		return
 	}
 
-	upConn, err := dialLoopbackOnly(r.Context(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	upConn, err := dialSidecarAddress(r.Context(), "tcp", dialAddr)
 	if err != nil {
 		http.Error(w, "sidecar websocket unreachable", http.StatusBadGateway)
 		return
@@ -2018,7 +2151,8 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 	outReq.URL.RawPath = rawPath
 	outReq.Host = upstreamHost
 	outReq.RequestURI = ""
-	prepareSidecarUpstreamHeaders(outReq.Header, port, capPrefix, upstreamOrigin, capSess.cookieHeader())
+	prepareSidecarUpstreamHeaders(outReq.Header, upstreamOrigin, capSess.cookieHeader())
+	outReq.Header["X-Forwarded-For"] = nil
 	outReq.Header.Set("Connection", "Upgrade")
 	outReq.Header.Set("Upgrade", "websocket")
 
@@ -2312,41 +2446,281 @@ func sidecarShimJS(port int, capPrefix string) string {
     window.WebSocket = PatchedWS;
   }
 
+  function isSrcsetWS(c) {
+    return c === " " || c === "\t" || c === "\r" || c === "\n" || c === "\f";
+  }
+
+  function rewriteSrcset(val) {
+    if (typeof val !== "string" || !val) return val;
+    var out = "";
+    var n = val.length;
+    var i = 0;
+    while (i < n) {
+      var sepStart = i;
+      while (i < n && (isSrcsetWS(val.charAt(i)) || val.charAt(i) === ",")) i++;
+      out += val.slice(sepStart, i);
+      if (i >= n) break;
+      if (val.slice(i, i + 5).toLowerCase() === "data:") {
+        var dataStart = i;
+        var commaIdx = val.indexOf(",", i);
+        if (commaIdx < 0) {
+          out += val.slice(dataStart);
+          break;
+        }
+        i = commaIdx + 1;
+        var quote = "";
+        var pDepth = 0;
+        var inAngle = false;
+        while (i < n) {
+          var dc = val.charAt(i);
+          if (quote) {
+            if (dc === quote) quote = "";
+            i++;
+            continue;
+          }
+          if (dc === "\"" || dc === "'") {
+            quote = dc;
+            i++;
+            continue;
+          }
+          if (dc === "<") inAngle = true;
+          else if (dc === ">") inAngle = false;
+          else if (dc === "(") pDepth++;
+          else if (dc === ")" && pDepth > 0) pDepth--;
+          else if (dc === "," && pDepth === 0 && !inAngle) break;
+          i++;
+        }
+        out += val.slice(dataStart, i);
+        continue;
+      }
+      var urlStart = i;
+      while (i < n && !isSrcsetWS(val.charAt(i))) i++;
+      var rawUrl = val.slice(urlStart, i);
+      var commas = "";
+      while (rawUrl.length > 0 && rawUrl.charAt(rawUrl.length - 1) === ",") {
+        rawUrl = rawUrl.slice(0, -1);
+        commas += ",";
+      }
+      out += rewriteStr(rawUrl, false);
+      if (commas) {
+        out += commas;
+        continue;
+      }
+      var descStart = i;
+      var depth = 0;
+      while (i < n) {
+        var ch = val.charAt(i);
+        if (ch === "(") depth++;
+        else if (ch === ")" && depth > 0) depth--;
+        else if (ch === "," && depth === 0) break;
+        i++;
+      }
+      out += val.slice(descStart, i);
+    }
+    return out;
+  }
+
+  function isCSSIdent(c) {
+    return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_";
+  }
+
+  function rewriteCSSText(css) {
+    if (typeof css !== "string" || !css || !/url\(|@import/i.test(css)) return css;
+    var out = "";
+    var n = css.length;
+    var i = 0;
+    while (i < n) {
+      if (i + 1 < n && css.charAt(i) === "/" && css.charAt(i + 1) === "*") {
+        var cEnd = css.indexOf("*/", i + 2);
+        if (cEnd < 0) { out += css.slice(i); break; }
+        out += css.slice(i, cEnd + 2);
+        i = cEnd + 2;
+        continue;
+      }
+      if (i + 4 <= n && css.slice(i, i + 4).toLowerCase() === "url(" && (i === 0 || !isCSSIdent(css.charAt(i - 1)))) {
+        out += css.slice(i, i + 4);
+        i += 4;
+        while (i < n && isSrcsetWS(css.charAt(i))) { out += css.charAt(i); i++; }
+        if (i >= n) break;
+        var q = css.charAt(i);
+        if (q === "\"" || q === "'") {
+          out += q;
+          i++;
+          var qs = i;
+          while (i < n && css.charAt(i) !== q) {
+            if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+            i++;
+          }
+          out += rewriteStr(css.slice(qs, i), false);
+          if (i < n && css.charAt(i) === q) { out += q; i++; }
+        } else {
+          var us = i;
+          while (i < n && css.charAt(i) !== ")" && !isSrcsetWS(css.charAt(i))) i++;
+          out += rewriteStr(css.slice(us, i), false);
+        }
+        continue;
+      }
+      if (i + 7 <= n && css.slice(i, i + 7).toLowerCase() === "@import") {
+        out += css.slice(i, i + 7);
+        i += 7;
+        while (i < n && isSrcsetWS(css.charAt(i))) { out += css.charAt(i); i++; }
+        var iq = i < n ? css.charAt(i) : "";
+        if (iq === "\"" || iq === "'") {
+          out += iq;
+          i++;
+          var iqs = i;
+          while (i < n && css.charAt(i) !== iq) {
+            if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+            i++;
+          }
+          out += rewriteStr(css.slice(iqs, i), false);
+          if (i < n && css.charAt(i) === iq) { out += iq; i++; }
+        }
+        continue;
+      }
+      var ch = css.charAt(i);
+      if (ch === "\"" || ch === "'") {
+        var litStart = i;
+        i++;
+        while (i < n && css.charAt(i) !== ch) {
+          if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+          i++;
+        }
+        if (i < n && css.charAt(i) === ch) i++;
+        out += css.slice(litStart, i);
+        continue;
+      }
+      out += ch;
+      i++;
+    }
+    return out;
+  }
+
   if (typeof Element !== "undefined" && Element.prototype && Element.prototype.setAttribute) {
     var origSetAttr = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function(name, value) {
       if (typeof name === "string" && typeof value === "string") {
         var low = name.toLowerCase();
-        if (low === "src" || low === "href" || low === "action" || low === "poster") {
+        if (low === "src" || low === "href" || low === "action" || low === "poster" || low === "formaction" || low === "data") {
           value = rewriteStr(value, false);
+        } else if (low === "srcset" || low === "imagesrcset") {
+          value = rewriteSrcset(value);
+        } else if (low === "style") {
+          value = rewriteCSSText(value);
         }
       }
       return origSetAttr.call(this, name, value);
     };
   }
 
-  function wrapProp(Ctor, prop) {
+  function wrapProp(Ctor, prop, transform) {
     if (!Ctor || !Ctor.prototype) return;
     var desc = Object.getOwnPropertyDescriptor(Ctor.prototype, prop);
     if (!desc || typeof desc.set !== "function") return;
+    var fn = transform || function(v) { return rewriteStr(v, false); };
     Object.defineProperty(Ctor.prototype, prop, {
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
       set: function(v) {
-        return desc.set.call(this, typeof v === "string" ? rewriteStr(v, false) : v);
+        return desc.set.call(this, typeof v === "string" ? fn(v) : v);
       }
     });
   }
   try {
     wrapProp(window.HTMLImageElement, "src");
+    wrapProp(window.HTMLImageElement, "srcset", rewriteSrcset);
+    wrapProp(window.HTMLSourceElement, "src");
+    wrapProp(window.HTMLSourceElement, "srcset", rewriteSrcset);
     wrapProp(window.HTMLScriptElement, "src");
     wrapProp(window.HTMLLinkElement, "href");
+    wrapProp(window.HTMLLinkElement, "imageSrcset", rewriteSrcset);
     wrapProp(window.HTMLAnchorElement, "href");
     wrapProp(window.HTMLFormElement, "action");
+    wrapProp(window.HTMLButtonElement, "formAction");
+    wrapProp(window.HTMLInputElement, "src");
+    wrapProp(window.HTMLInputElement, "formAction");
     wrapProp(window.HTMLIFrameElement, "src");
     wrapProp(window.HTMLMediaElement, "src");
-    wrapProp(window.HTMLSourceElement, "src");
+    wrapProp(window.HTMLVideoElement, "poster");
+    wrapProp(window.HTMLObjectElement, "data");
+  } catch (e) {}
+
+  try {
+    if (window.CSSStyleDeclaration && window.CSSStyleDeclaration.prototype) {
+      var styleProto = window.CSSStyleDeclaration.prototype;
+      if (typeof styleProto.setProperty === "function") {
+        var origSetProp = styleProto.setProperty;
+        styleProto.setProperty = function(prop, val, prio) {
+          if (typeof val === "string") val = rewriteCSSText(val);
+          return arguments.length > 2 ? origSetProp.call(this, prop, val, prio) : origSetProp.call(this, prop, val);
+        };
+      }
+      wrapProp(window.CSSStyleDeclaration, "cssText", rewriteCSSText);
+      ["background", "backgroundImage", "mask", "maskImage", "webkitMask", "webkitMaskImage", "listStyleImage", "borderImage", "borderImageSource", "cursor"].forEach(function(p) {
+        wrapProp(window.CSSStyleDeclaration, p, rewriteCSSText);
+      });
+    }
+    if (window.CSSStyleSheet && window.CSSStyleSheet.prototype) {
+      var sheetProto = window.CSSStyleSheet.prototype;
+      if (typeof sheetProto.insertRule === "function") {
+        var origInsertRule = sheetProto.insertRule;
+        sheetProto.insertRule = function(rule, index) {
+          if (typeof rule === "string") rule = rewriteCSSText(rule);
+          return arguments.length > 1 ? origInsertRule.call(this, rule, index) : origInsertRule.call(this, rule);
+        };
+      }
+      ["replace", "replaceSync"].forEach(function(m) {
+        if (typeof sheetProto[m] !== "function") return;
+        var origReplace = sheetProto[m];
+        sheetProto[m] = function(text) {
+          if (typeof text === "string") text = rewriteCSSText(text);
+          return origReplace.call(this, text);
+        };
+      });
+    }
+    if (window.Node && window.Node.prototype) {
+      var tcDesc = Object.getOwnPropertyDescriptor(window.Node.prototype, "textContent");
+      if (tcDesc && typeof tcDesc.set === "function") {
+        Object.defineProperty(window.Node.prototype, "textContent", {
+          configurable: true,
+          enumerable: tcDesc.enumerable,
+          get: tcDesc.get,
+          set: function(v) {
+            if (this && this.nodeType === 1 && this.tagName === "STYLE" && typeof v === "string") {
+              v = rewriteCSSText(v);
+            }
+            return tcDesc.set.call(this, v);
+          }
+        });
+      }
+      ["appendChild", "insertBefore"].forEach(function(fn) {
+        var origNodeFn = window.Node.prototype[fn];
+        if (typeof origNodeFn !== "function") return;
+        window.Node.prototype[fn] = function(child) {
+          if (this && this.nodeType === 1 && this.tagName === "STYLE" && child && child.nodeType === 3 && typeof child.nodeValue === "string") {
+            child.nodeValue = rewriteCSSText(child.nodeValue);
+          }
+          return origNodeFn.apply(this, arguments);
+        };
+      });
+    }
+    if (window.Element && window.Element.prototype) {
+      var ihDesc = Object.getOwnPropertyDescriptor(window.Element.prototype, "innerHTML");
+      if (ihDesc && typeof ihDesc.set === "function") {
+        Object.defineProperty(window.Element.prototype, "innerHTML", {
+          configurable: true,
+          enumerable: ihDesc.enumerable,
+          get: ihDesc.get,
+          set: function(v) {
+            if (this && this.tagName === "STYLE" && typeof v === "string") {
+              v = rewriteCSSText(v);
+            }
+            return ihDesc.set.call(this, v);
+          }
+        });
+      }
+    }
   } catch (e) {}
 
   if (window.history) {

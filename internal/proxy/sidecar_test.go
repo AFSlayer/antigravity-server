@@ -725,6 +725,258 @@ func TestSidecarWebSocketHardeningCloseAndIdle(t *testing.T) {
 	}
 }
 
+func TestSidecarReverseProxyPublicURLAndMultipleCSPs(t *testing.T) {
+	sidecarSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			// Comma-separated policies in one header + a second stricter header restricting img-src.
+			w.Header().Add("Content-Security-Policy", "default-src 'self', script-src 'self' 'nonce-up1'")
+			w.Header().Add("Content-Security-Policy", "script-src 'self' 'sha256-xyz123='; img-src 'none'")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><html><head></head><body><script nonce="up1">window.ok=1;</script></body></html>`))
+		case "/strict-none":
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<html><head></head><body>static</body></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(sidecarSrv.Close)
+	scPort := serverPort(t, sidecarSrv.URL)
+
+	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
+		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://127.0.0.1:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"}}
+	})
+
+	p, err := New(Options{
+		TargetPort: upstreamPort(t, ls),
+		PublicURL:  "https://mybox.ts.net",
+		Patch:      patches.Options{CacheKey: "k1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// Simulate a local reverse proxy (such as Tailscale Serve) that forwards to 127.0.0.1:<port>
+	// without X-Forwarded-Host / TrustedProxies while the browser accesses https://mybox.ts.net.
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort), nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Referer", "https://mybox.ts.net/c/abc")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse-proxied initial entry status = %d, want 200", resp.StatusCode)
+	}
+
+	csps := resp.Header.Values("Content-Security-Policy")
+	if len(csps) != 3 {
+		t.Fatalf("expected 3 separate CSP headers preserved from comma+multi-header upstream, got %d: %v", len(csps), csps)
+	}
+
+	wantHTTPPrefix := fmt.Sprintf("https://mybox.ts.net/__agy/sidecar/%d/", scPort)
+	wantWSPrefix := fmt.Sprintf("wss://mybox.ts.net/__agy/sidecar/%d/", scPort)
+	if !strings.Contains(csps[0], wantHTTPPrefix) || !strings.Contains(csps[0], wantWSPrefix) {
+		t.Fatalf("policy[0] missing external PublicURL prefixes (%s / %s): %q", wantHTTPPrefix, wantWSPrefix, csps[0])
+	}
+	if strings.Contains(csps[0], "'self',") {
+		t.Fatalf("comma-separated CSP was not split cleanly: %q", csps[0])
+	}
+
+	html := string(bodyBytes)
+	nonceRe := regexp.MustCompile(`<script nonce="([0-9a-f]{24})" src="(/__agy/sidecar/\d+/~s/[0-9a-f]{32})/__agy_sidecar_shim\.js"></script>`)
+	nm := nonceRe.FindStringSubmatch(html)
+	if len(nm) < 3 {
+		t.Fatalf("injected shim script missing common hex nonce:\n%s", html)
+	}
+	shimNonce := nm[1]
+	capPrefix := nm[2]
+
+	if !strings.Contains(csps[1], "'nonce-up1'") || !strings.Contains(csps[1], "'nonce-"+shimNonce+"'") {
+		t.Fatalf("policy[1] must keep upstream nonce-up1 AND add common shim nonce %s: %q", shimNonce, csps[1])
+	}
+	if !strings.Contains(csps[2], "'sha256-xyz123='") || !strings.Contains(csps[2], "'nonce-"+shimNonce+"'") || !strings.Contains(csps[2], "img-src 'none'") {
+		t.Fatalf("policy[2] must keep sha256, add shim nonce, and preserve img-src 'none': %q", csps[2])
+	}
+
+	// Verify default-src 'none' is NOT widened to allow arbitrary connect/img/object sources.
+	noneReq, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/strict-none", nil)
+	noneReq.Header.Set("Origin", "null")
+	noneResp, err := http.DefaultClient.Do(noneReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(noneResp.Body)
+	noneResp.Body.Close()
+	noneCSP := noneResp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(noneCSP, "default-src 'none'") || !strings.Contains(noneCSP, "script-src 'nonce-") {
+		t.Fatalf("default-src 'none' policy was weakened instead of adding minimal script-src nonce: %q", noneCSP)
+	}
+}
+
+func TestSidecarLoopbackAddressFamilyIsolationAndCapRenewal(t *testing.T) {
+	ln4, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln4.Close() })
+	sharedPort := ln4.Addr().(*net.TCPAddr).Port
+
+	ln6, err := net.Listen("tcp6", fmt.Sprintf("[::1]:%d", sharedPort))
+	if err != nil {
+		t.Skipf("IPv6 loopback on shared port %d unavailable: %v", sharedPort, err)
+	}
+	t.Cleanup(func() { _ = ln6.Close() })
+
+	var v4Hits atomic.Int64
+	var v6Hits atomic.Int64
+
+	srv4 := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v4Hits.Add(1)
+		http.Error(w, "wrong-v4-service", http.StatusTeapot)
+	})}
+	go func() { _ = srv4.Serve(ln4) }()
+	t.Cleanup(func() { _ = srv4.Close() })
+
+	srv6 := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v6Hits.Add(1)
+		if isWebSocketUpgrade(r) {
+			c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+			if err != nil {
+				return
+			}
+			defer c.CloseNow()
+			_ = c.Write(r.Context(), websocket.MessageText, []byte("v6-ws-ok:"+r.Header.Get("Cookie")))
+			return
+		}
+		if r.URL.Path == "/" {
+			w.Header().Add("Set-Cookie", "v6_vault=preserved99; Path=/")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<html><head></head><body>v6-ok</body></html>"))
+			return
+		}
+		_, _ = w.Write([]byte("v6-api:" + r.Header.Get("Cookie")))
+	})}
+	go func() { _ = srv6.Serve(ln6) }()
+	t.Cleanup(func() { _ = srv6.Close() })
+
+	var useAmbiguousLocalhost atomic.Bool
+	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
+		if useAmbiguousLocalhost.Load() {
+			return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://localhost:%d", sharedPort), Status: "SIDECAR_STATUS_RUNNING"}}
+		}
+		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://[::1]:%d", sharedPort), Status: "SIDECAR_STATUS_RUNNING"}}
+	})
+
+	sessStore, err := auth.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json"), 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessToken, err := sessStore.Create("agent", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := New(Options{
+		TargetPort:      upstreamPort(t, ls),
+		ValidateSession: sessStore.Validate,
+		ResolveSidecarHost: func(_ context.Context, port int, _ string) (string, bool) {
+			if port == sharedPort {
+				return "::1", true
+			}
+			return "", false
+		},
+		Patch: patches.Options{CacheKey: "k1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// 1. Explicit http://[::1]:port BaseURL dials [::1] exclusively (both HTTP and WebSocket), never 127.0.0.1.
+	req1, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, sharedPort), nil)
+	req1.Header.Set("Cookie", auth.CookieName+"="+sessToken)
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1, _ := io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK || !strings.Contains(string(b1), "v6-ok") {
+		t.Fatalf("IPv6 sidecar HTTP failed (%d): %s", resp1.StatusCode, string(b1))
+	}
+
+	capRe := regexp.MustCompile(fmt.Sprintf(`/__agy/sidecar/%d/~s/([0-9a-f]{32})`, sharedPort))
+	m1 := capRe.FindStringSubmatch(string(b1))
+	if len(m1) < 2 {
+		t.Fatalf("missing capability token in %s", string(b1))
+	}
+	capPrefix1 := m1[0]
+	capTok1 := m1[1]
+
+	// Ambiguous localhost BaseURL resolved via ResolveSidecarHost also dials [::1] for WebSockets without touching 127.0.0.1.
+	useAmbiguousLocalhost.Store(true)
+	p.sidecarMu.Lock()
+	p.sidecarCachedAt = time.Time{}
+	p.sidecarMu.Unlock()
+
+	wsURL := "ws" + strings.TrimPrefix(front.URL, "http") + capPrefix1 + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wsConn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"null"}},
+	})
+	if err != nil {
+		t.Fatalf("IPv6 sidecar WebSocket dial failed: %v", err)
+	}
+	_, wsMsg, err := wsConn.Read(ctx)
+	wsConn.CloseNow()
+	if err != nil || string(wsMsg) != "v6-ws-ok:v6_vault=preserved99" {
+		t.Fatalf("IPv6 sidecar WebSocket message = %q, err = %v", string(wsMsg), err)
+	}
+	if v4Hits.Load() != 0 || v6Hits.Load() < 2 {
+		t.Fatalf("address-family isolation violated: v4Hits=%d (want 0), v6Hits=%d", v4Hits.Load(), v6Hits.Load())
+	}
+
+	// 2. Near-expiry capability (<30m remaining of 12h max lifetime) mints a fresh capability token on reload
+	// while inheriting the server-side cookie vault from the expiring capability.
+	p.sidecarCapMu.Lock()
+	p.sidecarCaps[capTok1].createdAt = time.Now().Add(-(sidecarCapMaxLifetime - 10*time.Minute))
+	p.sidecarCapMu.Unlock()
+
+	req2, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/check", front.URL, sharedPort), nil)
+	req2.Header.Set("Cookie", auth.CookieName+"="+sessToken)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if string(b2) != "v6-api:v6_vault=preserved99" {
+		t.Fatalf("renewed capability did not inherit vaulted cookies: got %q", string(b2))
+	}
+	p.sidecarCapMu.Lock()
+	var rotatedTok string
+	for k := range p.sidecarCaps {
+		if k != capTok1 {
+			rotatedTok = k
+		}
+	}
+	p.sidecarCapMu.Unlock()
+	if rotatedTok == "" {
+		t.Fatal("expected a fresh capability token to be minted when remaining lifetime < 30m")
+	}
+}
+
 func TestSidecarShimJSRuntimeRewrites(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -777,6 +1029,46 @@ global.window.Request = global.Request;
 global.XMLHttpRequest = function() {};
 global.XMLHttpRequest.prototype.open = function(m, u) { calls.push(["xhr", String(u)]); };
 
+function makeDOMCtor(props) {
+  function C() { this._attrs = {}; this._props = {}; }
+  props.forEach(p => {
+    Object.defineProperty(C.prototype, p, {
+      configurable: true,
+      enumerable: true,
+      get() { return this._props[p]; },
+      set(v) { this._props[p] = v; }
+    });
+  });
+  return C;
+}
+global.Element = function Element(tag) { this.nodeType = 1; this.tagName = tag; this._attrs = {}; this._html = ""; };
+global.Element.prototype.setAttribute = function(k, v) { this._attrs[k] = v; };
+Object.defineProperty(global.Element.prototype, "innerHTML", {
+  configurable: true,
+  get() { return this._html; },
+  set(v) { this._html = v; }
+});
+global.window.Element = global.Element;
+
+global.Node = function Node() {};
+Object.defineProperty(global.Node.prototype, "textContent", {
+  configurable: true,
+  get() { return this._text; },
+  set(v) { this._text = v; }
+});
+global.Node.prototype.appendChild = function(ch) { this._child = ch; return ch; };
+global.window.Node = global.Node;
+
+global.window.HTMLImageElement = makeDOMCtor(["src", "srcset"]);
+global.window.HTMLVideoElement = makeDOMCtor(["poster"]);
+global.window.HTMLButtonElement = makeDOMCtor(["formAction"]);
+global.window.HTMLObjectElement = makeDOMCtor(["data"]);
+global.window.CSSStyleDeclaration = makeDOMCtor(["cssText", "backgroundImage"]);
+global.window.CSSStyleDeclaration.prototype.setProperty = function(k, v) { this._setProp = [k, v]; };
+global.window.CSSStyleSheet = function() {};
+global.window.CSSStyleSheet.prototype.insertRule = function(r) { this._rule = r; return 0; };
+global.window.CSSStyleSheet.prototype.replaceSync = function(t) { this._replaced = t; };
+
 ` + shim + `
 
 // In-memory storage polyfill prevents crashes under Origin: null sandbox.
@@ -798,6 +1090,50 @@ new window.EventSource("/events");
 new XMLHttpRequest().open("GET", "/poll");
 // Must not throw even when opaque-origin history.pushState throws SecurityError.
 window.history.pushState(null, "", "/board/2");
+
+// Dynamic DOM attribute, property, srcset (with data: comma), style, CSSOM, and <style> rewrites.
+const el = new global.Element("IMG");
+el.setAttribute("srcset", "data:image/svg+xml,<svg viewBox='0,0,4,4'/> 1x, /assets/hi.png 2x");
+el.setAttribute("formaction", "/submit");
+el.setAttribute("style", "background: url('/img/card.png'); content: 'url(/keep-literal)'");
+assert.strictEqual(el._attrs.srcset, "data:image/svg+xml,<svg viewBox='0,0,4,4'/> 1x, " + P + "/assets/hi.png 2x");
+assert.strictEqual(el._attrs.formaction, P + "/submit");
+assert.strictEqual(el._attrs.style, "background: url('" + P + "/img/card.png'); content: 'url(/keep-literal)'");
+
+const img = new window.HTMLImageElement();
+img.srcset = "/a.png, /b.png 2x";
+assert.strictEqual(img.srcset, P + "/a.png, " + P + "/b.png 2x");
+
+const vid = new window.HTMLVideoElement();
+vid.poster = "/thumb.jpg";
+assert.strictEqual(vid.poster, P + "/thumb.jpg");
+
+const btn = new window.HTMLButtonElement();
+btn.formAction = "/act";
+assert.strictEqual(btn.formAction, P + "/act");
+
+const obj = new window.HTMLObjectElement();
+obj.data = "/embed.svg";
+assert.strictEqual(obj.data, P + "/embed.svg");
+
+const decl = new window.CSSStyleDeclaration();
+decl.setProperty("--hero", "url(/hero.webp)");
+decl.backgroundImage = "url(\"/bg2.webp\")";
+assert.deepStrictEqual(decl._setProp, ["--hero", "url(" + P + "/hero.webp)"]);
+assert.strictEqual(decl.backgroundImage, "url(\"" + P + "/bg2.webp\")");
+
+const sheet = new window.CSSStyleSheet();
+sheet.insertRule("@import '/base.css';");
+sheet.replaceSync(".x { mask-image: url(/m.svg); }");
+assert.strictEqual(sheet._rule, "@import '" + P + "/base.css';");
+assert.strictEqual(sheet._replaced, ".x { mask-image: url(" + P + "/m.svg); }");
+
+const styleNode = Object.assign(new global.Node(), { nodeType: 1, tagName: "STYLE" });
+styleNode.textContent = ".a{background:url(/s1.png)}";
+assert.strictEqual(styleNode.textContent, ".a{background:url(" + P + "/s1.png)}");
+const txt = { nodeType: 3, nodeValue: ".b{background:url(/s2.png)}" };
+styleNode.appendChild(txt);
+assert.strictEqual(txt.nodeValue, ".b{background:url(" + P + "/s2.png)}");
 
 assert.deepStrictEqual(calls, [
   ["fetch", P + "/api/board?x=1"],

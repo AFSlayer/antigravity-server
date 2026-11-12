@@ -195,7 +195,7 @@ func TestRemoteSidecarPreviewAndOAuthPatches2312(t *testing.T) {
 		Options{},
 	)
 
-	harness := `
+	harness := `"use strict";
 const assert = require("assert");
 global.location = { origin: "https://agy.example.com", protocol: "https:", host: "agy.example.com" };
 global.window = { location: global.location };
@@ -209,14 +209,28 @@ let upstreamClient = {};
 ` + fetchFallbackJS + `
 
 const navCalls = [];
+const popupCalls = [];
+const desktopSignInCalls = [];
+let runtimeMode = 2; // 2 = web, 1 = desktop
 const SC = () => ({ navigate(arg) { navCalls.push(arg); } });
 const B = { useCallback: fn => fn };
-const gj = () => ({ get: k => k === "pluginAuth", runtimeEnvironment: { web: true } });
-const CT = () => 2; // web mode
-const Qt = () => ({ startPluginAuthSignIn: () => Promise.reject(new Error("should not call desktop mode=1")) });
+const gj = () => ({ get: k => k === "pluginAuth", runtimeEnvironment: { marker: "valid-env" } });
+const CT = env => {
+  assert.strictEqual(env && env.marker, "valid-env", "CT must receive original runtimeEnvironment, not reassigned authViewFor callback");
+  return runtimeMode;
+};
+const Qt = () => ({
+  startPluginAuthSignIn: req => {
+    if (runtimeMode !== 1) {
+      return Promise.reject(new Error("should not call desktop mode=1 in web runtime"));
+    }
+    desktopSignInCalls.push(req);
+    return Promise.resolve({ authUrl: "https://auth.example.com/desktop-start" });
+  }
+});
 const St = () => () => {};
 const mCc = () => null;
-const dm = () => {};
+const dm = (_win, url, target, features) => { popupCalls.push({ url, target, features }); };
 const Wb = (_s, msg) => msg;
 const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
 
@@ -277,7 +291,7 @@ const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
   }
   assert.ok(caughtNoListener && caughtNoListener.name === "ConnectError" && caughtNoListener.code === 5);
 
-  // 4. Plugin @-mention sign-in on web routes to plugin Accounts tab via captured router
+  // 4a. Plugin @-mention sign-in on web routes to plugin Accounts tab via captured router
   RD();
   const mention = nCc([]);
   assert.strictEqual(mention.canSignIn, true);
@@ -300,6 +314,18 @@ const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
     params: { pluginId: "linear" },
     search: { pluginTab: "accounts" }
   });
+
+  // 4b. Desktop mode (CT === 1) preserves native mode=1 popup flow even after b was reassigned to authViewFor
+  runtimeMode = 1;
+  const deskMention = nCc([]);
+  assert.strictEqual(deskMention.canSignIn, true);
+  deskMention.startSignIn({ plugin: "/plugins/figma", provider: "oauth", accountId: "acc1" });
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(navCalls.length, 3, "desktop mode must not trigger remote web router navigation");
+  assert.strictEqual(desktopSignInCalls.length, 1);
+  assert.strictEqual(desktopSignInCalls[0].mode, 1);
+  assert.strictEqual(popupCalls.length, 1);
+  assert.strictEqual(popupCalls[0].url, "https://auth.example.com/desktop-start");
 
   // 5. Remote OAuth: loopback callback delivered short-circuits single-use auth code; full HTTPS callback URL falls back to extracted code
   let mcpSubmitted = [];

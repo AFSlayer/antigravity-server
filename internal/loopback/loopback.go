@@ -216,6 +216,18 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		h.touchActivity()
 	}()
 
+	ctx, cancel := context.WithTimeout(r.Context(), fetchTimeout)
+	defer cancel()
+
+	// Acquire the concurrency semaphore before decoding up to 24 MiB of JSON and
+	// 16 MiB of base64 payload so queued requests cannot pre-allocate memory unboundedly.
+	select {
+	case h.sem <- struct{}{}:
+		defer func() { <-h.sem }()
+	case <-ctx.Done():
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxFetchRequestBytes)
 	var req fetchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -276,16 +288,6 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reqBody = decoded
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), fetchTimeout)
-	defer cancel()
-
-	select {
-	case h.sem <- struct{}{}:
-		defer func() { <-h.sem }()
-	case <-ctx.Done():
-		return
 	}
 
 	var bodyReader io.Reader

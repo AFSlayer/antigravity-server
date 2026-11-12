@@ -1102,7 +1102,7 @@ func All() []Patch {
 			Optional:     true,
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("startPluginAuthSignIn:")) },
 			FindRe:       pluginMentionRemoteSignInRe,
-			Replace:      `${1}${5}&&(${6}||!!window.__agyOpenPluginAuth)${7}!(${6})&&window.__agyOpenPluginAuth?window.__agyOpenPluginAuth(${8}.plugin):${4}&&${3}&&${9}`,
+			Replace:      `${1}!1,_agyDesk=Boolean(${5}&&(${6}));${4}=Boolean(${5}&&(_agyDesk||!!window.__agyOpenPluginAuth))${7}!_agyDesk&&window.__agyOpenPluginAuth?window.__agyOpenPluginAuth(${8}.plugin):_agyDesk&&${3}&&${9}`,
 		},
 		{
 			ID:           "mcp-oauth-remote-callback",

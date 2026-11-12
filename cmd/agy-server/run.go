@@ -346,7 +346,21 @@ func (r *runner) start(runCtx context.Context) error {
 		TrustedProxies:  trusted,
 		DisableWSRelay:  r.cfg.DisableWSRelay,
 		ValidateSession: r.authState.sessions.Validate,
-		Patch:           patchOpts,
+		ResolveSidecarHost: func(ctx context.Context, port int, urlHost string) (string, bool) {
+			if instance.PID <= 0 {
+				return "", false
+			}
+			endpoints, perr := lsproc.ProcessTreeListeningEndpoints(ctx, instance.PID)
+			if perr != nil {
+				return "", false
+			}
+			mask, ok := endpoints[port]
+			if !ok {
+				return "", false
+			}
+			return mask.ResolveDialHost(urlHost)
+		},
+		Patch: patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)
 			reportPatches(target, report)
@@ -409,6 +423,10 @@ func (r *runner) start(runCtx context.Context) error {
 		lsPortsLastErr  error
 		lsPortsInflight chan struct{}
 	)
+	lsPortsTTL := 2 * time.Second
+	if runtime.GOOS != "linux" {
+		lsPortsTTL = 5 * time.Second
+	}
 	hasLanguageServerOwnPort := func(ctx context.Context, port int) bool {
 		if _, ok := initialLSPorts[port]; ok {
 			return true
@@ -417,15 +435,10 @@ func (r *runner) start(runCtx context.Context) error {
 			return false
 		}
 		lsPortsMu.Lock()
-		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < 500*time.Millisecond && lsPortsLastErr == nil {
-			if _, ok := lsDirectPorts[port]; ok {
-				lsPortsMu.Unlock()
-				return true
-			}
-			if time.Since(lsPortsCachedAt) < 200*time.Millisecond {
-				lsPortsMu.Unlock()
-				return false
-			}
+		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < lsPortsTTL && lsPortsLastErr == nil {
+			_, ok := lsDirectPorts[port]
+			lsPortsMu.Unlock()
+			return ok
 		}
 		if lsPortsInflight != nil {
 			waitCh := lsPortsInflight

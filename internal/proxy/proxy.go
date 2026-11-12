@@ -49,8 +49,12 @@ type Options struct {
 	// When set, revoking or expiring a parent session immediately invalidates any
 	// sandboxed sidecar capabilities minted from it.
 	ValidateSession func(token string) bool
-	Patch           patches.Options
-	OnReport        ReportFunc
+	// ResolveSidecarHost optionally resolves the exact loopback IP literal
+	// ("127.0.0.1" or "::1") owned by the language server process tree for port
+	// when a sidecar entry specifies an ambiguous "localhost" host.
+	ResolveSidecarHost func(ctx context.Context, port int, urlHost string) (dialHost string, ok bool)
+	Patch              patches.Options
+	OnReport           ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
@@ -77,7 +81,7 @@ type Proxy struct {
 	closeOnce sync.Once
 
 	sidecarMu              sync.Mutex
-	sidecarAllowed         map[int]struct{}
+	sidecarAllowed         map[int]string
 	sidecarReserved        map[int]struct{}
 	sidecarCachedAt        time.Time
 	sidecarLastProbe       time.Time
@@ -206,9 +210,6 @@ func (p *Proxy) Handler() http.Handler {
 
 		if isRelayWS {
 			p.relayWebSocket(w, r)
-			return
-		}
-		if p.redirectSidecarOrphanRequest(w, r) {
 			return
 		}
 
