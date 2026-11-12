@@ -20,9 +20,7 @@ func powershell(ctx context.Context, script string) (string, error) {
 const listProcessesScript = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*language_server*' -and $_.CommandLine -like '*--standalone*' } | ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }`
 
 func standaloneProcesses() ([]process, error) {
-	ctx, cancel := discoveryContext(context.Background())
-	defer cancel()
-	out, err := powershell(ctx, listProcessesScript)
+	out, err := powershell(context.Background(), listProcessesScript)
 	if err != nil {
 		return nil, err
 	}
@@ -47,9 +45,7 @@ func standaloneProcesses() ([]process, error) {
 }
 
 func listeningPorts(pid int) ([]int, error) {
-	ctx, cancel := discoveryContext(context.Background())
-	defer cancel()
-	return listeningPortsContext(ctx, pid)
+	return listeningPortsContext(context.Background(), pid)
 }
 
 func listeningPortsContext(ctx context.Context, pid int) ([]int, error) {

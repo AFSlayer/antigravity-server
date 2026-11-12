@@ -83,6 +83,7 @@ type Proxy struct {
 	sidecarMu              sync.Mutex
 	sidecarAllowed         map[int]string
 	sidecarReserved        map[int]struct{}
+	sidecarFreePorts       map[int]time.Time
 	sidecarCachedAt        time.Time
 	sidecarLastProbe       time.Time
 	sidecarLastErr         error

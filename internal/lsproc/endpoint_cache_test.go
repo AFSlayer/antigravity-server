@@ -3,6 +3,8 @@ package lsproc
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,11 +53,22 @@ func (f *fakeTree) discover(context.Context, int) (map[int]LoopbackListenMask, e
 	return out, f.err
 }
 
-func newFakeCache(f *fakeTree, ttl, missRefresh time.Duration) *TreeEndpointCache {
-	c := NewTreeEndpointCache(1234, ttl, missRefresh)
-	c.discover = f.discover
+func newFakeCache(f *fakeTree, ttl, missRefresh time.Duration) *EndpointCache {
+	c := newEndpointCache(1234, ttl, missRefresh, f.discover)
 	c.now = f.now
 	return c
+}
+
+// waitWalks waits for a background walk to be counted.
+func waitWalks(t *testing.T, f *fakeTree, want int32) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for f.walks.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("walks = %d, want %d", f.walks.Load(), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // A sidecar page loads dozens of assets at once. They must share one walk of
@@ -97,8 +110,118 @@ func TestTreeEndpointCacheSharesOneWalk(t *testing.T) {
 	}
 	// After it, the tree is walked again.
 	f.advance(time.Second)
+	if _, ok := c.Lookup(context.Background(), 4000); !ok {
+		t.Fatal("lookup after the TTL did not find the port")
+	}
+	waitWalks(t, f, 2)
+}
+
+// An expired result still answers a known port at once and is refreshed in
+// the background, so a slow walk does not stall a page's requests. A result
+// older than two TTLs is not used.
+func TestEndpointCacheRefreshesExpiredHitsInBackground(t *testing.T) {
+	f := &fakeTree{clock: time.Unix(1000, 0)}
+	f.set(map[int]LoopbackListenMask{4000: ListenIPv4}, nil)
+	c := newFakeCache(f, 2*time.Second, time.Second)
+	if _, ok := c.Lookup(context.Background(), 4000); !ok {
+		t.Fatal("known port not found")
+	}
+
+	f.gate = make(chan struct{})
+	f.advance(2500 * time.Millisecond)
+	answered := make(chan bool, 1)
+	go func() {
+		_, ok := c.Lookup(context.Background(), 4000)
+		answered <- ok
+	}()
+	select {
+	case ok := <-answered:
+		if !ok {
+			t.Fatal("an expired hit was not answered")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("an expired hit waited for the walk")
+	}
+	waitWalks(t, f, 2)
+	// Further hits while that walk runs do not start another.
 	if _, ok := c.Lookup(context.Background(), 4000); !ok || f.walks.Load() != 2 {
-		t.Fatalf("lookup after the TTL: walks=%d ok=%v, want 2 and found", f.walks.Load(), ok)
+		t.Fatalf("hit during the refresh: walks=%d ok=%v", f.walks.Load(), ok)
+	}
+
+	// The port has closed. Past two TTLs the old result is not trusted.
+	f.set(map[int]LoopbackListenMask{}, nil)
+	f.advance(2 * time.Second)
+	go func() {
+		_, ok := c.Lookup(context.Background(), 4000)
+		answered <- ok
+	}()
+	select {
+	case <-answered:
+		t.Fatal("a result two TTLs old was answered without waiting for the walk")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(f.gate)
+	if ok := <-answered; ok {
+		t.Fatal("a closed port was reported after the walk")
+	}
+}
+
+// Holds fails closed: a failed walk or a caller giving up counts as held.
+func TestEndpointCacheHoldsFailsClosed(t *testing.T) {
+	f := &fakeTree{clock: time.Unix(1000, 0)}
+	f.set(map[int]LoopbackListenMask{4000: 0}, nil)
+	c := newFakeCache(f, 5*time.Second, 5*time.Second)
+	if !c.Holds(context.Background(), 4000) {
+		t.Fatal("a listening port is not held")
+	}
+	if c.Holds(context.Background(), 4001) {
+		t.Fatal("a port that is not listening is held")
+	}
+
+	f.set(nil, errors.New("walk failed"))
+	f.advance(6 * time.Second)
+	if !c.Holds(context.Background(), 4001) {
+		t.Fatal("a failed walk did not fail closed")
+	}
+	if _, ok := c.Lookup(context.Background(), 4000); ok {
+		t.Fatal("Lookup reported a port after a failed walk")
+	}
+
+	f.set(map[int]LoopbackListenMask{}, nil)
+	f.gate = make(chan struct{})
+	defer close(f.gate)
+	f.advance(6 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if !c.Holds(ctx, 4001) {
+		t.Fatal("a caller that gave up did not fail closed")
+	}
+	if NewProcessPortCache(0, time.Second).Holds(context.Background(), 4001) {
+		t.Fatal("a cache without a process holds a port")
+	}
+}
+
+// NewProcessPortCache reads the ports of the process itself.
+func TestProcessPortCacheOwnPorts(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freePort := free.Addr().(*net.TCPAddr).Port
+	_ = free.Close()
+
+	c := NewProcessPortCache(os.Getpid(), time.Second)
+	if !c.Holds(context.Background(), port) {
+		t.Fatalf("own listening port %d is not held", port)
+	}
+	if c.Holds(context.Background(), freePort) {
+		t.Fatalf("closed port %d is held", freePort)
 	}
 }
 
@@ -192,7 +315,7 @@ func TestTreeEndpointCacheNoRoot(t *testing.T) {
 	if _, ok := c.Lookup(context.Background(), 4000); ok {
 		t.Fatal("a cache without a root process reported a port")
 	}
-	var nilCache *TreeEndpointCache
+	var nilCache *EndpointCache
 	if _, ok := nilCache.Lookup(context.Background(), 4000); ok {
 		t.Fatal("a nil cache reported a port")
 	}

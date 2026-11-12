@@ -54,6 +54,8 @@ const (
 
 	sidecarCacheTTL        = 2 * time.Second
 	sidecarMissRefreshMin  = 200 * time.Millisecond
+	sidecarFreePortTTL     = time.Second
+	sidecarFreePortsMax    = 1024
 	sidecarMaxRewriteBytes = 16 << 20
 	sidecarMaxWSRejectBody = 4 << 20
 	sidecarDialTimeout     = 5 * time.Second
@@ -311,17 +313,42 @@ func (p *Proxy) IsSidecarReservedPort(ctx context.Context, port int) bool {
 	p.sidecarMu.Lock()
 	_, cachedReserved := p.sidecarReserved[port]
 	freshCache := !p.sidecarCachedAt.IsZero() && callStart.Sub(p.sidecarCachedAt) < sidecarCacheTTL && p.sidecarLastErr == nil
+	freeAt, knownFree := p.sidecarFreePorts[port]
 	p.sidecarMu.Unlock()
-	if cachedReserved && freshCache {
-		return true
+	if freshCache {
+		if cachedReserved {
+			return true
+		}
+		// A port a live answer found free stays free for a moment, so a
+		// preview loading many assets from one dev server does not ask the
+		// language server once per asset. Any other port gets a live answer,
+		// which catches a sidecar started within the cache TTL.
+		if knownFree && callStart.Sub(freeAt) < sidecarFreePortTTL {
+			return false
+		}
 	}
 
 	_, reserved, err := p.refreshSidecarPorts(ctx, true, callStart)
 	if err != nil {
 		return true
 	}
-	_, isReserved := reserved[port]
-	return isReserved
+	if _, isReserved := reserved[port]; isReserved {
+		return true
+	}
+	p.sidecarMu.Lock()
+	if len(p.sidecarFreePorts) >= sidecarFreePortsMax {
+		for fp, at := range p.sidecarFreePorts {
+			if callStart.Sub(at) >= sidecarFreePortTTL {
+				delete(p.sidecarFreePorts, fp)
+			}
+		}
+	}
+	if p.sidecarFreePorts == nil || len(p.sidecarFreePorts) >= sidecarFreePortsMax {
+		p.sidecarFreePorts = make(map[int]time.Time)
+	}
+	p.sidecarFreePorts[port] = callStart
+	p.sidecarMu.Unlock()
+	return false
 }
 
 func (p *Proxy) isForbiddenPort(port int) bool {
@@ -1862,10 +1889,15 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string, 
 		}
 	}
 
+	isObject := strings.EqualFold(string(header[1:]), "object")
 	rewroteURL := false
 	for i := range attrs {
 		a := &attrs[i]
 		if !a.valued {
+			continue
+		}
+		if a.nameLow == "data" && !isObject {
+			// Only <object data> is a URL.
 			continue
 		}
 		if cspMeta && a.nameLow == "content" {
@@ -2865,7 +2897,8 @@ func sidecarShimJS(port int, capPrefix string) string {
     Element.prototype.setAttribute = function(name, value) {
       if (typeof name === "string" && typeof value === "string") {
         var low = name.toLowerCase();
-        if (low === "src" || low === "href" || low === "action" || low === "poster" || low === "formaction" || low === "data") {
+        if (low === "src" || low === "href" || low === "action" || low === "poster" || low === "formaction" ||
+            (low === "data" && String(this.localName).toLowerCase() === "object")) {
           value = rewriteStr(value, false);
         } else if (low === "srcset" || low === "imagesrcset") {
           value = rewriteSrcset(value);

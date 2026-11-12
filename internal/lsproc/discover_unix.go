@@ -21,9 +21,7 @@ func standaloneProcesses() ([]process, error) {
 	if procs, err := standaloneProcessesViaProc(); err == nil && len(procs) > 0 {
 		return procs, nil
 	}
-	ctx, cancel := discoveryContext(context.Background())
-	defer cancel()
-	return standaloneProcessesViaPS(ctx)
+	return standaloneProcessesViaPS(context.Background())
 }
 
 func standaloneProcessesViaProc() ([]process, error) {
@@ -91,9 +89,7 @@ func standaloneProcessesViaPS(ctx context.Context) ([]process, error) {
 }
 
 func listeningPorts(pid int) ([]int, error) {
-	ctx, cancel := discoveryContext(context.Background())
-	defer cancel()
-	return listeningPortsContext(ctx, pid)
+	return listeningPortsContext(context.Background(), pid)
 }
 
 func listeningPortsContext(ctx context.Context, pid int) ([]int, error) {

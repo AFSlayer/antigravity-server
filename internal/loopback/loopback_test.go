@@ -566,3 +566,63 @@ func TestLoopbackFailsClosedWithoutResolvers(t *testing.T) {
 		t.Errorf("oauth-callback without a resolver delivered=%v hits=%d", out.Delivered, hits.Load())
 	}
 }
+
+// The body is base64-encoded into the response as it is written. Bodies of
+// every padding length, and an empty one, must come back intact.
+func TestLoopbackFetchStreamsBody(t *testing.T) {
+	var size atomic.Int32
+	devSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Test", "yes")
+		w.WriteHeader(http.StatusCreated)
+		body := make([]byte, size.Load())
+		for i := range body {
+			body[i] = byte(i*7 + i/251)
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(devSrv.Close)
+	devPort := serverPort(t, devSrv.URL)
+
+	h := New(Options{
+		ResolveFetchTarget: func(_ context.Context, port int) (string, bool) {
+			return "127.0.0.1", port == devPort
+		},
+	})
+	t.Cleanup(h.Close)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	for _, n := range []int{0, 1, 2, 3, 70001} {
+		size.Store(int32(n))
+		r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: devPort, Path: "/"})
+		var out fetchResponse
+		err := json.NewDecoder(r.Body).Decode(&out)
+		r.Body.Close()
+		if err != nil {
+			t.Fatalf("%d-byte body: response is not JSON: %v", n, err)
+		}
+		got, err := base64.StdEncoding.DecodeString(out.BodyBase64)
+		if err != nil || len(got) != n {
+			t.Fatalf("%d-byte body: decoded %d bytes, err %v", n, len(got), err)
+		}
+		for i := range got {
+			if got[i] != byte(i*7+i/251) {
+				t.Fatalf("%d-byte body differs at byte %d", n, i)
+			}
+		}
+		if out.StatusCode != http.StatusCreated {
+			t.Fatalf("%d-byte body: status %d, want 201", n, out.StatusCode)
+		}
+		var sawHeader bool
+		for _, hdr := range out.Headers {
+			if strings.EqualFold(hdr.Name, "X-Test") && hdr.Value == "yes" {
+				sawHeader = true
+			}
+		}
+		if !sawHeader {
+			t.Fatalf("%d-byte body: headers %v lost X-Test", n, out.Headers)
+		}
+	}
+}

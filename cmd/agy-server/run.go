@@ -322,26 +322,33 @@ func (r *runner) start(runCtx context.Context) error {
 
 	tracker := patches.NewTracker()
 
+	// The sidecar proxy only reaches ports GetSidecars reports, and the
+	// language server serves sidecar gateways from its own process, so only
+	// agy-server's ports are forbidden to it. The language server's ports
+	// are kept from the loopback relays below.
 	forbiddenPorts := []int{publicPort}
 	if localPort > 0 {
 		forbiddenPorts = append(forbiddenPorts, localPort)
 	}
-	// Sidecar and OAuth requests ask which loopback family a port in the
-	// language server's process tree listens on. A walk is slow and on macOS
-	// and Windows starts subprocesses, so one result serves a few seconds.
-	treeEndpointsTTL := 2 * time.Second
+	// Sidecar, preview and OAuth requests ask which loopback family a port in
+	// the language server's process tree listens on. A walk is slow and on
+	// macOS and Windows starts subprocesses, so one result serves a few
+	// seconds.
+	lsPortsTTL := 2 * time.Second
 	if runtime.GOOS != "linux" {
-		treeEndpointsTTL = 5 * time.Second
+		lsPortsTTL = 5 * time.Second
 	}
-	treeEndpoints := lsproc.NewTreeEndpointCache(instance.PID, treeEndpointsTTL, time.Second)
+	treeEndpoints := lsproc.NewTreeEndpointCache(instance.PID, lsPortsTTL, time.Second)
 
-	initialLSPorts := make(map[int]struct{})
+	staticReserved := map[int]struct{}{publicPort: {}, instance.Port: {}}
+	if localPort > 0 {
+		staticReserved[localPort] = struct{}{}
+	}
 	if instance.PID > 0 {
 		if pts, lerr := lsproc.ListeningPorts(instance.PID); lerr == nil {
 			for _, pt := range pts {
 				if pt > 0 && pt <= 65535 {
-					initialLSPorts[pt] = struct{}{}
-					forbiddenPorts = append(forbiddenPorts, pt)
+					staticReserved[pt] = struct{}{}
 				}
 			}
 		}
@@ -418,116 +425,18 @@ func (r *runner) start(runCtx context.Context) error {
 	}).WithSameOrigin(trusted, r.cfg.PublicURL)
 	rulesMgr.Register(publicMux)
 
-	var (
-		lsPortsMu       sync.Mutex
-		lsDirectPorts   map[int]struct{}
-		lsPortsCachedAt time.Time
-		lsPortsLastErr  error
-		lsPortsInflight chan struct{}
-	)
-	lsPortsTTL := 2 * time.Second
-	if runtime.GOOS != "linux" {
-		lsPortsTTL = 5 * time.Second
-	}
-	hasLanguageServerOwnPort := func(ctx context.Context, port int) bool {
-		if _, ok := initialLSPorts[port]; ok {
-			return true
-		}
-		if instance.PID <= 0 {
-			return false
-		}
-		lsPortsMu.Lock()
-		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < lsPortsTTL && lsPortsLastErr == nil {
-			_, ok := lsDirectPorts[port]
-			lsPortsMu.Unlock()
-			return ok
-		}
-		if lsPortsInflight != nil {
-			waitCh := lsPortsInflight
-			lsPortsMu.Unlock()
-			select {
-			case <-waitCh:
-			case <-ctx.Done():
-				return true
-			}
-			lsPortsMu.Lock()
-			portsMap, lastErr := lsDirectPorts, lsPortsLastErr
-			lsPortsMu.Unlock()
-			if lastErr != nil {
-				return true
-			}
-			_, ok := portsMap[port]
-			return ok
-		}
-		ch := make(chan struct{})
-		lsPortsInflight = ch
-		lsPortsMu.Unlock()
-
-		ports, perr := lsproc.ListeningPortsContext(context.Background(), instance.PID)
-		var next map[int]struct{}
-		if perr == nil {
-			next = make(map[int]struct{}, len(ports))
-			for _, pt := range ports {
-				next[pt] = struct{}{}
-			}
-		}
-
-		lsPortsMu.Lock()
-		if perr == nil {
-			lsDirectPorts = next
-			lsPortsCachedAt = time.Now()
-			lsPortsLastErr = nil
-		} else {
-			lsPortsLastErr = perr
-		}
-		lsPortsInflight = nil
-		close(ch)
-		lsPortsMu.Unlock()
-
-		if perr != nil || ctx.Err() != nil {
-			return true
-		}
-		_, ok := next[port]
-		return ok
-	}
-	isCoreReservedPort := func(ctx context.Context, port int) bool {
-		if port == publicPort || (localPort > 0 && port == localPort) || port == instance.Port {
-			return true
-		}
-		if _, ok := initialLSPorts[port]; ok {
-			return true
-		}
-		return p.IsSidecarReservedPort(ctx, port)
+	ports := &loopbackPortPolicy{
+		static:      staticReserved,
+		tree:        treeEndpoints,
+		lsOwn:       lsproc.NewProcessPortCache(instance.PID, lsPortsTTL),
+		sidecarPort: p.IsSidecarReservedPort,
 	}
 	loopbackHandler := loopback.New(loopback.Options{
-		Trusted:   trusted,
-		PublicURL: r.cfg.PublicURL,
-		IsReservedPort: func(ctx context.Context, port int) bool {
-			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port)
-		},
-		// A preview page's scripts choose the port, so only listeners the
-		// language server or its children opened, such as a dev server the
-		// agent started, are fetched.
-		ResolveFetchTarget: func(ctx context.Context, port int) (string, bool) {
-			if isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port) {
-				return "", false
-			}
-			mask, ok := treeEndpoints.Lookup(ctx, port)
-			if !ok {
-				return "", false
-			}
-			return mask.ResolveDialHost("localhost")
-		},
-		ResolveOAuthTarget: func(ctx context.Context, port int, urlHost string) (string, bool) {
-			if isCoreReservedPort(ctx, port) {
-				return "", false
-			}
-			mask, ok := treeEndpoints.Lookup(ctx, port)
-			if !ok {
-				return "", false
-			}
-			return mask.ResolveDialHost(urlHost)
-		},
+		Trusted:            trusted,
+		PublicURL:          r.cfg.PublicURL,
+		IsReservedPort:     ports.reserved,
+		ResolveFetchTarget: ports.fetchTarget,
+		ResolveOAuthTarget: ports.oauthTarget,
 	})
 	defer loopbackHandler.Close()
 	loopbackHandler.Register(publicMux)
@@ -1089,4 +998,61 @@ func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coord
 		}
 		fallback.ServeHTTP(w, r)
 	})
+}
+
+// loopbackPortPolicy decides which loopback ports the preview and OAuth relays
+// may reach. A port they reach is a listener of the language server's process
+// tree, and is not agy-server's, the language server's own or a sidecar's.
+type loopbackPortPolicy struct {
+	// static holds agy-server's ports, the language server's API port and
+	// the ports it listened on at startup.
+	static map[int]struct{}
+	// tree knows the listeners of the language server and its descendants.
+	tree interface {
+		Lookup(ctx context.Context, port int) (lsproc.LoopbackListenMask, bool)
+	}
+	// lsOwn knows the ports the language server process itself listens on.
+	lsOwn interface {
+		Holds(ctx context.Context, port int) bool
+	}
+	sidecarPort func(ctx context.Context, port int) bool
+}
+
+// reserved reports ports the preview relay refuses. Past the static ports,
+// only listeners of the tree are checked: any other port is never dialed, so
+// it needs neither a process walk nor a GetSidecars call.
+func (lp *loopbackPortPolicy) reserved(ctx context.Context, port int) bool {
+	if _, ok := lp.static[port]; ok {
+		return true
+	}
+	if _, inTree := lp.tree.Lookup(ctx, port); !inTree {
+		return false
+	}
+	return lp.lsOwn.Holds(ctx, port) || lp.sidecarPort(ctx, port)
+}
+
+// fetchTarget returns the loopback address to dial for a preview. The relay
+// has already refused reserved ports, and a preview page's scripts choose the
+// port, so only listeners of the tree, such as a dev server the agent
+// started, are served.
+func (lp *loopbackPortPolicy) fetchTarget(ctx context.Context, port int) (string, bool) {
+	mask, ok := lp.tree.Lookup(ctx, port)
+	if !ok {
+		return "", false
+	}
+	return mask.ResolveDialHost("localhost")
+}
+
+// oauthTarget returns the loopback address to deliver an OAuth callback to.
+// The language server opens callback listeners of its own after startup, so
+// unlike previews these may reach it, but not its startup ports or sidecars.
+func (lp *loopbackPortPolicy) oauthTarget(ctx context.Context, port int, urlHost string) (string, bool) {
+	if _, ok := lp.static[port]; ok {
+		return "", false
+	}
+	mask, ok := lp.tree.Lookup(ctx, port)
+	if !ok || lp.sidecarPort(ctx, port) {
+		return "", false
+	}
+	return mask.ResolveDialHost(urlHost)
 }

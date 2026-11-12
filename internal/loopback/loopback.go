@@ -4,6 +4,7 @@
 package loopback
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -49,12 +50,13 @@ type Options struct {
 	// IsReservedPort reports whether port belongs to agy-server, the language
 	// server, or an active sidecar and must never be reachable via FetchAPIPath.
 	IsReservedPort func(ctx context.Context, port int) bool
-	// ResolveFetchTarget verifies that port is an unreserved listener of the
-	// language server's process tree, such as a dev server the agent started,
-	// and returns the loopback IP literal ("127.0.0.1" or "::1") it listens on.
-	// FetchAPIPath serves only such ports: a preview page's scripts can ask for
-	// any port, and must not reach other services on the host. Any other port
-	// is reported as having no listener without being dialed. Without a
+	// ResolveFetchTarget verifies that port is a listener of the language
+	// server's process tree, such as a dev server the agent started, and
+	// returns the loopback IP literal ("127.0.0.1" or "::1") it listens on.
+	// It is asked only about ports IsReservedPort let through. FetchAPIPath
+	// serves only such ports: a preview page's scripts can ask for any port,
+	// and must not reach other services on the host. Any other port is
+	// reported as having no listener without being dialed. Without a
 	// resolver, no port is served.
 	ResolveFetchTarget func(ctx context.Context, port int) (dialHost string, allowed bool)
 	// ResolveOAuthTarget verifies that port is an unreserved listener owned by
@@ -349,12 +351,38 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outHeaders := collectResponseHeaders(resp.Header)
-	writeJSON(w, http.StatusOK, fetchResponse{
-		StatusCode: resp.StatusCode,
-		Headers:    outHeaders,
-		BodyBase64: base64.StdEncoding.EncodeToString(respBody),
-	})
+	writeFetchResponse(w, resp.StatusCode, collectResponseHeaders(resp.Header), respBody)
+}
+
+// writeFetchResponse writes a fetchResponse with the body base64-encoded
+// straight into w, so a body of up to 16 MiB is not held again as a base64
+// string and as encoded JSON.
+func writeFetchResponse(w http.ResponseWriter, statusCode int, headers []headerEntry, body []byte) {
+	if len(body) == 0 {
+		writeJSON(w, http.StatusOK, fetchResponse{StatusCode: statusCode, Headers: headers})
+		return
+	}
+	head, err := json.Marshal(fetchResponse{StatusCode: statusCode, Headers: headers})
+	if err != nil {
+		http.Error(w, "could not encode loopback response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	bw := bufio.NewWriterSize(w, 32<<10)
+	// head is a JSON object; reopen it to add the body. Base64 needs no
+	// escaping inside a JSON string.
+	_, _ = bw.Write(head[:len(head)-1])
+	if len(head) > 2 {
+		_ = bw.WriteByte(',')
+	}
+	_, _ = bw.WriteString(`"bodyBase64":"`)
+	enc := base64.NewEncoder(base64.StdEncoding, bw)
+	_, _ = enc.Write(body)
+	_ = enc.Close()
+	_, _ = bw.WriteString("\"}\n")
+	_ = bw.Flush()
 }
 
 func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {

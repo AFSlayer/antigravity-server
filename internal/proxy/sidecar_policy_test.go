@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"html"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -727,5 +729,57 @@ func TestSidecarWebSocketCloseGraceIsNotExtended(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a page that keeps sending held the connection open past the close grace")
+	}
+}
+
+// A preview loads many assets from one dev server, and each asks whether the
+// port is a sidecar's. One live answer serves the port for a moment, while a
+// port not asked about yet still gets one, so a sidecar that just started is
+// caught.
+func TestSidecarReservedCheckRemembersFreePorts(t *testing.T) {
+	var rpcs atomic.Int32
+	var withNew atomic.Bool
+	const devPort, newPort = 5173, 46000
+	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
+		rpcs.Add(1)
+		if withNew.Load() {
+			return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://127.0.0.1:%d", newPort), Status: "SIDECAR_STATUS_RUNNING"}}
+		}
+		return nil
+	})
+	p, err := New(Options{TargetPort: upstreamPort(t, ls), Patch: patches.Options{CacheKey: "k1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+
+	ctx := context.Background()
+	for i := 0; i < 20; i++ {
+		if p.IsSidecarReservedPort(ctx, devPort) {
+			t.Fatal("a dev server port was reported as a sidecar's")
+		}
+	}
+	if n := rpcs.Load(); n != 1 {
+		t.Fatalf("20 checks of one free port sent %d GetSidecars calls, want 1", n)
+	}
+
+	withNew.Store(true)
+	if !p.IsSidecarReservedPort(ctx, newPort) {
+		t.Fatal("a sidecar that just started was not caught")
+	}
+	if n := rpcs.Load(); n != 2 {
+		t.Fatalf("GetSidecars calls = %d, want a live answer for the new port", n)
+	}
+}
+
+// Only <object data> names a URL; a data attribute elsewhere is left alone.
+func TestSidecarDataAttributeOnlyOnObject(t *testing.T) {
+	const capPrefix = "/__agy/sidecar/4000/~s/0123456789abcdef0123456789abcdef"
+	got := string(rewriteSidecarHTML([]byte(`<div data="/state.json"></div><object data="/doc.svg"></object>`), 4000, capPrefix, "/", sidecarPageCSP{}))
+	if !strings.Contains(got, `<div data="/state.json">`) {
+		t.Errorf("a div's data attribute was rewritten: %s", got)
+	}
+	if !strings.Contains(got, `<object data="`+capPrefix+`/doc.svg">`) {
+		t.Errorf("an object's data URL was not rewritten: %s", got)
 	}
 }

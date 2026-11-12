@@ -188,7 +188,12 @@ func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 
 	// Fail-closed: if GetSidecars fails, IsSidecarReservedPort returns true (blocks loopback preview)
 	// and sidecar allowlist returns 403 once cache expires (no error grace window).
+	// The free answer for unrelatedPort is remembered for a moment; once it
+	// expires the failure is seen.
 	failGetSidecars.Store(true)
+	p.sidecarMu.Lock()
+	p.sidecarFreePorts[unrelatedPort] = time.Now().Add(-sidecarFreePortTTL)
+	p.sidecarMu.Unlock()
 	if !p.IsSidecarReservedPort(context.Background(), unrelatedPort) {
 		t.Fatal("IsSidecarReservedPort must fail closed (true) when GetSidecars fails")
 	}
