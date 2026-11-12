@@ -88,6 +88,28 @@ func TestAntigravity231PatchShapes(t *testing.T) {
 			t.Error("2.31 auto-scroll hook is not recognized as measuring the distance itself")
 		}
 	})
+	// 2.31.0 passes a sixth policy-map parameter to bAb and wraps each attachment branch in an policy guard (!k(p, ...)).
+	t.Run("file-upload-large-file-streaming-fallback", func(t *testing.T) {
+		v231 := `function test(){var bAb=(a,b,c,d,f=5,g)=>{var h=St(),k=(0,B.useCallback)((p,q)=>{if(!g||g.get(q)===!0)return!1;p=RYa(p.name);d?.(p);h(rg.VALIDATION_CHECK_FAILED,Error(p));return!0},[g,d,h]),l=(0,B.useCallback)(async p=>{var q=e,t=e;try{let z=c?GYa:[];if(b>=f)d?.("Maximum number of attachments reached");else{var u=MYa(p.name,p.type);if(u){if(!k(p,u))if(p.size>10485760)d?.("PDF file size exceeds 10MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("PDF file size exceeds 10MB limit"));else try{a()}catch(A){}}else{var v=VYa(p.name,p.type);if(v){if(!k(p,v))if(p.size>10485760)d?.("Document file size exceeds 10MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("Document file size exceeds 10MB limit"));else try{a()}catch(A){}}else{var w=aZa(p.name,p.type);if(w){if(!k(p,w))if(p.size>20971520)d?.("Zip file size exceeds 20MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("Zip file size exceeds 20MB limit"));else try{a()}catch(A){}}else{var x=TYa(p.name,p.type);if(x){if(!k(p,x))if(p.size>1048576)d?.("Text file size exceeds 1MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("Text file size exceeds 1MB limit"));else try{a()}catch(A){}}else if(z.includes(p.type.toLowerCase())){if(!k(p,p.type.toLowerCase()))try{a()}catch(A){}}else{var y=UYa(p.name,p.type);if(y){if(!k(p,y))if(p.size>20971520)d?.("Audio file size exceeds 20MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("Audio file size exceeds 20MB limit"));else try{a()}catch(A){}}else if(!["image/png","image/jpeg","image/gif","image/svg+xml","image/webp"].includes(p.type.toLowerCase())){let A=p.type.toLowerCase();if(!(g===void 0||g.get(A)!==!0&&SYa(p))||!k(p,A||"application/octet-stream"))if(p.size>20971520)d?.("File size exceeds 20MB limit"),h(rg.VALIDATION_CHECK_FAILED,Error("File size exceeds 20MB limit"));else try{a()}catch(D){}}else if(!k(p,p.type.toLowerCase()))try{let {inlineData:A,mimeType:D}=t(await q(Bkb(p,1048576,1024))),{inlineData:C}=t(await q(Bkb(p,10240,320))),F=Wb(E.MediaSchema,{mimeType:D,description:p.name,payload:{case:"inlineData",value:A},thumbnail:C});a([F])}catch(A){t(),d?.("Failed to process image"),h(rg.VALIDATION_CHECK_FAILED,A)}}}}}}}finally{q()}},[a,b,c,d,h,f,k,g]),m=(0,B.useCallback)(async p=>{var q=e,t=e;try{if(p.length!==0){d?.(null);var u=f-b;a()}}finally{q()}},[b,l,d,f]);return{m}}}`
+		got := applyOnly(t, "file-upload-large-file-streaming-fallback", v231, Options{})
+		if count := strings.Count(got, `window.__agyUpload([p])`); count != 8 {
+			t.Errorf("expected all 8 streaming branches in 2.31 shape, got %d in:\n%s", count, got)
+		}
+		for _, want := range []string{
+			`window.__agySyncMediaState&&window.__agySyncMediaState(b,f);`,
+			`window.__agyShouldStreamSingle&&window.__agyShouldStreamSingle(p,b,f)`,
+			`p=window.__agyPartitionFiles?window.__agyPartitionFiles(p,f-b,b):`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("2.31 shape missing %q in:\n%s", want, got)
+			}
+		}
+		if node, err := exec.LookPath("node"); err == nil {
+			if out, err := exec.Command(node, "-e", got).CombinedOutput(); err != nil {
+				t.Fatalf("invalid JS syntax in 2.31 file-upload-large-file-streaming-fallback: %v\n%s", err, out)
+			}
+		}
+	})
 }
 
 // 2.31.0 gives the navigation column a compact mode for the mobile home, which moves conciergeTestId to the fourth

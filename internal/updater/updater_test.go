@@ -64,35 +64,95 @@ func TestPlatformSlug(t *testing.T) {
 }
 
 func TestResolveLatest(t *testing.T) {
-	html := `
-	<!DOCTYPE html>
-	<html>
-	<body>
-		<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-x64/Antigravity.tar.gz">Linux x64</a>
-		<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-arm/Antigravity.tar.gz">Linux arm</a>
-		<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/darwin-arm/Antigravity.dmg">Mac arm</a>
-		<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/windows-x64/Antigravity-x64.exe">Win x64</a>
-	</body>
-	</html>
-	`
+	t.Run("releases JSON array", func(t *testing.T) {
+		payload := `[{"version":"2.31.2","execution_id":"6470801290035200"},{"version":"2.31.1","execution_id":"6044591015723008"}]`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, payload)
+		}))
+		defer srv.Close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, html)
-	}))
-	defer srv.Close()
+		info, err := ResolveLatest(srv.URL, "linux", "arm64")
+		if err != nil {
+			t.Fatalf("ResolveLatest JSON array failed: %v", err)
+		}
+		if info.LatestVersion != "2.31.2" {
+			t.Errorf("want version 2.31.2, got %s", info.LatestVersion)
+		}
+		if info.RawBuildVersion != "2.31.2-6470801290035200" {
+			t.Errorf("want raw build 2.31.2-6470801290035200, got %s", info.RawBuildVersion)
+		}
+		wantURL := "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.2-6470801290035200/linux-arm/Antigravity.tar.gz"
+		if info.DownloadURL != wantURL {
+			t.Errorf("unexpected download URL: got %s, want %s", info.DownloadURL, wantURL)
+		}
+	})
 
-	info, err := ResolveLatest(srv.URL, "linux", "amd64")
-	if err != nil {
-		t.Fatalf("ResolveLatest failed: %v", err)
-	}
+	t.Run("releases JSON envelope", func(t *testing.T) {
+		payload := `{"versions":[{"version":"2.31.1","execution_id":"6044591015723008"}]}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, payload)
+		}))
+		defer srv.Close()
 
-	if info.LatestVersion != "2.9.1" {
-		t.Errorf("want version 2.9.1, got %s", info.LatestVersion)
-	}
-	if info.DownloadURL != "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-x64/Antigravity.tar.gz" {
-		t.Errorf("unexpected download URL: %s", info.DownloadURL)
-	}
+		info, err := ResolveLatest(srv.URL, "windows", "arm64")
+		if err != nil {
+			t.Fatalf("ResolveLatest JSON envelope failed: %v", err)
+		}
+		if info.LatestVersion != "2.31.1" {
+			t.Errorf("want version 2.31.1, got %s", info.LatestVersion)
+		}
+		wantURL := "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.1-6044591015723008/windows-arm/Antigravity-arm64.exe"
+		if info.DownloadURL != wantURL {
+			t.Errorf("unexpected download URL: got %s, want %s", info.DownloadURL, wantURL)
+		}
+	})
+
+	t.Run("rejects malformed release entry", func(t *testing.T) {
+		payload := `[{"version":"2.31.1/../evil","execution_id":"6044591015723008"}]`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, payload)
+		}))
+		defer srv.Close()
+
+		if _, err := ResolveLatest(srv.URL, "linux", "amd64"); err == nil {
+			t.Fatal("expected malformed version to fail validation")
+		}
+	})
+
+	t.Run("fallback HTML page", func(t *testing.T) {
+		html := `
+		<!DOCTYPE html>
+		<html>
+		<body>
+			<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-x64/Antigravity.tar.gz">Linux x64</a>
+			<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-arm/Antigravity.tar.gz">Linux arm</a>
+			<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/darwin-arm/Antigravity.dmg">Mac arm</a>
+			<a href="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/windows-x64/Antigravity-x64.exe">Win x64</a>
+		</body>
+		</html>
+		`
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, html)
+		}))
+		defer srv.Close()
+
+		info, err := ResolveLatest(srv.URL, "linux", "amd64")
+		if err != nil {
+			t.Fatalf("ResolveLatest HTML failed: %v", err)
+		}
+
+		if info.LatestVersion != "2.9.1" {
+			t.Errorf("want version 2.9.1, got %s", info.LatestVersion)
+		}
+		if info.DownloadURL != "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.9.1-4871453687021568/linux-x64/Antigravity.tar.gz" {
+			t.Errorf("unexpected download URL: %s", info.DownloadURL)
+		}
+	})
 }
 
 func TestDownloadAndExtractTarGz(t *testing.T) {
@@ -171,8 +231,9 @@ func TestAutoUpdaterReloadLS(t *testing.T) {
 	targetPath := filepath.Join(tmpDir, "language_server")
 
 	var reloadCalled bool
-	reloadLS := func() {
+	reloadLS := func() bool {
 		reloadCalled = true
+		return true
 	}
 
 	// Direct download and reload check
@@ -230,8 +291,9 @@ func TestCheckAndApplySelfHealsMissingVersion(t *testing.T) {
 	cfg.SetDir(tmpDir)
 
 	var reloadCalled bool
-	reloadLS := func() {
+	reloadLS := func() bool {
 		reloadCalled = true
+		return true
 	}
 
 	// When checkAndApply runs on existing binary with unknown version, it should self-heal and record version without calling reloadLS
@@ -272,7 +334,7 @@ func TestCheckAndApplyDailyMaintenanceRestart(t *testing.T) {
 
 	// 1. When allowMaintenanceRestart is false (e.g. initial boot check), reloadLS should not be called
 	var reloadCalled bool
-	reloadLS := func() { reloadCalled = true }
+	reloadLS := func() bool { reloadCalled = true; return true }
 
 	isIdleCalled := false
 	isIdle := func() bool {
@@ -326,7 +388,7 @@ func TestCheckAndApplyDailyMaintenanceDeferredWhenBusy(t *testing.T) {
 	}
 
 	var reloadCalled bool
-	reloadLS := func() { reloadCalled = true }
+	reloadLS := func() bool { reloadCalled = true; return true }
 
 	checks := 0
 	isIdle := func() bool {
@@ -367,7 +429,7 @@ func TestCheckAndApplyDailyMaintenanceSkipsWhenContinuouslyBusy(t *testing.T) {
 	}
 
 	var reloadCalled bool
-	reloadLS := func() { reloadCalled = true }
+	reloadLS := func() bool { reloadCalled = true; return true }
 
 	// Always busy
 	isIdle := func() bool { return false }
@@ -405,11 +467,12 @@ func TestStartAutoUpdaterWithOptionsMaintenanceLoop(t *testing.T) {
 	defer cancel()
 
 	reloaded := make(chan struct{}, 1)
-	reloadLS := func() {
+	reloadLS := func() bool {
 		select {
 		case reloaded <- struct{}{}:
 		default:
 		}
+		return true
 	}
 
 	StartAutoUpdaterWithOptions(ctx, cfg, AutoUpdaterOptions{
@@ -475,7 +538,7 @@ func TestCheckAndApplyUpdateDefersRestartWhenBusy(t *testing.T) {
 	}
 
 	var reloadCalled bool
-	reloadLS := func() { reloadCalled = true }
+	reloadLS := func() bool { reloadCalled = true; return true }
 
 	checks := 0
 	isIdle := func() bool {
@@ -492,5 +555,433 @@ func TestCheckAndApplyUpdateDefersRestartWhenBusy(t *testing.T) {
 	}
 	if checks < 2 {
 		t.Errorf("expected update restart to check isIdle at least twice when initially busy, got %d", checks)
+	}
+	if got := StagedVersion(cfg); got != "2.23.0" {
+		t.Errorf("expected StagedVersion=2.23.0 before startup verification, got %q", got)
+	}
+	if cfg.RuntimeIDEVersion() != "2.22.0" {
+		t.Errorf("expected cfg.RuntimeIDEVersion=2.22.0 before startup verification, got %q", cfg.RuntimeIDEVersion())
+	}
+	ConfirmInstalledVersion(cfg, targetPath)
+	if cfg.RuntimeIDEVersion() != "2.23.0" {
+		t.Errorf("expected cfg.RuntimeIDEVersion=2.23.0 after startup confirmation, got %q", cfg.RuntimeIDEVersion())
+	}
+}
+
+func TestCheckAndApplyUpdateDeferredAcrossCyclesUntilIdle(t *testing.T) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	content := []byte("#!/bin/sh\necho mock v2.24.0\n")
+	hdr := &tar.Header{
+		Name: "Antigravity-2.24.0/resources/bin/language_server",
+		Mode: 0o755,
+		Size: int64(len(content)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+
+	downloads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downloads++
+		w.Header().Set("Content-Type", "application/x-tar")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+	cfg := &config.Config{
+		IDEVersion:     "2.22.0",
+		LanguageServer: targetPath,
+	}
+	cfg.SetDir(tmpDir)
+
+	mockCheck := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.24.0",
+			DownloadURL:     srv.URL + "/test.tar.gz",
+			UpdateAvailable: ver != "2.24.0",
+		}, nil
+	}
+
+	var reloadCalls int
+	reloadLS := func() bool { reloadCalls++; return true }
+
+	// Cycle 1: continuously busy -> binary downloaded, but restart deferred; IDEVersion must stay 2.22.0
+	restarted := checkAndApply(context.Background(), cfg, targetPath, reloadLS, func() bool { return false }, 5*time.Millisecond, 2, mockCheck, false)
+	if restarted || reloadCalls != 0 {
+		t.Fatalf("expected restart to be deferred while busy, restarted=%v reloadCalls=%d", restarted, reloadCalls)
+	}
+	if cfg.IDEVersion != "2.22.0" {
+		t.Fatalf("IDEVersion must not be prematurely updated before reload, got %q", cfg.IDEVersion)
+	}
+	if downloads != 1 {
+		t.Fatalf("expected 1 download on first cycle, got %d", downloads)
+	}
+
+	// Cycle 2: server becomes idle -> must restart without re-downloading and keep staged until startup confirmation
+	restarted = checkAndApply(context.Background(), cfg, targetPath, reloadLS, func() bool { return true }, 5*time.Millisecond, 2, mockCheck, false)
+	if !restarted || reloadCalls != 1 {
+		t.Fatalf("expected pending update restart once idle, restarted=%v reloadCalls=%d", restarted, reloadCalls)
+	}
+	if downloads != 1 {
+		t.Fatalf("expected staged binary to be reused without re-downloading, downloads=%d", downloads)
+	}
+	if got := StagedVersion(cfg); got != "2.24.0" {
+		t.Fatalf("expected StagedVersion=2.24.0 before startup confirmation, got %q", got)
+	}
+	if cfg.RuntimeIDEVersion() != "2.22.0" {
+		t.Fatalf("expected RuntimeIDEVersion=2.22.0 before startup confirmation, got %q", cfg.RuntimeIDEVersion())
+	}
+	ConfirmInstalledVersion(cfg, targetPath)
+	if cfg.RuntimeIDEVersion() != "2.24.0" {
+		t.Fatalf("expected RuntimeIDEVersion=2.24.0 after startup confirmation, got %q", cfg.RuntimeIDEVersion())
+	}
+	if got := StagedVersion(cfg); got != "" {
+		t.Fatalf("expected StagedVersion to be cleared after confirmation, got %q", got)
+	}
+}
+
+func TestPersistMetadataDoesNotCreateConfigJSONOrOverwriteInvalidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+	if err := os.WriteFile(targetPath, []byte(`mock "ideVersion":"2.30.0"`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Without config.json, SyncInstalledVersion must NOT create config.json on disk
+	cfg := config.Default()
+	cfg.SetDir(tmpDir)
+	cfg.Port = 9999 // transient CLI flag
+	SyncInstalledVersion(cfg, targetPath)
+
+	if got := cfg.RuntimeIDEVersion(); got != "2.30.0" {
+		t.Fatalf("RuntimeIDEVersion() = %q, want 2.30.0", got)
+	}
+	if _, err := os.Stat(cfg.Path("config.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected config.json NOT to be created when absent, err=%v", err)
+	}
+
+	// 2. With AGY_IDE_VERSION override active, checkAndApply must preserve IDEVersion
+	envCfg := config.Default()
+	envCfg.SetDir(tmpDir)
+	envCfg.IDEVersion = "2.99.0"
+	envCfg.IDEVersionFromEnv = true
+	_ = persistUpdaterMetadata(envCfg, "2.30.0", targetPath)
+	if got := envCfg.RuntimeIDEVersion(); got != "2.99.0" {
+		t.Fatalf("IDEVersionFromEnv should preserve 2.99.0, got %q", got)
+	}
+
+	// 3. Invalid syntax in an existing config.json must return an error instead of clobbering it
+	malformed := []byte("{ invalid json // user comment\n")
+	if err := os.WriteFile(cfg.Path("config.json"), malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistUpdaterMetadata(cfg, "2.31.0", targetPath); err == nil {
+		t.Fatal("expected error when existing config.json has invalid JSON")
+	}
+	after, err := os.ReadFile(cfg.Path("config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(malformed) {
+		t.Fatalf("malformed config.json was overwritten: got %q", string(after))
+	}
+
+	// 4. Backup creation and RestoreBackup recovery
+	v1Path := filepath.Join(tmpDir, "ls_bin")
+	if err := os.WriteFile(v1Path, []byte("good-v1-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmpNew := filepath.Join(tmpDir, "ls_bin.tmp")
+	if err := os.WriteFile(tmpNew, []byte("broken-v2-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplace(tmpNew, v1Path, false); err != nil {
+		t.Fatalf("atomicReplace: %v", err)
+	}
+	if err := RestoreBackup(v1Path); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+	restored, err := os.ReadFile(v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != "good-v1-binary" {
+		t.Fatalf("restored content = %q, want good-v1-binary", string(restored))
+	}
+	v1Info, err := os.Stat(v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bakInfo, err := os.Stat(v1Path + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(v1Info, bakInfo) {
+		t.Fatal("RestoreBackup must not leave restored binary hardlinked to .bak")
+	}
+}
+
+func TestStagedUpdatePreservesVerifiedBackupAndRollbackMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "language_server")
+	v1Bytes := []byte("verified-v1-without-embedded-semver")
+	if err := os.WriteFile(binPath, v1Bytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tmpDir)
+	cfg.IDEVersion = "2.31.0"
+	cfg.LanguageServer = binPath
+	if err := os.WriteFile(cfg.Path("config.json"), []byte("{\n  \"ide_version\": \"2.31.0\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordMetadata(cfg, "2.31.0", binPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage unverified v2 -> .bak captures verified v1
+	tmpV2 := filepath.Join(tmpDir, "v2.tmp")
+	if err := os.WriteFile(tmpV2, []byte("unverified-v2-broken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplace(tmpV2, binPath, HasUnverifiedStagedUpdate(cfg, binPath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordStagedUpdate(cfg, "2.32.0", binPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before restart happens, stage v3 -> .bak MUST still hold verified v1, NOT unverified v2!
+	if !HasUnverifiedStagedUpdate(cfg, binPath) {
+		t.Fatal("expected HasUnverifiedStagedUpdate=true after staging v2")
+	}
+	tmpV3 := filepath.Join(tmpDir, "v3.tmp")
+	if err := os.WriteFile(tmpV3, []byte("corrupted-v3-no-version-marker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplace(tmpV3, binPath, HasUnverifiedStagedUpdate(cfg, binPath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordStagedUpdate(cfg, "2.33.0", binPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	bakBytes, err := os.ReadFile(binPath + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bakBytes) != string(v1Bytes) {
+		t.Fatalf(".bak was overwritten with unverified binary: got %q, want %q", string(bakBytes), string(v1Bytes))
+	}
+
+	// Simulate failed startup of v3 (DetectBinaryVersion == "") and .bak rollback
+	stagedCandidate := DetectBinaryVersion(binPath)
+	if stagedCandidate == "" {
+		stagedCandidate = StagedVersion(cfg)
+	}
+	if err := RestoreBackup(binPath); err != nil {
+		t.Fatal(err)
+	}
+	ClearStagedVersion(cfg, binPath)
+	RecordBrokenVersion(cfg, stagedCandidate)
+	ConfirmInstalledVersion(cfg, binPath)
+
+	if gotBroken := loadBrokenVersion(cfg); gotBroken != "2.33.0" {
+		t.Fatalf("broken_version = %q, want 2.33.0 (must never mark known-good 2.31.0 broken)", gotBroken)
+	}
+	if gotRuntime := cfg.RuntimeIDEVersion(); gotRuntime != "2.31.0" {
+		t.Fatalf("RuntimeIDEVersion = %q, want 2.31.0 after rollback", gotRuntime)
+	}
+	cfgAfter, err := os.ReadFile(cfg.Path("config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cfgAfter, []byte(`"2.31.0"`)) || bytes.Contains(cfgAfter, []byte(`"2.33.0"`)) {
+		t.Fatalf("config.json ide_version corrupted during rollback: %s", string(cfgAfter))
+	}
+
+	// Once the same or a newer release successfully starts up, ConfirmInstalledVersion must clear broken_version.
+	if err := os.WriteFile(binPath, []byte(`mock "ideVersion":"2.33.0"`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ConfirmInstalledVersion(cfg, binPath)
+	if gotBroken := loadBrokenVersion(cfg); gotBroken != "" {
+		t.Fatalf("expected broken_version to be cleared when 2.33.0 starts cleanly, got %q", gotBroken)
+	}
+}
+
+func TestCheckAndApplyPreservesPendingUpdateWhenReloadDeclined(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+	if err := os.WriteFile(targetPath, []byte(`mock "ideVersion":"2.32.0"`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tmpDir)
+	cfg.IDEVersion = "2.31.0"
+	cfg.LanguageServer = targetPath
+	setPendingUpdate(cfg, targetPath, "2.32.0")
+
+	mockCheck := func(ver string) (*UpdateInfo, error) {
+		return &UpdateInfo{
+			Platform:        "linux/amd64",
+			LatestVersion:   "2.32.0",
+			UpdateAvailable: false,
+		}, nil
+	}
+
+	// External / unmanaged LS declines reload -> pendingUpdate MUST stay queued.
+	restarted := checkAndApply(context.Background(), cfg, targetPath, func() bool { return false }, func() bool { return true }, 5*time.Millisecond, 2, mockCheck, false)
+	if restarted {
+		t.Fatal("expected restarted=false when reloadLS declines")
+	}
+	if got := getPendingUpdate(cfg, targetPath); got != "2.32.0" {
+		t.Fatalf("pendingUpdate was lost after declined reload: got %q, want 2.32.0", got)
+	}
+
+	// Subsequent managed cycle accepts reload -> pendingUpdate is cleared once reload succeeds.
+	restarted = checkAndApply(context.Background(), cfg, targetPath, func() bool { return true }, func() bool { return true }, 5*time.Millisecond, 2, mockCheck, false)
+	if !restarted {
+		t.Fatal("expected restarted=true when reloadLS succeeds")
+	}
+	if got := getPendingUpdate(cfg, targetPath); got != "" {
+		t.Fatalf("expected pendingUpdate to clear after accepted reload, got %q", got)
+	}
+}
+
+func TestCheckAndApplyUnknownVersionStagedUpdateSkipsRedownload(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "language_server")
+	if err := os.WriteFile(targetPath, []byte("staged-binary-without-embedded-version"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tmpDir)
+	cfg.LanguageServer = targetPath
+	// Stage 2.31.0 with no verified ide_version recorded yet.
+	if err := RecordStagedUpdate(cfg, "2.31.0", targetPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	downloads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downloads++
+		http.Error(w, "unexpected download", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	// Emulate CheckUpdate's exact comparison rule against queryVersion.
+	realLikeCheck := func(currentVersion string) (*UpdateInfo, error) {
+		info := &UpdateInfo{
+			Platform:      "linux/amd64",
+			LatestVersion: "2.31.0",
+			DownloadURL:   srv.URL + "/Antigravity.tar.gz",
+		}
+		if currentVersion != "" && currentVersion != "unknown" && info.LatestVersion != "" && info.LatestVersion != "unknown" {
+			info.UpdateAvailable = currentVersion != info.LatestVersion
+		}
+		return info, nil
+	}
+
+	reloadCalled := false
+	restarted := checkAndApply(context.Background(), cfg, targetPath, func() bool {
+		reloadCalled = true
+		return true
+	}, func() bool { return true }, 5*time.Millisecond, 2, realLikeCheck, false)
+
+	if !restarted || !reloadCalled {
+		t.Fatalf("expected staged update to trigger idle reload without re-download, restarted=%v reloadCalled=%v", restarted, reloadCalled)
+	}
+	if downloads != 0 {
+		t.Fatalf("expected 0 archive downloads when staged version matches latest, got %d", downloads)
+	}
+}
+
+func TestIsNewerVersionPreventsDowngrade(t *testing.T) {
+	cases := []struct {
+		latest  string
+		current string
+		want    bool
+	}{
+		{"2.31.1", "2.31.0", true},
+		{"2.31.0", "2.31.1", false},
+		{"2.31.1", "2.31.1", false},
+		{"2.10.0", "2.9.1", true},
+		{"2.9.1", "2.10.0", false},
+		{"2.31.0", "2.31", false},
+		{"2.31.1", "2.31", true},
+		{"v2.31.2", "2.31.1", true},
+		{"2.31.1-rc1", "2.31.1", false},
+		{"2.31.1", "2.31.1-rc1", true},
+	}
+	for _, tc := range cases {
+		if got := isNewerVersion(tc.latest, tc.current); got != tc.want {
+			t.Errorf("isNewerVersion(%q, %q) = %v, want %v", tc.latest, tc.current, got, tc.want)
+		}
+	}
+}
+
+func TestValidateDownloadURLRejectsUserinfoAndTraversalAndDetectsMultiSegmentVersion(t *testing.T) {
+	allowed := []string{
+		"https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.2-4802483155533824/linux-x64/Antigravity.tar.gz",
+		"http://127.0.0.1:18080/Antigravity.tar.gz",
+		"http://localhost:8080/linux-x64/Antigravity.tar.gz",
+	}
+	for _, u := range allowed {
+		if err := ValidateDownloadURL(u); err != nil {
+			t.Errorf("expected URL %q to be allowed, got error: %v", u, err)
+		}
+	}
+
+	rejected := []string{
+		"",
+		"http://127.0.0.1:80@attacker.example/Antigravity.tar.gz",
+		"http://localhost:8080@attacker.example/Antigravity.tar.gz",
+		"https://user@storage.googleapis.com/antigravity-public/antigravity-hub/2.31.2-1/linux-x64/Antigravity.tar.gz",
+		"https://storage.googleapis.com/antigravity-public/antigravity-hub/../../other-bucket/linux-x64/Antigravity.tar.gz",
+		"https://storage.googleapis.com/antigravity-public/antigravity-hub/%2e%2e/%2e%2e/other-bucket/linux-x64/Antigravity.tar.gz",
+		"https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.2%2f..%2f..%2fother/linux-x64/Antigravity.tar.gz",
+		"https://storage.googleapis.com:8443/antigravity-public/antigravity-hub/2.31.2-1/linux-x64/Antigravity.tar.gz",
+		"https://storage.googleapis.com/antigravity-public/antigravity-hub/?alt=media",
+		"http://127.0.0.1:/Antigravity.tar.gz",
+		"http://127.0.0.1:99999/Antigravity.tar.gz",
+	}
+	for _, u := range rejected {
+		if err := ValidateDownloadURL(u); err == nil {
+			t.Errorf("expected URL %q to be rejected, got nil", u)
+		}
+	}
+
+	tmpBin := filepath.Join(t.TempDir(), "language_server")
+	if err := os.WriteFile(tmpBin, []byte(`prefix "ideVersion":"2.31.2.1" suffix`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectBinaryVersion(tmpBin); got != "2.31.2.1" {
+		t.Fatalf("DetectBinaryVersion 4-segment = %q, want 2.31.2.1", got)
+	}
+
+	// Redirect to an untrusted host must be blocked by CheckRedirect before downloading.
+	redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://attacker.example/Antigravity.tar.gz", http.StatusFound)
+	}))
+	defer redirectSrv.Close()
+
+	targetBin := filepath.Join(t.TempDir(), "language_server")
+	if err := DownloadAndInstallWithBackupPolicy(nil, redirectSrv.URL+"/Antigravity.tar.gz", targetBin, true, nil); err == nil {
+		t.Fatal("expected DownloadAndInstallWithBackupPolicy to reject untrusted redirect target, got nil")
 	}
 }

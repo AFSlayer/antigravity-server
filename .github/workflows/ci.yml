@@ -73,8 +73,8 @@ jobs:
           SERVER_PID=$!
           
           # 3. Wait for local server to respond
-          for i in $(seq 1 15); do
-            if curl -s http://127.0.0.1:8765/__agy/login > /dev/null 2>&1; then
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/__agy/login > /dev/null 2>&1; then
               echo "Local agy-server is ready on port 8765"
               break
             fi

@@ -212,7 +212,7 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 			}
 
 		case Regexp:
-			loc := p.FindRe.FindSubmatchIndex(body)
+			loc := regexpFindSubmatchIndex(p.FindRe, body)
 			if loc != nil {
 				var repl []byte
 				if p.ReplaceMatch != nil {
@@ -259,6 +259,8 @@ func submatches(body []byte, loc []int) [][]byte {
 // appended to the /main.js URL so the bundle URL changes the moment the patches
 // or version change. It does not cover language server updates; the proxy's
 // ETag revalidation is what keeps browsers from running a stale bundle.
+const patchSetRevision = "2026-11-11-r7"
+
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()
 	if version != "" {
@@ -266,6 +268,8 @@ func CacheKey(version string, opts Options) string {
 	} else {
 		h.Write([]byte("v0.2.1-fix"))
 	}
+	h.Write([]byte{0})
+	h.Write([]byte(patchSetRevision))
 	h.Write([]byte{0})
 	h.Write([]byte(opts.WorkspaceRoot))
 	h.Write([]byte{0})

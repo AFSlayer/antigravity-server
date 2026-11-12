@@ -176,7 +176,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`onClick:()=>c({clearSection:!0,clearProject:!0})`,
 		`id:"header-__agy_new__",label:"New Conversation"`,
 		`if(true){let za=`,
-		`className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
+		`className:Pm("absolute right-1 top-0 flex h-full items-center gap-1",(k||t||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100")`,
 		`,z=(0,y.useContext)(DEb),A=!1,`,
 		`sidebar-toggle`,
 		`if(J!=="custom"||N.length===0)return kZ(ha,D,J,U,ea).map(th);`,
@@ -1220,10 +1220,180 @@ activeEditorEl = {
 };
 window.__agyUpload([{ name: "home.rom", size: 10, type: "application/octet-stream" }]);
 assert.strictEqual(otherConvoBuffer, "", "upload started on '/' must not insert into '/c/other-convo'");
+
+// 5. Test upload started on new conversation view ("/") DOES promote to "/c/created-convo" when user submits the composer,
+//    and ignores UUID or file:// project query values appropriately.
+window.location.pathname = "/";
+window.location.search = "?project=550e8400-e29b-41d4-a716-446655440000";
+xhrRequests = [];
+let createdConvoBuffer = "";
+activeEditorEl = {
+  innerText: "",
+  focus() {},
+  dispatchEvent() { return true; },
+  __lexicalEditor: {
+    _pendingEditorState: {
+      _nodeMap: new Map([["root", {
+        getTextContent() { return createdConvoBuffer; },
+        getLastChild() { return { selectEnd() { return { insertText(t) { createdConvoBuffer += t; } }; } }; }
+      }]])
+    },
+    update(fn) { fn(); }
+  }
+};
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    assert.strictEqual(req.body.get("projectPath"), "", "UUID project param must be stripped to empty projectPath");
+    // Simulate user submitting the composer on "/" which creates "/c/created-convo"
+    for (const fn of (docListeners["keydown"] || [])) {
+      fn({ key: "Enter", isComposing: false, keyCode: 13, target: { closest: sel => sel.includes("agent-input-box") ? {} : null } });
+    }
+    window.location.pathname = "/c/created-convo";
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "promoted.rom",
+      relativePath: ".agy-uploads/temp/promoted.rom",
+      size: 10
+    });
+    req.xhr.onload();
+  }
+};
+window.__agyUpload([{ name: "promoted.rom", size: 10, type: "application/octet-stream" }]);
+assert.strictEqual(createdConvoBuffer, ".agy-uploads/temp/promoted.rom ", "submitted new conversation must inherit temp upload path");
+
+// 6. Shift+Enter newline, non-submit composer buttons (e.g. model picker), or clicking outside the composer
+//    must NOT promote a "/" temp upload into an existing conversation, and returning to "/" after a completed
+//    submission must issue a fresh temp conversation ID.
+window.location.pathname = "/";
+window.location.search = "";
+xhrRequests = [];
+let firstTempConvo = "";
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    firstTempConvo = req.body.get("conversationId");
+    // User presses Shift+Enter (newline) and clicks model picker (aria-haspopup), then clicks sidebar row outside composer
+    for (const fn of (docListeners["keydown"] || [])) {
+      fn({ key: "Enter", shiftKey: true, isComposing: false, keyCode: 13, target: { closest: sel => sel.includes("agent-input-box") ? {} : null } });
+    }
+    const modelBtn = {
+      disabled: false,
+      title: "Select Model",
+      textContent: "Gemini",
+      getAttribute(k) { return k === "aria-haspopup" ? "menu" : ""; }
+    };
+    for (const fn of (docListeners["click"] || [])) {
+      fn({ target: { closest: sel => sel.includes("button") ? modelBtn : (sel.includes("agent-input-box") ? {} : null) } });
+      // Click sidebar conversation item outside agent-input-box
+      fn({ target: { closest: () => null } });
+    }
+    window.location.pathname = "/c/existing-sidebar-convo";
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "stay-home.rom",
+      relativePath: ".agy-uploads/temp/stay-home.rom",
+      size: 10
+    });
+    req.xhr.onload();
+  }
+};
+let sidebarConvoBuffer = "";
+activeEditorEl = {
+  innerText: "",
+  focus() {},
+  dispatchEvent() { return true; },
+  __lexicalEditor: {
+    _pendingEditorState: {
+      _nodeMap: new Map([["root", {
+        getTextContent() { return sidebarConvoBuffer; },
+        getLastChild() { return { selectEnd() { return { insertText(t) { sidebarConvoBuffer += t; } }; } }; }
+      }]])
+    },
+    update(fn) { fn(); }
+  }
+};
+window.__agyUpload([{ name: "stay-home.rom", size: 10, type: "application/octet-stream" }]);
+assert.strictEqual(sidebarConvoBuffer, "", "Shift+Enter or model button + sidebar navigation must NOT promote temp upload");
+
+// Flush while on /c/existing-sidebar-convo clears activeTempConvoId; returning to "/" issues a brand-new temp ID
+window.__agyFlushPendingPaths();
+window.location.pathname = "/";
+let secondTempConvo = "";
+xhrHandler = (req) => {
+  if (req.method === "POST") {
+    secondTempConvo = req.body.get("conversationId");
+    req.xhr.status = 200;
+    req.xhr.responseText = JSON.stringify({
+      success: true,
+      fileName: "fresh.rom",
+      relativePath: ".agy-uploads/temp2/fresh.rom",
+      size: 10
+    });
+    req.xhr.onload();
+  }
+};
+window.__agyUpload([{ name: "fresh.rom", size: 10, type: "application/octet-stream" }]);
+assert.ok(firstTempConvo.startsWith("temp_") && secondTempConvo.startsWith("temp_"), "both '/' uploads should use temp IDs");
+assert.notStrictEqual(secondTempConvo, firstTempConvo, "returning to '/' after visiting a real conversation must allocate a fresh temp ID");
 process.exit(0);
 `
 
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
 		t.Fatalf("uploaderScript chunked upload harness failed: %v\n%s", err, out)
+	}
+}
+
+func TestWindowedRegexpMatchesFullScan(t *testing.T) {
+	pad := bytes.Repeat([]byte("function _padFn(x){return x+1;}\n"), 1024) // 32 KB per side (> 2*regexpWindowRadius total)
+	var large bytes.Buffer
+	large.Write(pad)
+	large.Write(syntheticBundle())
+	large.Write(pad)
+	paddedBundle := large.Bytes()
+	emptyBundle := bytes.Repeat([]byte("function _emptyFn(y){return y*2;}\n"), 2048)
+
+	for _, p := range All() {
+		if p.Kind != Regexp {
+			continue
+		}
+		wantLoc := p.FindRe.FindSubmatchIndex(paddedBundle)
+		gotLoc := regexpFindSubmatchIndex(p.FindRe, paddedBundle)
+		if len(wantLoc) != len(gotLoc) {
+			t.Fatalf("%s: windowed submatch len %d != full scan len %d", p.ID, len(gotLoc), len(wantLoc))
+		}
+		for i := range wantLoc {
+			if wantLoc[i] != gotLoc[i] {
+				t.Fatalf("%s: submatch index[%d] = %d, want %d", p.ID, i, gotLoc[i], wantLoc[i])
+			}
+		}
+
+		wantAll := p.FindRe.FindAllIndex(paddedBundle, -1)
+		gotAll := regexpFindAllIndex(p.FindRe, paddedBundle, -1)
+		if len(wantAll) != len(gotAll) {
+			t.Fatalf("%s: windowed FindAllIndex count %d != full scan %d", p.ID, len(gotAll), len(wantAll))
+		}
+		for i := range wantAll {
+			if wantAll[i][0] != gotAll[i][0] || wantAll[i][1] != gotAll[i][1] {
+				t.Fatalf("%s: FindAllIndex[%d] = %v, want %v", p.ID, i, gotAll[i], wantAll[i])
+			}
+		}
+
+		if gotNone := regexpFindSubmatchIndex(p.FindRe, emptyBundle); gotNone != nil {
+			t.Fatalf("%s: expected nil on non-matching large buffer, got %v", p.ID, gotNone)
+		}
+	}
+
+	// Patterns using ^, $, \A, or \z anchors must fall back to full-buffer evaluation
+	// rather than falsely matching an interior slice boundary.
+	anchoredStart := regexp.MustCompile(`^anchorTargetLiteral`)
+	anchoredEnd := regexp.MustCompile(`anchorTargetLiteral$`)
+	interior := append(append([]byte{}, pad...), []byte("anchorTargetLiteral")...)
+	interior = append(interior, pad...)
+	if regexpMatch(anchoredStart, interior) {
+		t.Fatal("^ anchor falsely matched interior window boundary")
+	}
+	if regexpMatch(anchoredEnd, interior) {
+		t.Fatal("$ anchor falsely matched interior window boundary")
 	}
 }

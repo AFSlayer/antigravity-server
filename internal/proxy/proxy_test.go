@@ -506,6 +506,7 @@ func dialRelay(t *testing.T, front *httptest.Server, opts *websocket.DialOptions
 	}
 	opts.HTTPHeader.Set("Origin", "https://agy.example.com")
 	opts.HTTPHeader.Set("X-Forwarded-Host", "agy.example.com")
+	opts.HTTPHeader.Set("Sec-Fetch-Site", "same-origin")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -599,8 +600,23 @@ func TestProxyWebSocketRelayReportsUnavailableUpstream(t *testing.T) {
 	}
 }
 
+func loopbackNets(t *testing.T) []*net.IPNet {
+	t.Helper()
+	var out []*net.IPNet
+	for _, cidr := range []string{"127.0.0.1/32", "::1/128"} {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 func TestProxyWebSocketOriginCheck(t *testing.T) {
-	front, _ := newTestProxy(t, wsUpstream(t))
+	front, _ := newTestProxyWith(t, wsUpstream(t), func(o *Options) {
+		o.TrustedProxies = loopbackNets(t)
+	})
 
 	cases := []struct {
 		name   string
@@ -610,17 +626,26 @@ func TestProxyWebSocketOriginCheck(t *testing.T) {
 		want   int
 	}{
 		{"same host", "agy.example.com", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
-		{"same host on another port when host omits port", "agy.example.com", "https://agy.example.com:8443", nil, http.StatusSwitchingProtocols},
+		{"same host on another port when host omits port with Sec-Fetch-Site same-origin", "agy.example.com", "https://agy.example.com:8443", []string{"Sec-Fetch-Site: same-origin"}, http.StatusSwitchingProtocols},
+		{"same host on another port without Sec-Fetch-Site rejected", "agy.example.com", "https://agy.example.com:8443", nil, http.StatusForbidden},
+		{"http origin on https forwarded proto rejected", "agy.example.com", "http://agy.example.com", []string{"X-Forwarded-Proto: https"}, http.StatusForbidden},
 		{"same host with matching port", "192.168.1.50:8765", "http://192.168.1.50:8765", nil, http.StatusSwitchingProtocols},
 		{"same host with mismatching port", "192.168.1.50:8765", "http://192.168.1.50:9000", nil, http.StatusForbidden},
 		{"host with port vs origin on default port", "agy.example.com:8443", "https://agy.example.com", nil, http.StatusForbidden},
 		{"forwarded host", "127.0.0.1:8765", "https://agy.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusSwitchingProtocols},
+		{"forwarded host chain uses rightmost proxy value", "127.0.0.1:8765", "https://evil.example.com", []string{"X-Forwarded-Host: evil.example.com, agy.example.com"}, http.StatusForbidden},
 		{"forwarded host with matching port", "127.0.0.1:8765", "http://192.168.1.50:8765", []string{"X-Forwarded-Host: 192.168.1.50:8765"}, http.StatusSwitchingProtocols},
 		{"forwarded host with mismatching port", "127.0.0.1:8765", "http://192.168.1.50:9000", []string{"X-Forwarded-Host: 192.168.1.50:8765"}, http.StatusForbidden},
-		{"proxy forwards no host", "127.0.0.1:8765", "https://agy.example.com", nil, http.StatusSwitchingProtocols},
+		{"proxy forwards no host with Sec-Fetch-Site same-origin", "127.0.0.1:8765", "https://agy.example.com", []string{"Sec-Fetch-Site: same-origin"}, http.StatusSwitchingProtocols},
+		{"proxy forwards no host without Sec-Fetch-Site rejected", "127.0.0.1:8765", "https://agy.example.com", nil, http.StatusForbidden},
+		{"proxy forwards no host but Sec-Fetch-Site same-site rejected", "127.0.0.1:8765", "https://sibling.example.com", []string{"Sec-Fetch-Site: same-site"}, http.StatusForbidden},
+		{"proxy forwards no host but Sec-Fetch-Site cross-site rejected", "127.0.0.1:8765", "https://evil.example", []string{"Sec-Fetch-Site: cross-site"}, http.StatusForbidden},
 		{"sibling subdomain", "agy.example.com", "https://evil.example.com", nil, http.StatusForbidden},
 		{"sibling behind proxy", "127.0.0.1:8765", "https://evil.example.com", []string{"X-Forwarded-Host: agy.example.com"}, http.StatusForbidden},
 		{"opaque origin", "agy.example.com", "null", nil, http.StatusForbidden},
+		{"loopback cross-port rejected", "127.0.0.1:8765", "http://127.0.0.1:3000", nil, http.StatusForbidden},
+		{"localhost cross-port rejected", "localhost:8765", "http://localhost:5173", nil, http.StatusForbidden},
+		{"loopback matching port allowed", "127.0.0.1:8765", "http://127.0.0.1:8765", nil, http.StatusSwitchingProtocols},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -629,6 +654,13 @@ func TestProxyWebSocketOriginCheck(t *testing.T) {
 				t.Errorf("want %d, got %d", tc.want, resp.StatusCode)
 			}
 		})
+	}
+
+	// Untrusted loopback peer (TrustedProxies empty) must NOT be able to spoof X-Forwarded-Host
+	untrustedFront, _ := newTestProxy(t, wsUpstream(t))
+	spoofResp, _, _ := wsHandshake(t, untrustedFront, "agy.example.com", "https://evil.example.com", "X-Forwarded-Host: evil.example.com")
+	if spoofResp.StatusCode != http.StatusForbidden {
+		t.Errorf("untrusted loopback X-Forwarded-Host spoof must be 403, got %d", spoofResp.StatusCode)
 	}
 }
 
@@ -655,6 +687,22 @@ func TestProxyWebSocketOriginCheckWithPublicURL(t *testing.T) {
 	resp, _, _ = wsHandshake(t, front, "internal-docker:8765", "https://evil.com")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("want 403 Forbidden with mismatched Origin, got %d", resp.StatusCode)
+	}
+
+	// Plaintext scheme downgrade on the configured PublicURL host is rejected
+	resp, _, _ = wsHandshake(t, front, "custom-public-domain.com", "http://custom-public-domain.com")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("want 403 Forbidden for http downgrade on https PublicURL, got %d", resp.StatusCode)
+	}
+
+	// Direct plaintext access via loopback or Tailscale IP still works alongside PublicURL
+	resp, _, _ = wsHandshake(t, front, "127.0.0.1:8765", "http://127.0.0.1:8765")
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("want 101 Switching Protocols for direct loopback access alongside PublicURL, got %d", resp.StatusCode)
+	}
+	resp, _, _ = wsHandshake(t, front, "100.64.0.1:8765", "http://100.64.0.1:8765")
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("want 101 Switching Protocols for direct Tailscale access alongside PublicURL, got %d", resp.StatusCode)
 	}
 }
 
@@ -945,6 +993,22 @@ func TestProxyIdleTracking(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if !p.IsIdle(20 * time.Millisecond) {
 		t.Errorf("expected IsIdle(20ms) to be true after 30ms elapsed")
+	}
+
+	// Open an idle WebSocket relay connection: IsIdle must still become true after threshold!
+	wsSrv := wsUpstream(t)
+	wsProxy, err := New(Options{TargetPort: upstreamPort(t, wsSrv)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsFront := httptest.NewServer(wsProxy.Handler())
+	t.Cleanup(wsFront.Close)
+	wsClient, _ := dialRelay(t, wsFront, nil)
+	defer wsClient.CloseNow()
+
+	time.Sleep(35 * time.Millisecond)
+	if !wsProxy.IsIdle(20 * time.Millisecond) {
+		t.Errorf("expected IsIdle(20ms) to be true while WebSocket is open with no data frames")
 	}
 }
 
@@ -1561,5 +1625,73 @@ func TestProxyCachesPatchedRootHTML(t *testing.T) {
 	}
 	if got := second.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("cached HTML Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestProxyPassthroughWebSocketPreventsFalseIdleAndRequiresOrigin(t *testing.T) {
+	wsEntered := make(chan struct{})
+	releaseWS := make(chan struct{})
+
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		close(wsEntered)
+		<-releaseWS
+	}))
+	t.Cleanup(ls.Close)
+
+	p, err := New(Options{
+		TargetPort:     upstreamPort(t, ls),
+		DisableWSRelay: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// WebSocket upgrade missing Origin header must be rejected with 403
+	connNoOrigin, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connNoOrigin.Close()
+	_, _ = io.WriteString(connNoOrigin, "GET /connect-websocket HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+	respNoOrigin, err := http.ReadResponse(bufio.NewReader(connNoOrigin), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if respNoOrigin.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for WebSocket upgrade without Origin, got %d", respNoOrigin.StatusCode)
+	}
+
+	// Active pass-through WebSocket must keep IsIdle(0) == false until disconnected
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	frontHost := strings.TrimPrefix(front.URL, "http://")
+	c, _, err := websocket.Dial(ctx, "ws://"+frontHost+"/connect-websocket", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"http://" + frontHost}},
+	})
+	if err != nil {
+		t.Fatalf("pass-through websocket dial failed: %v", err)
+	}
+	<-wsEntered
+
+	if p.IsIdle(0) {
+		t.Fatal("expected IsIdle(0) == false while pass-through WebSocket is active")
+	}
+
+	close(releaseWS)
+	_ = c.CloseNow()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !p.IsIdle(0) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !p.IsIdle(0) {
+		t.Fatal("expected IsIdle(0) == true after pass-through WebSocket closed")
 	}
 }

@@ -91,18 +91,53 @@ async function runComprehensiveSmokeTest() {
     // DOMAIN 3: Desktop Workspace & File Upload Bridge
     // -------------------------------------------------------------------------
     console.log("\n📂 [Domain 3] Verifying Desktop Workspace, Sidebar, & File Upload Bridge...");
-    const uploadBridgeRegistered = await page.evaluate(() => typeof window.__agyUpload === "function");
-    console.log(`  ✓ Workspace File Upload Bridge active: ${uploadBridgeRegistered}`);
+    const onSignInGate = page.url().includes("/__agy/signin");
+    if (onSignInGate) {
+      const bundleAndUpload = await page.evaluate(async () => {
+        const jsResp = await fetch("/main.js", { credentials: "same-origin" });
+        const jsText = jsResp.ok ? await jsResp.text() : "";
+        const fd = new FormData();
+        fd.append("conversationId", "smoke-ci");
+        fd.append("file", new Blob(["smoke-ok"], { type: "text/plain" }), "smoke.txt");
+        const upResp = await fetch("/__agy/api/upload", {
+          method: "POST",
+          body: fd,
+          credentials: "same-origin"
+        });
+        const upJson = upResp.ok ? await upResp.json() : null;
+        return {
+          jsStatus: jsResp.status,
+          hasPatchedUploadHook: jsText.includes("window.__agyUpload"),
+          uploadSuccess: !!(upJson && upJson.success)
+        };
+      });
+      if (bundleAndUpload.jsStatus !== 200 || !bundleAndUpload.hasPatchedUploadHook) {
+        throw new Error(`Patched /main.js check failed on sign-in gate: ${JSON.stringify(bundleAndUpload)}`);
+      }
+      if (!bundleAndUpload.uploadSuccess) {
+        throw new Error(`Upload API check failed on sign-in gate: ${JSON.stringify(bundleAndUpload)}`);
+      }
+      console.log(`  ✓ Sign-in gate active; verified patched /main.js and /__agy/api/upload:`, bundleAndUpload);
+    } else {
+      const uploadBridgeRegistered = await page.evaluate(() => typeof window.__agyUpload === "function");
+      if (!uploadBridgeRegistered) {
+        throw new Error("Workspace File Upload Bridge (window.__agyUpload) was not registered!");
+      }
+      console.log(`  ✓ Workspace File Upload Bridge active: ${uploadBridgeRegistered}`);
 
-    const sidebarElements = await page.evaluate(() => {
-      const texts = Array.from(document.querySelectorAll("span, div")).map(e => e.textContent?.trim() || "");
-      return {
-        hasProjects: texts.some(t => t.includes("Projects")),
-        hasConversations: texts.some(t => t.includes("Conversations") || t.includes("Conversation History")),
-        hasSettings: texts.some(t => t.includes("Settings"))
-      };
-    });
-    console.log(`  ✓ Sidebar Navigation detected:`, sidebarElements);
+      const sidebarElements = await page.evaluate(() => {
+        const texts = Array.from(document.querySelectorAll("span, div")).map(e => e.textContent?.trim() || "");
+        return {
+          hasProjects: texts.some(t => t.includes("Projects") || t.includes("Workspaces")),
+          hasConversations: texts.some(t => t.includes("Conversations") || t.includes("Conversation History")),
+          hasSettings: texts.some(t => t.includes("Settings"))
+        };
+      });
+      if (!sidebarElements.hasSettings || (!sidebarElements.hasProjects && !sidebarElements.hasConversations)) {
+        throw new Error(`Sidebar navigation elements missing: ${JSON.stringify(sidebarElements)}`);
+      }
+      console.log(`  ✓ Sidebar Navigation detected:`, sidebarElements);
+    }
 
     // -------------------------------------------------------------------------
     // DOMAIN 4: Settings & Customizations (Rules / Skills / MCP)
@@ -153,7 +188,7 @@ async function runComprehensiveSmokeTest() {
     });
 
     await mobilePage.goto(TARGET_URL, { waitUntil: "domcontentloaded", timeout: 15000 });
-    if (mobilePage.url().includes("/login")) {
+    if (mobilePage.url().includes("/__agy/login") || mobilePage.url().includes("/login")) {
       await mobilePage.waitForSelector("input[type=password]", { timeout: 5000 });
       await mobilePage.fill("input[type=password]", ACCESS_PASSWORD);
       await Promise.all([
@@ -168,10 +203,12 @@ async function runComprehensiveSmokeTest() {
     const mobileLayout = await mobilePage.evaluate(() => {
       return {
         hasViewportMeta: !!document.querySelector("meta[name=\"viewport\"]"),
-        hasAuxSidebarHidden: !document.querySelector("[data-testid=\"mobile-toggle-aux-sidebar\"]"),
         bodyScrollHeight: document.body.scrollHeight
       };
     });
+    if (!mobileLayout.hasViewportMeta || mobileLayout.bodyScrollHeight <= 0) {
+      throw new Error(`Mobile layout assertion failed: ${JSON.stringify(mobileLayout)}`);
+    }
     console.log(`  ✓ Mobile Touch Layout validated:`, mobileLayout);
 
     await mobileContext.close().catch(() => {});

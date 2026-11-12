@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,17 +11,21 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
 const (
-	algorithm      = "pbkdf2-sha256"
-	iterations     = 200000
-	saltLen        = 16
-	keyLen         = 32
-	MinPasswordLen = 8
+	algorithm        = "pbkdf2-sha256"
+	iterations       = 200000
+	saltLen          = 16
+	keyLen           = 32
+	MinPasswordLen   = 8
+	maxVerifyWorkers = 4
 )
+
+var verifySem = make(chan struct{}, maxVerifyWorkers)
 
 const passwordAlphabet = "abcdefghjkmnpqrstuvwxyz23456789"
 
@@ -32,8 +37,9 @@ type Credentials struct {
 	Hash       string    `json:"hash"`
 	UpdatedAt  time.Time `json:"updated_at"`
 
-	path string
-	mu   sync.Mutex
+	path     string
+	lastStat os.FileInfo
+	mu       sync.Mutex
 }
 
 // GeneratePassword returns a random password in xxxx-xxxx-xxxx form, drawn from
@@ -81,6 +87,7 @@ func newCredentials(path, password string) (*Credentials, error) {
 
 // LoadCredentials reads an existing verifier from disk.
 func LoadCredentials(path string) (*Credentials, error) {
+	info, statErr := os.Stat(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -94,6 +101,9 @@ func LoadCredentials(path string) (*Credentials, error) {
 		return nil, fmt.Errorf("unsupported password algorithm %q in %s", c.Algorithm, path)
 	}
 	c.path = path
+	if statErr == nil {
+		c.lastStat = info
+	}
 	return &c, nil
 }
 
@@ -132,22 +142,90 @@ func (c *Credentials) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.path, append(data, '\n'), 0o600)
+	data = append(data, '\n')
+
+	dir := filepath.Dir(c.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".credentials-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, c.path); err != nil {
+		return err
+	}
+	if info, err := os.Stat(c.path); err == nil {
+		c.lastStat = info
+	}
+	return nil
 }
 
 // Verify reports whether password matches, comparing in constant time.
 //
-// The verifier is re-read from disk on every attempt. The passwd command runs as a
+// The verifier metadata on disk is checked on every attempt and reloaded whenever
+// the file inode, modification time, or size changes. The passwd command runs as a
 // separate process against an already-running server, so without this a rotated
 // password would silently keep accepting the old one until the service restarted.
-// A failed read leaves the in-memory copy in place, so a transient filesystem
-// problem cannot lock everyone out. The re-read is immaterial next to the PBKDF2
-// derivation below, which is four orders of magnitude more expensive.
+// A failed stat or read leaves the in-memory copy in place, so a transient
+// filesystem problem cannot lock everyone out. Concurrent PBKDF2 derivations are
+// bounded by verifySem to prevent CPU exhaustion under parallel login floods.
 func (c *Credentials) Verify(password string) bool {
+	return c.VerifyContext(context.Background(), password)
+}
+
+// VerifyContext reports whether password matches while honoring ctx cancellation
+// while waiting for a PBKDF2 worker slot.
+func (c *Credentials) VerifyContext(ctx context.Context, password string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case verifySem <- struct{}{}:
+		defer func() { <-verifySem }()
+	case <-ctx.Done():
+		return false
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+
 	c.mu.Lock()
-	if fresh, err := LoadCredentials(c.path); err == nil {
-		c.Algorithm, c.Iterations, c.Salt, c.Hash, c.UpdatedAt =
-			fresh.Algorithm, fresh.Iterations, fresh.Salt, fresh.Hash, fresh.UpdatedAt
+	if c.path != "" {
+		if info, statErr := os.Stat(c.path); statErr == nil {
+			unchanged := c.lastStat != nil &&
+				os.SameFile(c.lastStat, info) &&
+				c.lastStat.ModTime().Equal(info.ModTime()) &&
+				c.lastStat.Size() == info.Size() &&
+				c.Salt != "" && c.Hash != ""
+			if !unchanged {
+				if fresh, err := LoadCredentials(c.path); err == nil {
+					c.Algorithm, c.Iterations, c.Salt, c.Hash, c.UpdatedAt, c.lastStat =
+						fresh.Algorithm, fresh.Iterations, fresh.Salt, fresh.Hash, fresh.UpdatedAt, fresh.lastStat
+				}
+			}
+		}
 	}
 	saltEnc, hashEnc, iters := c.Salt, c.Hash, c.Iterations
 	c.mu.Unlock()
