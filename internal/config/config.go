@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,7 +46,12 @@ type Config struct {
 	// of the proxy that mishandles compressed frames.
 	DisableWSRelay bool `json:"-"`
 
-	dir string
+	// IDEVersionFromEnv records whether IDEVersion came from AGY_IDE_VERSION so
+	// automatic binary detection does not clobber an explicit environment override.
+	IDEVersionFromEnv bool `json:"-"`
+
+	runtimeMu sync.RWMutex
+	dir       string
 }
 
 // Default returns the configuration used when nothing has been set.
@@ -72,14 +79,102 @@ func HomeDir() string {
 		return home
 	}
 	if runtime.GOOS == "windows" {
-		return os.Getenv("USERPROFILE")
+		if up := os.Getenv("USERPROFILE"); up != "" {
+			return up
+		}
+	} else if home := os.Getenv("HOME"); home != "" {
+		return home
 	}
-	return os.Getenv("HOME")
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	return ""
 }
 
 // GeminiDir is where Antigravity keeps its settings and OAuth token.
 func GeminiDir() string {
 	return filepath.Join(HomeDir(), ".gemini")
+}
+
+// EffectiveWorkspaceRoot returns WorkspaceRoot when explicitly configured, or
+// falls back to ~/antigravity/workspace while preserving legacy ~/workspace
+// setups when ~/workspace already exists and ~/antigravity/workspace does not.
+func (c *Config) EffectiveWorkspaceRoot() string {
+	if c != nil && c.WorkspaceRoot != "" {
+		return c.WorkspaceRoot
+	}
+	home := HomeDir()
+	if home == "" {
+		return ""
+	}
+	preferred := filepath.Join(home, "antigravity", "workspace")
+	if info, err := os.Stat(preferred); err == nil && info.IsDir() {
+		return preferred
+	}
+	legacy := filepath.Join(home, "workspace")
+	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+		return legacy
+	}
+	return preferred
+}
+
+// PatchWorkspaceRoot returns the workspace directory injected into the web
+// folder picker patch: an explicit WorkspaceRoot always wins, otherwise the
+// default EffectiveWorkspaceRoot is used when that directory exists on disk.
+func (c *Config) PatchWorkspaceRoot() string {
+	if c == nil {
+		return ""
+	}
+	if c.WorkspaceRoot != "" {
+		return c.WorkspaceRoot
+	}
+	effective := c.EffectiveWorkspaceRoot()
+	if effective != "" {
+		if info, err := os.Stat(effective); err == nil && info.IsDir() {
+			return effective
+		}
+	}
+	return ""
+}
+
+// RuntimeIDEVersion reads IDEVersion safely across background updater goroutines.
+func (c *Config) RuntimeIDEVersion() string {
+	if c == nil {
+		return ""
+	}
+	c.runtimeMu.RLock()
+	defer c.runtimeMu.RUnlock()
+	return c.IDEVersion
+}
+
+// SetRuntimeIDEVersion updates IDEVersion safely across background updater goroutines.
+func (c *Config) SetRuntimeIDEVersion(v string) {
+	if c == nil {
+		return
+	}
+	c.runtimeMu.Lock()
+	c.IDEVersion = v
+	c.runtimeMu.Unlock()
+}
+
+// RuntimeLanguageServer reads LanguageServer safely across background updater goroutines.
+func (c *Config) RuntimeLanguageServer() string {
+	if c == nil {
+		return ""
+	}
+	c.runtimeMu.RLock()
+	defer c.runtimeMu.RUnlock()
+	return c.LanguageServer
+}
+
+// SetRuntimeLanguageServer updates LanguageServer safely across background updater goroutines.
+func (c *Config) SetRuntimeLanguageServer(p string) {
+	if c == nil {
+		return
+	}
+	c.runtimeMu.Lock()
+	c.LanguageServer = p
+	c.runtimeMu.Unlock()
 }
 
 // Dir is the data directory holding credentials and sessions.
@@ -171,6 +266,7 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("AGY_IDE_VERSION"); v != "" {
 		c.IDEVersion = v
+		c.IDEVersionFromEnv = true
 	}
 	if v := os.Getenv("AGY_DISABLE_PATCHES"); v != "" {
 		c.DisabledPatches = splitList(v)
@@ -203,16 +299,42 @@ func splitList(v string) []string {
 	return out
 }
 
-// Save writes config.json with owner-only permissions.
+// Save writes config.json atomically with owner-only permissions.
 func (c *Config) Save() error {
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return err
 	}
+	c.runtimeMu.RLock()
 	data, err := json.MarshalIndent(c, "", "  ")
+	c.runtimeMu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.Path("config.json"), append(data, '\n'), 0o600)
+	data = append(data, '\n')
+
+	tmp, err := os.CreateTemp(c.dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, c.Path("config.json"))
 }
 
 // DisabledPatchSet turns DisabledPatches into a lookup for patches.Options.

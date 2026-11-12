@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
+	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 )
 
 var version = "dev"
@@ -18,7 +19,7 @@ Usage:
   agy-server serve [flags]      Run headless on a server (personal cloud Antigravity)
   agy-server doctor             Check the setup and report what is wrong
   agy-server config [flags]     Save options to config.json without starting
-  agy-server passwd [password]  Set the access password
+  agy-server passwd [password|--stdin]  Set the access password
   agy-server sessions [revoke]  List or revoke signed-in devices
   agy-server update [flags]     Update Antigravity language_server to the latest official release
   agy-server version            Print the version
@@ -44,6 +45,10 @@ Docs: https://github.com/AFSlayer/antigravity-server
 `
 
 func main() {
+	if lsproc.RunBrowserShimIfInvoked() {
+		return
+	}
+
 	enableVirtualTerminal()
 
 	args := os.Args[1:]

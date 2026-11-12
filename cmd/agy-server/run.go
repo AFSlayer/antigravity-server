@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,48 +44,194 @@ func (m runMode) String() string {
 	return "Local mode"
 }
 
-type runner struct {
-	mode runMode
-	cfg  *config.Config
+type swapHTTPServer struct {
+	mu       sync.Mutex
+	listener net.Listener
+	server   *http.Server
+	port     int
+	handler  atomic.Pointer[http.Handler]
+}
 
-	firstRun bool
+func (s *swapHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h := s.handler.Load(); h != nil && *h != nil {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", "2")
+	http.Error(w, "Server is restarting, please retry momentarily.", http.StatusServiceUnavailable)
+}
+
+func (s *swapHTTPServer) listen(host string, port int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener != nil {
+		return s.port, nil
+	}
+	ln, err := listen(host, port)
+	if err != nil {
+		return 0, err
+	}
+	s.listener = ln
+	s.port = ln.Addr().(*net.TCPAddr).Port
+	srv := &http.Server{Handler: s}
+	s.server = srv
+	go func() { _ = srv.Serve(ln) }()
+	return s.port, nil
+}
+
+func (s *swapHTTPServer) setHandler(h http.Handler) {
+	s.handler.Store(&h)
+}
+
+func (s *swapHTTPServer) park() {
+	s.handler.Store(nil)
+}
+
+func (s *swapHTTPServer) shutdown(ctx context.Context) {
+	s.mu.Lock()
+	srv := s.server
+	ln := s.listener
+	s.server = nil
+	s.listener = nil
+	s.port = 0
+	s.mu.Unlock()
+
+	s.handler.Store(nil)
+	if srv != nil {
+		_ = srv.Shutdown(ctx)
+	}
+	if ln != nil {
+		_ = ln.Close()
+	}
+}
+
+type sharedAuthState struct {
+	creds             *auth.Credentials
+	sessions          *auth.SessionStore
+	mu                sync.Mutex
+	generatedPassword string
+}
+
+func (s *sharedAuthState) setGenerated(pw string) {
+	if pw == "" {
+		return
+	}
+	s.mu.Lock()
+	s.generatedPassword = pw
+	s.mu.Unlock()
+}
+
+func (s *sharedAuthState) known() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generatedPassword
+}
+
+type runner struct {
+	mode      runMode
+	cfg       *config.Config
+	publicSrv *swapHTTPServer
+	localSrv  *swapHTTPServer
+	authState *sharedAuthState
+
+	firstRun          bool
+	announceGenerated string
 
 	// shimURLFile is set only when we started the language server ourselves, which
 	// is what lets the sign-in page drive its OAuth flow.
 	shimURLFile string
 
-	mu                sync.Mutex
-	generatedPassword string
+	childCmd        *exec.Cmd
+	childDone       chan struct{}
+	reusedPID       int
+	shuttingDown    atomic.Bool
+	reloadRequested atomic.Bool
 }
 
 func run(mode runMode, cfg *config.Config) error {
-	r := &runner{mode: mode, cfg: cfg}
-	return r.start()
-}
-
-func (r *runner) start() error {
-	if err := r.cfg.EnsureDir(); err != nil {
+	if err := cfg.EnsureDir(); err != nil {
 		return errWithHints(
-			fmt.Sprintf("Could not create %s: %v", r.cfg.Dir(), err),
+			fmt.Sprintf("Could not create %s: %v", cfg.Dir(), err),
 			"Check that your home directory is writable, or set AGY_HOME to another location.")
 	}
 
-	credentialsPath := r.cfg.Path("credentials.json")
+	credentialsPath := cfg.Path("credentials.json")
+	firstRun := false
 	if _, err := os.Stat(credentialsPath); err != nil {
-		r.firstRun = true
+		firstRun = true
 	}
 
-	creds, generated, err := auth.LoadOrCreateCredentials(credentialsPath, os.Getenv("AGY_PASSWORD"))
-	if err != nil {
-		return err
-	}
-	r.setGeneratedPassword(generated)
-
-	sessions, err := auth.NewSessionStore(r.cfg.Path("sessions.json"), r.cfg.SessionTTL())
+	creds, initialGenerated, err := auth.LoadOrCreateCredentials(credentialsPath, os.Getenv("AGY_PASSWORD"))
 	if err != nil {
 		return err
 	}
 
+	sessions, err := auth.NewSessionStore(cfg.Path("sessions.json"), cfg.SessionTTL())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sessions.Flush() }()
+
+	authState := &sharedAuthState{
+		creds:    creds,
+		sessions: sessions,
+	}
+	authState.setGenerated(initialGenerated)
+
+	flusher := time.NewTicker(time.Minute)
+	flusherStop := make(chan struct{})
+	defer func() {
+		flusher.Stop()
+		close(flusherStop)
+	}()
+	go func() {
+		for {
+			select {
+			case <-flusherStop:
+				return
+			case <-flusher.C:
+				_ = sessions.Flush()
+			}
+		}
+	}()
+
+	runCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+
+	publicSrv := &swapHTTPServer{}
+	localSrv := &swapHTTPServer{}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		publicSrv.shutdown(ctx)
+		localSrv.shutdown(ctx)
+	}()
+
+	cycle := 0
+	for {
+		r := &runner{
+			mode:      mode,
+			cfg:       cfg,
+			publicSrv: publicSrv,
+			localSrv:  localSrv,
+			authState: authState,
+		}
+		if cycle == 0 {
+			r.firstRun = firstRun
+			r.announceGenerated = initialGenerated
+		}
+		cycle++
+
+		err := r.start(runCtx)
+		if r.reloadRequested.Load() && err == nil && runCtx.Err() == nil {
+			continue
+		}
+		return err
+	}
+}
+
+func (r *runner) start(runCtx context.Context) error {
 	trusted, err := r.cfg.TrustedProxyNets()
 	if err != nil {
 		return err
@@ -94,21 +241,38 @@ func (r *runner) start() error {
 
 	r.syncRemoteControlSetting()
 
-	instance, err := r.resolveLanguageServer()
+	instance, err := r.resolveLanguageServer(runCtx)
 	if err != nil {
+		if runCtx.Err() != nil {
+			fmt.Println()
+			info("Shutdown signal received during startup, stopping…")
+			step("Stopped")
+			return nil
+		}
 		return err
 	}
 	step("Connected to Antigravity language server on port %d", instance.Port)
 
-	logCtx, stopLogRotation := context.WithCancel(context.Background())
-	defer stopLogRotation()
-	go lsproc.KeepLogRotated(logCtx, r.cfg.Path("language-server.log"))
+	lifecycleCtx, lifecycleCancel := context.WithCancel(runCtx)
+	var bgWG sync.WaitGroup
+	stopBackground := sync.OnceFunc(func() {
+		lifecycleCancel()
+		bgWG.Wait()
+	})
+	startBackground := func(fn func()) {
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			fn()
+		}()
+	}
 
-	r.syncRemoteControlSetting()
+	effectiveWS := r.cfg.EffectiveWorkspaceRoot()
+	patchWorkspaceRoot := r.cfg.PatchWorkspaceRoot()
 
 	patchOpts := patches.Options{
 		MobileUX:      r.cfg.MobileUX,
-		WorkspaceRoot: r.cfg.WorkspaceRoot,
+		WorkspaceRoot: patchWorkspaceRoot,
 		Disabled:      r.cfg.DisabledPatchSet(),
 		Debug:         r.cfg.Debug,
 	}
@@ -120,6 +284,7 @@ func (r *runner) start() error {
 		TargetPort:      instance.Port,
 		TargetCSRFToken: instance.CSRFToken,
 		PublicURL:       r.cfg.PublicURL,
+		TrustedProxies:  trusted,
 		DisableWSRelay:  r.cfg.DisableWSRelay,
 		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
@@ -128,33 +293,42 @@ func (r *runner) start() error {
 		},
 	})
 	if err != nil {
+		stopBackground()
 		return err
 	}
+	defer p.Close()
+	defer stopBackground()
 
-	go func() {
-		if err := p.Prewarm(); err != nil {
+	startBackground(func() {
+		lsproc.KeepLogRotated(lifecycleCtx, r.cfg.Path("language-server.log"))
+	})
+
+	startBackground(func() {
+		if err := p.PrewarmContext(lifecycleCtx); err != nil && lifecycleCtx.Err() == nil {
 			warn("could not pre-patch the web bundle, the first page load will be slower: %v", err)
 		}
-	}()
+	})
 
-	publicListener, err := listen(r.cfg.BindAddr, r.cfg.Port)
+	publicPort, err := r.publicSrv.listen(r.cfg.BindAddr, r.cfg.Port)
 	if err != nil {
 		return errWithHints(
 			fmt.Sprintf("Could not open a listening port: %v", err),
 			"Another program may be using the port. Try: agy-server --port 8888")
 	}
-	publicPort := publicListener.Addr().(*net.TCPAddr).Port
 
-	localListener, err := listen("127.0.0.1", 0)
-	if err != nil {
-		return err
+	var localPort int
+	if r.mode == modeLocal {
+		localPort, err = r.localSrv.listen("127.0.0.1", 0)
+		if err != nil {
+			return err
+		}
 	}
-	localPort := localListener.Addr().(*net.TCPAddr).Port
 
 	authenticator := auth.New(auth.Options{
-		Credentials: creds,
-		Sessions:    sessions,
+		Credentials: r.authState.creds,
+		Sessions:    r.authState.sessions,
 		Trusted:     trusted,
+		PublicURL:   r.cfg.PublicURL,
 		LoginPage:   ui.LoginPage(),
 		IsPublic:    assets.IsPublicPath,
 	})
@@ -163,24 +337,25 @@ func (r *runner) start() error {
 	for _, path := range assets.Paths() {
 		publicMux.Handle(path, assets.Handler())
 	}
-	uploaderCtx, uploaderCancel := context.WithCancel(context.Background())
-	defer uploaderCancel()
 
 	uploader := upload.New(upload.Options{
-		WorkspaceRoot: r.cfg.WorkspaceRoot,
+		WorkspaceRoot: effectiveWS,
 		TTL:           upload.DefaultTTL,
-	})
+	}).WithSameOrigin(trusted, r.cfg.PublicURL)
 	uploader.Register(publicMux)
-	uploader.StartCleaner(uploaderCtx, time.Hour)
+	startBackground(func() {
+		uploader.RunCleaner(lifecycleCtx, time.Hour)
+	})
 
 	rulesMgr := rules.New(rules.Options{
 		WorkspaceRoot: r.cfg.WorkspaceRoot,
-	})
+	}).WithSameOrigin(trusted, r.cfg.PublicURL)
 	rulesMgr.Register(publicMux)
 
 	var (
 		shutdownReason string
 		shutdownMu     sync.Mutex
+		childCrashed   atomic.Bool
 	)
 	shutdown := make(chan struct{})
 	stop := sync.OnceFunc(func() { close(shutdown) })
@@ -193,28 +368,49 @@ func (r *runner) start() error {
 		stop()
 	}
 
+	canReloadLS := r.childCmd != nil || (r.reusedPID > 0 && lsproc.CanControlPID(r.reusedPID))
 	if r.mode == modeServe {
-		reloadLS := func() {
-			if instance != nil && instance.PID > 0 {
-				if proc, err := os.FindProcess(instance.PID); err == nil {
-					_ = proc.Signal(syscall.SIGTERM)
+		watchDone := (<-chan struct{})(r.childDone)
+		if watchDone == nil && r.reusedPID > 0 {
+			watchDone = lsproc.WatchPID(lifecycleCtx, r.reusedPID, 2*time.Second)
+		}
+		if watchDone != nil {
+			go func(done <-chan struct{}) {
+				<-done
+				if !r.shuttingDown.Load() {
+					childCrashed.Store(true)
+					stopWithReason("Language server exited unexpectedly; stopping so service manager can restart…")
 				}
+			}(watchDone)
+		}
+		if runtime.GOOS == "linux" && canReloadLS {
+			reloadLS := func() bool {
+				if !canReloadLS {
+					warn("skipping automatic restart because language_server cannot be signalled by the current user")
+					return false
+				}
+				r.reloadRequested.Store(true)
+				r.shuttingDown.Store(true)
+				stopWithReason("Restarting server for update or daily maintenance…")
+				return true
 			}
-			stopWithReason("Restarting server for update or daily maintenance…")
+			isIdle := func() bool {
+				return p.IsIdle(15 * time.Minute)
+			}
+			startBackground(func() {
+				updater.RunAutoUpdater(lifecycleCtx, r.cfg, reloadLS, isIdle)
+			})
 		}
-		isIdle := func() bool {
-			return p.IsIdle(15 * time.Minute)
-		}
-		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS, isIdle)
 	}
 
 	coordinator := signin.New(instance, r.shimURLFile)
-	ui.NewSignIn(coordinator).Register(publicMux)
+	ui.NewSignIn(coordinator).WithSameOrigin(trusted, r.cfg.PublicURL).Register(publicMux)
 	if r.cfg.Debug {
 		if debug, err := ui.NewDebug(r.cfg.Path("mobile-debug.log")); err != nil {
 			warn("could not open the mobile debug log: %v", err)
 		} else {
-			debug.Register(publicMux)
+			defer debug.Close()
+			debug.WithSameOrigin(trusted, r.cfg.PublicURL).Register(publicMux)
 			info("Mobile debug tracing on, writing to %s", dim(debug.Path()))
 		}
 	}
@@ -222,54 +418,45 @@ func (r *runner) start() error {
 	var rootHandler http.Handler = wrapRootWithSignInRedirect(p.Handler(), coordinator)
 	publicMux.Handle("/", rootHandler)
 
-	localUI := ui.NewLocal(ui.LocalOptions{
-		Version:       version,
-		Mode:          r.mode.String(),
-		NetworkNote:   r.networkNote(),
-		Port:          publicPort,
-		Auth:          authenticator,
-		Tracker:       tracker,
-		Endpoints:     func() []ui.Endpoint { return r.endpoints(publicPort) },
-		LoginBaseURL:  func() string { return r.loginBaseURL(publicPort) },
-		KnownPassword: r.knownPassword,
-		ResetPassword: func() (string, error) { return r.resetPassword(creds) },
-		Shutdown:      stop,
-	})
+	r.publicSrv.setHandler(authenticator.Middleware(publicMux))
 
-	publicServer := &http.Server{Handler: authenticator.Middleware(publicMux)}
-	localServer := &http.Server{Handler: localUI.Handler()}
+	var controlURL string
+	if r.mode == modeLocal && localPort > 0 {
+		localUI := ui.NewLocal(ui.LocalOptions{
+			Version:       version,
+			Mode:          r.mode.String(),
+			NetworkNote:   r.networkNote(),
+			Port:          publicPort,
+			LocalPort:     localPort,
+			Auth:          authenticator,
+			Tracker:       tracker,
+			Endpoints:     func() []ui.Endpoint { return r.endpoints(publicPort) },
+			LoginBaseURL:  func() string { return r.loginBaseURL(publicPort) },
+			KnownPassword: r.knownPassword,
+			ResetPassword: func() (string, error) { return r.resetPassword(r.authState.creds) },
+			Shutdown:      stop,
+		})
+		r.localSrv.setHandler(localUI.Handler())
+		controlURL = fmt.Sprintf("http://127.0.0.1:%d/", localPort)
+	}
 
-	go func() { _ = publicServer.Serve(publicListener) }()
-	go func() { _ = localServer.Serve(localListener) }()
-
-	controlURL := fmt.Sprintf("http://127.0.0.1:%d/", localPort)
-
-	statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	statusCtx, statusCancel := context.WithTimeout(runCtx, 5*time.Second)
 	signedIn := coordinator.SignedIn(statusCtx)
 	statusCancel()
 
-	r.printReady(publicPort, controlURL, generated, signedIn)
+	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn)
 
-	if r.mode == modeLocal {
+	if r.mode == modeLocal && controlURL != "" {
 		go openBrowser(controlURL)
 	}
 
-	flusher := time.NewTicker(time.Minute)
-	defer flusher.Stop()
-	go func() {
-		for range flusher.C {
-			_ = sessions.Flush()
-		}
-	}()
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case sig := <-signals:
+	case <-runCtx.Done():
+		r.shuttingDown.Store(true)
 		fmt.Println()
-		info("Received %s, shutting down…", sig)
+		info("Shutdown signal received, stopping…")
 	case <-shutdown:
+		r.shuttingDown.Store(true)
 		fmt.Println()
 		shutdownMu.Lock()
 		reason := shutdownReason
@@ -281,12 +468,28 @@ func (r *runner) start() error {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	if r.reloadRequested.Load() && runCtx.Err() == nil {
+		r.publicSrv.park()
+		r.localSrv.park()
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		r.publicSrv.shutdown(ctx)
+		r.localSrv.shutdown(ctx)
+	}
+	if r.mode == modeServe && (r.childCmd != nil || (r.reloadRequested.Load() && canReloadLS)) {
+		r.terminateManagedLanguageServer(instance)
+	}
+	stopBackground()
+	_ = r.authState.sessions.Flush()
 
-	_ = publicServer.Shutdown(ctx)
-	_ = localServer.Shutdown(ctx)
-	_ = sessions.Flush()
+	if childCrashed.Load() {
+		return errors.New("language server exited unexpectedly")
+	}
+	if r.reloadRequested.Load() && runCtx.Err() == nil {
+		step("Reloading language server")
+		return nil
+	}
 
 	step("Stopped")
 	return nil
@@ -309,8 +512,10 @@ func (r *runner) syncRemoteControlSetting() {
 	}
 }
 
-func (r *runner) resolveLanguageServer() (*lsproc.Instance, error) {
-	ctx := context.Background()
+func (r *runner) resolveLanguageServer(ctx context.Context) (*lsproc.Instance, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	if r.mode == modeServe {
 		return r.resolveHeadless(ctx)
@@ -334,13 +539,15 @@ func (r *runner) resolveLanguageServer() (*lsproc.Instance, error) {
 }
 
 func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) {
-	binary := lsproc.FindLanguageServer(r.cfg.LanguageServer)
+	binary := lsproc.FindLanguageServer(updater.EffectiveLanguageServer(r.cfg))
 	if binary == "" {
 		return nil, errWithHints(
 			"Could not find the Antigravity language_server binary.",
 			"Run the installer: curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install.sh | bash",
 			"Or point at an existing binary: agy-server serve --language-server /path/to/language_server")
 	}
+	stagedVer := updater.StagedVersion(r.cfg)
+	detectedBefore := updater.DetectBinaryVersion(binary)
 
 	shimDir := r.cfg.Path("browser-shim")
 	urlFile := r.cfg.Path("auth-url.txt")
@@ -355,44 +562,138 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 
 	if instance, err := lsproc.FindMatching(filter); err == nil {
 		info("Reusing the language server already running from %s", dim(binary))
+		r.reusedPID = instance.PID
 		r.syncInstanceCSRFToken(instance)
+		if shouldConfirmReusedInstance(r.cfg, binary, instance.PID) {
+			updater.ConfirmInstalledVersion(r.cfg, binary)
+		}
 		return instance, nil
 	}
 
-	info("Starting language server from %s", dim(binary))
+	launchManaged := func(ideVer string) (*lsproc.Instance, error) {
+		info("Starting language server from %s", dim(binary))
 
-	logPath := r.cfg.Path("language-server.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, err
-	}
-
-	csrfToken := r.loadOrCreateCSRFToken()
-
-	cmd, err := lsproc.LaunchHeadless(lsproc.HeadlessOptions{
-		BinaryPath:     binary,
-		CSRFToken:      csrfToken,
-		IDEVersion:     r.cfg.IDEVersion,
-		LogWriter:      logFile,
-		BrowserShimDir: shimDir,
-	})
-	_ = logFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	go func() { _ = cmd.Wait() }()
-
-	instance, err := r.waitForServer(ctx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
-	if err != nil {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+		logPath := r.cfg.Path("language-server.log")
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+
+		csrfToken := r.loadOrCreateCSRFToken()
+
+		cmd, err := lsproc.LaunchHeadless(lsproc.HeadlessOptions{
+			BinaryPath:     binary,
+			CSRFToken:      csrfToken,
+			IDEVersion:     ideVer,
+			LogWriter:      logFile,
+			BrowserShimDir: shimDir,
+		})
+		_ = logFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		done := make(chan struct{})
+		r.childCmd = cmd
+		r.childDone = done
+		go func() {
+			_ = cmd.Wait()
+			close(done)
+		}()
+
+		waitCtx, waitCancel := context.WithCancel(ctx)
+		var exitedEarly atomic.Bool
+		go func() {
+			select {
+			case <-done:
+				exitedEarly.Store(true)
+				waitCancel()
+			case <-waitCtx.Done():
+			}
+		}()
+
+		instance, err := r.waitForServer(waitCtx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
+		waitCancel()
+		if err != nil {
+			lsproc.TerminateProcess(cmd.Process, cmd.Process.Pid, done, 2*time.Second)
+			r.childCmd = nil
+			r.childDone = nil
+			if exitedEarly.Load() && ctx.Err() == nil {
+				return nil, errWithHints(
+					"The Antigravity language server exited immediately during startup.",
+					fmt.Sprintf("Check the language server log: %s", logPath),
+				)
+			}
+			return nil, err
+		}
+		if instance.CSRFToken == "" {
+			instance.CSRFToken = csrfToken
+		}
+		return instance, nil
 	}
-	if instance.CSRFToken == "" {
-		instance.CSRFToken = csrfToken
+
+	instance, err := launchManaged(updater.LaunchIDEVersion(r.cfg, detectedBefore))
+	if err == nil {
+		updater.ConfirmInstalledVersion(r.cfg, binary)
+		return instance, nil
 	}
-	return instance, nil
+	if ctx.Err() == nil && updater.HasUnverifiedStagedUpdate(r.cfg, binary) {
+		if info, statErr := os.Stat(binary + ".bak"); statErr == nil && !info.IsDir() {
+			warn("language server failed to start (%v); rolling back to %s.bak", err, binary)
+			brokenCandidate := detectedBefore
+			if brokenCandidate == "" {
+				brokenCandidate = stagedVer
+			}
+			if rerr := updater.RestoreBackup(binary); rerr != nil {
+				warn("could not restore backup binary: %v", rerr)
+				r.shuttingDown.Store(true)
+				return nil, err
+			}
+			updater.ClearStagedVersion(r.cfg, binary)
+			updater.RecordBrokenVersion(r.cfg, brokenCandidate)
+			restoredVer := updater.LaunchIDEVersion(r.cfg, updater.DetectBinaryVersion(binary))
+			instance, err = launchManaged(restoredVer)
+			if err == nil {
+				updater.ConfirmInstalledVersion(r.cfg, binary)
+				return instance, nil
+			}
+		}
+	}
+	r.shuttingDown.Store(true)
+	return nil, err
+}
+
+func shouldConfirmReusedInstance(cfg *config.Config, binary string, pid int) bool {
+	if !updater.HasUnverifiedStagedUpdate(cfg, binary) {
+		return true
+	}
+	return procExeMatchesDisk(pid, binary)
+}
+
+func procExeMatchesDisk(pid int, diskPath string) bool {
+	if runtime.GOOS != "linux" || pid <= 0 || diskPath == "" {
+		return false
+	}
+	diskInfo, err := os.Stat(diskPath)
+	if err != nil {
+		return false
+	}
+	procInfo, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return false
+	}
+	return os.SameFile(diskInfo, procInfo)
+}
+
+func (r *runner) terminateManagedLanguageServer(instance *lsproc.Instance) {
+	var proc *os.Process
+	pid := 0
+	if r.childCmd != nil && r.childCmd.Process != nil {
+		proc = r.childCmd.Process
+		pid = proc.Pid
+	} else if instance != nil && instance.PID > 0 {
+		pid = instance.PID
+	}
+	lsproc.TerminateProcess(proc, pid, r.childDone, 5*time.Second)
 }
 
 func (r *runner) loadOrCreateCSRFToken() string {
@@ -481,18 +782,16 @@ func (r *runner) loginBaseURL(port int) string {
 }
 
 func (r *runner) setGeneratedPassword(password string) {
-	if password == "" {
-		return
+	if r.authState != nil {
+		r.authState.setGenerated(password)
 	}
-	r.mu.Lock()
-	r.generatedPassword = password
-	r.mu.Unlock()
 }
 
 func (r *runner) knownPassword() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.generatedPassword
+	if r.authState == nil {
+		return ""
+	}
+	return r.authState.known()
 }
 
 func (r *runner) resetPassword(creds *auth.Credentials) (string, error) {
@@ -524,10 +823,12 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 		info("%-14s %s", "Password", dim("unchanged — run 'agy-server passwd' to set a new one"))
 	}
 
-	fmt.Println()
-	info("Control panel  %s", cyan(controlURL))
-	if r.mode == modeLocal {
-		info("%s", dim("Scan the QR code there to sign in on your phone without typing."))
+	if controlURL != "" {
+		fmt.Println()
+		info("Control panel  %s", cyan(controlURL))
+		if r.mode == modeLocal {
+			info("%s", dim("Scan the QR code there to sign in on your phone without typing."))
+		}
 	}
 
 	if !signedIn {

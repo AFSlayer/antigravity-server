@@ -9,7 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -90,6 +94,7 @@ type LocalOptions struct {
 	Mode          string
 	NetworkNote   string
 	Port          int
+	LocalPort     int
 	Auth          *auth.Authenticator
 	Tracker       *patches.Tracker
 	Endpoints     func() []Endpoint
@@ -110,6 +115,28 @@ func NewLocal(opts LocalOptions) *Local {
 	return &Local{opts: opts}
 }
 
+func isAllowedLoopbackHost(hostHeader string, expectedPort int) bool {
+	if expectedPort > 0 {
+		h, p, err := net.SplitHostPort(hostHeader)
+		if err != nil || p != strconv.Itoa(expectedPort) {
+			return false
+		}
+		return h == "127.0.0.1" || h == "::1" || strings.EqualFold(h, "localhost")
+	}
+	h := strings.TrimSpace(hostHeader)
+	if hostPart, portPart, err := net.SplitHostPort(h); err == nil {
+		if portNum, perr := strconv.Atoi(portPart); perr != nil || portNum < 1 || portNum > 65535 {
+			return false
+		}
+		h = hostPart
+	} else if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	} else if strings.ContainsRune(h, ':') {
+		return false
+	}
+	return h == "127.0.0.1" || h == "::1" || strings.EqualFold(h, "localhost")
+}
+
 // Handler returns the control panel routes. Mount it on a listener bound to
 // 127.0.0.1 only; these endpoints are unauthenticated by design.
 func (l *Local) Handler() http.Handler {
@@ -123,7 +150,13 @@ func (l *Local) Handler() http.Handler {
 	mux.HandleFunc("/api/password/reset", l.resetPassword)
 	mux.HandleFunc("/api/sessions/revoke", l.revokeSessions)
 	mux.HandleFunc("/api/shutdown", l.shutdown)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAllowedLoopbackHost(r.Host, l.opts.LocalPort) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (l *Local) enrollURL() (string, error) {
@@ -246,9 +279,56 @@ func isPost(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return false
 	}
-	if sec := r.Header.Get("Sec-Fetch-Site"); sec != "" && sec != "same-origin" && sec != "none" {
+	if sec := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); sec != "" && sec != "same-origin" && sec != "none" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
+	}
+	src := strings.TrimSpace(r.Header.Get("Origin"))
+	if src == "" {
+		src = strings.TrimSpace(r.Header.Get("Referer"))
+	}
+	if src != "" {
+		if src == "null" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		u, err := url.Parse(src)
+		if err != nil || u.Host == "" || !strings.EqualFold(u.Scheme, "http") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		reqHost, reqPort := auth.SplitHostOptionalPort(r.Host)
+		if !strings.EqualFold(u.Hostname(), reqHost) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		if reqPort == "" {
+			reqPort = "80"
+		}
+		srcPort := u.Port()
+		if srcPort == "" {
+			srcPort = "80"
+		}
+		if srcPort != reqPort {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
+func isPublicPost(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet, publicURL string) bool {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	ok, unverified := auth.CheckSameOrigin(r, trusted, publicURL)
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	if unverified {
+		auth.WarnUnverifiedOriginFallback()
 	}
 	return true
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/coder/websocket"
 )
 
@@ -93,9 +94,12 @@ func (p *Proxy) relayWebSocket(w http.ResponseWriter, r *http.Request) {
 	var lastActivity atomic.Pointer[time.Time]
 	now := time.Now()
 	lastActivity.Store(&now)
-	recordActivity := func(int) {
+	recordActivity := func(size int) {
 		t := time.Now()
 		lastActivity.Store(&t)
+		if size > 0 {
+			p.touchActivity()
+		}
 	}
 	var stats relayStats
 
@@ -349,14 +353,17 @@ func (p *Proxy) dialUpstreamWebSocket(r *http.Request) (*websocket.Conn, error) 
 		}
 		header[name] = append([]string(nil), values...)
 	}
+	header.Del("X-Original-Origin")
 	header.Set("Origin", "https://"+target)
 	if orig := r.Header.Get("Origin"); orig != "" {
 		header.Set("X-Original-Origin", orig)
 	}
-	if clientHost := r.Header.Get("X-Forwarded-Host"); clientHost != "" {
+	if clientHost := p.trustedForwardedHost(r); clientHost != "" {
 		header.Set("X-Client-Host", clientHost)
-	} else if r.Host != "" {
-		header.Set("X-Client-Host", r.Host)
+	} else if safeHost := auth.SanitizeHostPort(r.Host); safeHost != "" {
+		header.Set("X-Client-Host", safeHost)
+	} else {
+		header.Del("X-Client-Host")
 	}
 	if p.opts.TargetCSRFToken != "" {
 		header.Set("x-codeium-csrf-token", p.opts.TargetCSRFToken)

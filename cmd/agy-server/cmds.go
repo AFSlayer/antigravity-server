@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -39,6 +40,29 @@ func configCommand(args []string) error {
 }
 
 func passwd(args []string) error {
+	fromStdin := false
+	var positional []string
+	afterDoubleDash := false
+	for _, a := range args {
+		if !afterDoubleDash {
+			switch a {
+			case "--":
+				afterDoubleDash = true
+				continue
+			case "--stdin":
+				fromStdin = true
+				continue
+			case "--help", "-h":
+				fmt.Fprint(os.Stderr, usage)
+				return nil
+			}
+		}
+		positional = append(positional, a)
+	}
+	if fromStdin && len(positional) > 0 {
+		return fmt.Errorf("cannot combine --stdin with a positional password argument")
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -47,15 +71,17 @@ func passwd(args []string) error {
 		return err
 	}
 
-	creds, _, err := auth.LoadOrCreateCredentials(cfg.Path("credentials.json"), auth.GeneratePassword())
-	if err != nil {
-		return err
-	}
-
 	password := ""
-	if len(args) > 0 {
-		password = args[0]
-	} else {
+	switch {
+	case fromStdin:
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
+		if err != nil {
+			return err
+		}
+		password = strings.TrimRight(string(raw), "\r\n")
+	case len(positional) > 0:
+		password = positional[0]
+	default:
 		password, err = promptPassword()
 		if err != nil {
 			return err
@@ -66,8 +92,24 @@ func passwd(args []string) error {
 	if generated {
 		password = auth.GeneratePassword()
 	}
+	if len(password) < auth.MinPasswordLen {
+		return errWithHints(
+			fmt.Sprintf("password must be at least %d characters", auth.MinPasswordLen),
+			fmt.Sprintf("Use at least %d characters.", auth.MinPasswordLen),
+		)
+	}
 
-	if err := creds.Set(password); err != nil {
+	credsPath := cfg.Path("credentials.json")
+	creds, err := auth.LoadCredentials(credsPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		creds, _, err = auth.LoadOrCreateCredentials(credsPath, password)
+		if err != nil {
+			return errWithHints(err.Error(), fmt.Sprintf("Use at least %d characters.", auth.MinPasswordLen))
+		}
+	} else if err := creds.Set(password); err != nil {
 		return errWithHints(err.Error(), fmt.Sprintf("Use at least %d characters.", auth.MinPasswordLen))
 	}
 

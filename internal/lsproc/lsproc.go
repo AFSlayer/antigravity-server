@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -70,10 +72,47 @@ func (f Filter) matches(p process) bool {
 	if f.PID != 0 && p.pid != f.PID {
 		return false
 	}
-	if f.BinaryPath != "" && !strings.Contains(p.cmdline, f.BinaryPath) {
+	if f.BinaryPath != "" && !cmdlineContainsBinary(p.cmdline, f.BinaryPath) {
 		return false
 	}
 	return true
+}
+
+func isCmdlineArgBoundary(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '"', '\'', 0:
+		return true
+	default:
+		return false
+	}
+}
+
+func cmdlineContainsBinary(cmdline, binaryPath string) bool {
+	if binaryPath == "" {
+		return true
+	}
+	haystack := cmdline
+	needle := binaryPath
+	if runtime.GOOS == "windows" {
+		haystack = strings.ToLower(strings.ReplaceAll(haystack, "/", `\`))
+		needle = strings.ToLower(strings.ReplaceAll(needle, "/", `\`))
+	}
+	offset := 0
+	for offset <= len(haystack)-len(needle) {
+		idx := strings.Index(haystack[offset:], needle)
+		if idx < 0 {
+			return false
+		}
+		pos := offset + idx
+		end := pos + len(needle)
+		leftOK := pos == 0 || isCmdlineArgBoundary(haystack[pos-1])
+		rightOK := end == len(haystack) || isCmdlineArgBoundary(haystack[end])
+		if leftOK && rightOK {
+			return true
+		}
+		offset = pos + 1
+	}
+	return false
 }
 
 // Find returns any running standalone language server.
@@ -294,4 +333,91 @@ func WaitForMatching(ctx context.Context, timeout time.Duration, filter Filter, 
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// TerminateProcess gracefully stops a language server process and waits until it
+// exits, falling back to a forced kill if grace expires. When done is nil (an
+// externally started process reused by serve mode), liveness is polled by PID.
+func TerminateProcess(proc *os.Process, pid int, done <-chan struct{}, grace time.Duration) {
+	if proc == nil && pid > 0 {
+		if found, err := os.FindProcess(pid); err == nil {
+			proc = found
+		}
+	}
+	if proc == nil {
+		return
+	}
+	if pid <= 0 {
+		pid = proc.Pid
+	}
+
+	_ = sendTerminate(proc)
+	if done != nil {
+		select {
+		case <-done:
+			return
+		case <-time.After(grace):
+			_ = proc.Kill()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+			}
+		}
+		return
+	}
+
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if !isProcessAlive(pid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = proc.Kill()
+	killDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(killDeadline) {
+		if !isProcessAlive(pid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// CanControlPID reports whether pid is alive and owned by a principal this
+// process is permitted to signal or terminate.
+func CanControlPID(pid int) bool {
+	return canControlProcess(pid)
+}
+
+// WatchPID polls an externally started process by PID and closes the returned
+// channel if the process exits before ctx is cancelled. When ctx ends first,
+// the goroutine exits without closing the channel.
+func WatchPID(ctx context.Context, pid int, pollInterval time.Duration) <-chan struct{} {
+	if pid <= 0 {
+		return nil
+	}
+	if pollInterval <= 0 {
+		pollInterval = 2 * time.Second
+	}
+	done := make(chan struct{})
+	go func() {
+		if !isProcessAlive(pid) {
+			close(done)
+			return
+		}
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !isProcessAlive(pid) {
+					close(done)
+					return
+				}
+			}
+		}
+	}()
+	return done
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -34,6 +35,14 @@ var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`"
 // Redux userStatus (2.28 and earlier, or a future build that drops the reset upstream). Anchoring from catch{ ensures a
 // reset moved before console.warn does not slip past the guard.
 var userStatusNoResetOnErrorRe = regexp.MustCompile(`catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+\(\)\s*[;,]\s*)?console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
+
+func regexpFindSubmatch(re *regexp.Regexp, body []byte) [][]byte {
+	loc := regexpFindSubmatchIndex(re, body)
+	if loc == nil {
+		return nil
+	}
+	return submatches(body, loc)
+}
 
 // TestAnchorsMatchLiveBundle is the check that actually proves the patches still
 // work. It runs only when a standalone Antigravity language server is reachable,
@@ -66,7 +75,7 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 				t.Errorf("%s: anchor matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		case Regexp:
-			if n := len(p.FindRe.FindAll(body, -1)); n != 1 && (!p.Optional || n != 0) {
+			if n := len(regexpFindAllIndex(p.FindRe, body, -1)); n != 1 && (!p.Optional || n != 0) {
 				t.Errorf("%s: regexp matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		}
@@ -75,16 +84,16 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// connection-prewarm hands the bundle a socket it opened early. That only
 	// works while the bundle builds the socket this way and assigns onopen
 	// straight after, so check the shape it relies on.
-	if n := len(socketConstructionRe.FindAll(mainJS, -1)); n != 1 {
+	if n := len(regexpFindAllIndex(socketConstructionRe, mainJS, -1)); n != 1 {
 		t.Errorf("the bundle builds its RPC socket in an unexpected way (%d matches); connection-prewarm may stop working", n)
 	}
 
 	// scroll-input-tracker finds these by name, and nothing else would notice them going away. Its scrollbar selectors
 	// are not listed because older bundles have no overlay scrollbar.
-	if !findBarInputRe.Match(mainJS) {
+	if !regexpMatch(findBarInputRe, mainJS) {
 		t.Error("the bundle no longer has the find bar's input; scroll-input-tracker may stop working")
 	}
-	if !rowSizedInCqhRe.Match(mainJS) {
+	if !regexpMatch(rowSizedInCqhRe, mainJS) {
 		t.Error("the bundle no longer sizes rows with an inline cqh height; scroll-input-tracker may stop following after a collapse")
 	}
 	if !bytes.Contains(mainJS, []byte("autoscroll-viewport")) {
@@ -96,29 +105,29 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 
 	// mobile-user-message-actions and autoscroll-distance-fix are optional because 2.31 does both itself. A bundle with
 	// neither the code they patch nor that would lose them without a word.
-	if !mobileUserMessageActionsRe.Match(mainJS) && !userMessageButtonsOnTouchRe.Match(mainJS) {
+	if !regexpMatch(mobileUserMessageActionsRe, mainJS) && !regexpMatch(userMessageButtonsOnTouchRe, mainJS) {
 		t.Error("mobile-user-message-actions: the bundle neither has the buttons the patch shows nor shows them on touch screens itself")
 	}
-	if !autoscrollDistanceFixRe.Match(mainJS) && !autoscrollPhysicalDistanceRe.Match(mainJS) {
+	if !regexpMatch(autoscrollDistanceFixRe, mainJS) && !regexpMatch(autoscrollPhysicalDistanceRe, mainJS) {
 		t.Error("autoscroll-distance-fix: the auto-scroll hook neither has the check the patch fixes nor measures the position itself")
 	}
 
 	// paging-trim-waits-for-still is optional for bundles without this paging code, and would leave rows dropping under
 	// a moving reader without a word.
-	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !pagingTrimWaitsRe.Match(mainJS) {
+	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !regexpMatch(pagingTrimWaitsRe, mainJS) {
 		t.Error("paging-trim-waits-for-still: the paging code is there but its update decision was not found; rows above drop while the reader scrolls")
 	}
 
 	// user-status-keep-on-error is optional for 2.28 and earlier, which did not clear userStatus in catch. A newer
 	// bundle whose UserStatusSync rewraps without matching would silently wipe loaded models on transient socket drops.
-	if !userStatusKeepOnErrorRe.Match(mainJS) && !userStatusNoResetOnErrorRe.Match(mainJS) {
+	if !regexpMatch(userStatusKeepOnErrorRe, mainJS) && !regexpMatch(userStatusNoResetOnErrorRe, mainJS) {
 		t.Error("user-status-keep-on-error: UserStatusSync neither matches the patch nor leaves userStatus intact on fetch errors")
 	}
 
 	// mobile-home-new-conversation-row is optional for older bundles, and would fall back to the row in the list without
 	// a word. It tells the mobile home apart by the navigation component's conciergeTestId, named in its signature.
 	if bytes.Contains(mainJS, []byte(`showNewConversation:!1`)) {
-		if !mobileHomeNewConvoRowRe.Match(mainJS) {
+		if !regexpMatch(mobileHomeNewConvoRowRe, mainJS) {
 			t.Error("mobile-home-new-conversation-row: the navigation rows were not found; the mobile home falls back to the row in the list")
 		}
 		if !bytes.Contains(mainJS, []byte(`conciergeTestId:"mobile-home-concierge"`)) {
@@ -129,9 +138,9 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// mobile-back-clears-section also tells the titlebar's home hook to treat a selected project as away from home, so
 	// the back button shows there. That part is optional for older bundles and would fail without a word, so check
 	// that it matches and that the hook it flags is the one mobile-new-convo-header rewrites.
-	if header := mobileNewConvoHeaderRe.FindSubmatch(mainJS); header == nil {
+	if header := regexpFindSubmatch(mobileNewConvoHeaderRe, mainJS); header == nil {
 		t.Error("mobile-new-convo-header: the home hook was not found")
-	} else if back := mobileBackClearsSectionRe.FindSubmatch(mainJS); back == nil || len(back[1]) == 0 {
+	} else if back := regexpFindSubmatch(mobileBackClearsSectionRe, mainJS); back == nil || len(back[1]) == 0 {
 		t.Error("mobile-back-clears-section: the titlebar around the back button was not found; the back button will not show for a selected project")
 	} else if hook := regexp.MustCompile(`b=([a-zA-Z0-9_$]+)\($`).FindSubmatch(back[1]); hook == nil || !bytes.Equal(hook[1], header[1]) {
 		t.Errorf("mobile-back-clears-section: the titlebar flags %q, not the home hook %q", hook, header[1])
@@ -151,8 +160,19 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 			}
 		}
 		if target.target == MainJS {
-			tmp := "/tmp/debug_patched_bundle.js"
-			_ = os.WriteFile(tmp, patched, 0644)
+			for _, hook := range []string{
+				"window.__agySyncMediaState",
+				"window.__agyShouldStreamSingle",
+				"window.__agyPartitionFiles",
+			} {
+				if !bytes.Contains(patched, []byte(hook)) {
+					t.Errorf("patched live MainJS missing %s (file-upload-large-file-streaming-fallback partial match regression)", hook)
+				}
+			}
+			tmp := filepath.Join(t.TempDir(), "debug_patched_bundle.js")
+			if err := os.WriteFile(tmp, patched, 0o600); err != nil {
+				t.Fatalf("write temporary patched bundle: %v", err)
+			}
 			cmd := exec.Command("node", "--check", tmp)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("JavaScript Syntax Error in patched bundle: %v\nOutput: %s", err, string(out))

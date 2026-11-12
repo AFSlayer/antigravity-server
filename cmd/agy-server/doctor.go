@@ -16,6 +16,7 @@ import (
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 	"github.com/AFSlayer/antigravity-server/internal/netinfo"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
+	"github.com/AFSlayer/antigravity-server/internal/updater"
 )
 
 type checklist struct {
@@ -61,11 +62,12 @@ func doctor(args []string) error {
 	rule()
 	if c.problems == 0 {
 		step("Everything looks good.")
-	} else {
-		warn("%d problem(s) found.", c.problems)
+		fmt.Println()
+		return nil
 	}
+	warn("%d problem(s) found.", c.problems)
 	fmt.Println()
-	return nil
+	return fmt.Errorf("%d problem(s) found", c.problems)
 }
 
 func (c *checklist) checkDataDir(cfg *config.Config) {
@@ -116,7 +118,7 @@ func (c *checklist) checkGeminiConfig() {
 }
 
 func (c *checklist) checkBinaries(cfg *config.Config) {
-	if binary := lsproc.FindLanguageServer(cfg.LanguageServer); binary != "" {
+	if binary := lsproc.FindLanguageServer(updater.EffectiveLanguageServer(cfg)); binary != "" {
 		c.ok("language_server found at %s", dim(binary))
 		return
 	}
@@ -151,7 +153,7 @@ func (c *checklist) checkPatches(cfg *config.Config, instance *lsproc.Instance) 
 
 	opts := patches.Options{
 		MobileUX:      cfg.MobileUX,
-		WorkspaceRoot: cfg.WorkspaceRoot,
+		WorkspaceRoot: cfg.PatchWorkspaceRoot(),
 		Disabled:      cfg.DisabledPatchSet(),
 		Debug:         cfg.Debug,
 	}
@@ -191,10 +193,16 @@ func (c *checklist) checkPatches(cfg *config.Config, instance *lsproc.Instance) 
 	}
 }
 
-func alreadyServing(port int) bool {
+func alreadyServing(bindAddr string, port int) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, auth.LoginPath))
+	probeHost := "127.0.0.1"
+	trimmedBind := strings.TrimSpace(bindAddr)
+	if trimmedBind != "" && trimmedBind != "0.0.0.0" && trimmedBind != "::" && trimmedBind != "[::]" {
+		probeHost = strings.Trim(trimmedBind, "[]")
+	}
+
+	resp, err := client.Get(fmt.Sprintf("http://%s%s", net.JoinHostPort(probeHost, fmt.Sprint(port)), auth.LoginPath))
 	if err != nil {
 		return false
 	}
@@ -209,11 +217,53 @@ func alreadyServing(port int) bool {
 	return strings.Contains(string(body), `name="agy-remote"`)
 }
 
+func hasNonLoopbackInterface() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLoopbackBind(bindAddr string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(bindAddr), "[]")
+	if strings.EqualFold(trimmed, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(trimmed); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 func (c *checklist) checkNetwork(cfg *config.Config) {
 	local := netinfo.Local()
 
 	if local.LAN != "" {
 		c.ok("Reachable on your network at %s", cyan(fmt.Sprintf("http://%s:%d", local.LAN, cfg.Port)))
+	} else if cfg.PublicURL != "" || local.Tailscale != "" || isLoopbackBind(cfg.BindAddr) || hasNonLoopbackInterface() {
+		c.skip("No private LAN IPv4 address found")
 	} else {
 		c.bad("No network address found; only this machine can connect")
 	}
@@ -223,7 +273,7 @@ func (c *checklist) checkNetwork(cfg *config.Config) {
 
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.BindAddr, fmt.Sprint(cfg.Port)))
 	if err != nil {
-		if alreadyServing(cfg.Port) {
+		if alreadyServing(cfg.BindAddr, cfg.Port) {
 			c.ok("Port %d is serving an agy-server instance", cfg.Port)
 		} else {
 			c.bad("Port %d is already in use by something else", cfg.Port)
@@ -235,8 +285,7 @@ func (c *checklist) checkNetwork(cfg *config.Config) {
 	c.ok("Port %d is free", cfg.Port)
 
 	if cfg.PublicURL != "" && len(cfg.TrustedProxies) == 0 {
-		c.bad("public-url is set but no trusted proxies are configured")
-		c.note("Rate limiting will see your proxy instead of real clients")
-		c.note("Fix it with: --trusted-proxies 127.0.0.1/32")
+		c.ok("Trusted proxies default to loopback in server mode (127.0.0.1/32, ::1/128)")
+		c.note("Pass --trusted-proxies if your reverse proxy runs on another host or in local mode")
 	}
 }

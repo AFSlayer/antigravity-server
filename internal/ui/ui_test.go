@@ -65,7 +65,7 @@ func TestIsPostRejectsCrossSiteRequests(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, "/api/password/reveal", nil)
+			req := httptest.NewRequest(tc.method, "http://127.0.0.1/api/password/reveal", nil)
 			if tc.secFetchSite != "" {
 				req.Header.Set("Sec-Fetch-Site", tc.secFetchSite)
 			}
@@ -75,6 +75,53 @@ func TestIsPostRejectsCrossSiteRequests(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
 		})
+	}
+
+	// DNS rebinding guard must reject non-loopback Host even when LocalPort is omitted (0)
+	rebindDefault := httptest.NewRequest(http.MethodPost, "http://evil-rebind.example.com/api/password/reveal", nil)
+	rebindDefaultRec := httptest.NewRecorder()
+	handler.ServeHTTP(rebindDefaultRec, rebindDefault)
+	if rebindDefaultRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-loopback Host when LocalPort=0, got %d", rebindDefaultRec.Code)
+	}
+
+	// DNS rebinding guard when LocalPort is configured
+	boundLocal := NewLocal(LocalOptions{
+		LocalPort:     54321,
+		KnownPassword: func() string { return "secret" },
+	}).Handler()
+
+	rebindReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rebindReq.Host = "evil-rebind.example.com:54321"
+	rebindRec := httptest.NewRecorder()
+	boundLocal.ServeHTTP(rebindRec, rebindReq)
+	if rebindRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for DNS rebinding Host header, got %d", rebindRec.Code)
+	}
+
+	validReq := httptest.NewRequest(http.MethodPost, "/api/password/reveal", nil)
+	validReq.Host = "127.0.0.1:54321"
+	validReq.Header.Set("Origin", "http://127.0.0.1:54321")
+	validRec := httptest.NewRecorder()
+	boundLocal.ServeHTTP(validRec, validReq)
+	if validRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid loopback Host+Origin, got %d", validRec.Code)
+	}
+
+	crossPortDefault := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/password/reveal", nil)
+	crossPortDefault.Header.Set("Origin", "http://127.0.0.1:3000")
+	crossPortRec := httptest.NewRecorder()
+	handler.ServeHTTP(crossPortRec, crossPortDefault)
+	if crossPortRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for cross-port Origin when Host omits port, got %d", crossPortRec.Code)
+	}
+
+	httpsSchemeDefault := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/password/reveal", nil)
+	httpsSchemeDefault.Header.Set("Origin", "https://127.0.0.1")
+	httpsSchemeRec := httptest.NewRecorder()
+	handler.ServeHTTP(httpsSchemeRec, httpsSchemeDefault)
+	if httpsSchemeRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for https Origin against plaintext control panel, got %d", httpsSchemeRec.Code)
 	}
 }
 
@@ -271,5 +318,63 @@ func TestCompleteErrorMessages(t *testing.T) {
 		if status != tc.status || msg != tc.msg {
 			t.Errorf("completeError(%v) = %d %q, want %d %q", tc.err, status, msg, tc.status, tc.msg)
 		}
+	}
+}
+
+func TestSignInBehindReverseProxyAndDebugClose(t *testing.T) {
+	_, loopbackNet, err := net.ParseCIDR("127.0.0.1/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := []*net.IPNet{loopbackNet}
+
+	s := NewSignIn(signin.New(&lsproc.Instance{Port: 1, CSRFToken: "t"}, "")).WithSameOrigin(trusted, "https://agy.example.com")
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	// Reverse proxy sends internal loopback Host + X-Forwarded-Host + external Origin -> must pass origin check (not 403)
+	proxyReq := httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`))
+	proxyReq.Host = "127.0.0.1:8765"
+	proxyReq.RemoteAddr = "127.0.0.1:4444"
+	proxyReq.Header.Set("X-Forwarded-Host", "agy.example.com")
+	proxyReq.Header.Set("Origin", "https://agy.example.com")
+	proxyRec := httptest.NewRecorder()
+	mux.ServeHTTP(proxyRec, proxyReq)
+	if proxyRec.Code == http.StatusForbidden {
+		t.Fatalf("SignIn POST behind trusted reverse proxy was wrongly rejected with 403")
+	}
+
+	// Cross-origin POST must still be rejected with 403
+	evilReq := httptest.NewRequest(http.MethodPost, SignInCompletePath, strings.NewReader(`{"pasted":"4/0Acode"}`))
+	evilReq.Host = "127.0.0.1:8765"
+	evilReq.RemoteAddr = "127.0.0.1:4444"
+	evilReq.Header.Set("X-Forwarded-Host", "agy.example.com")
+	evilReq.Header.Set("Origin", "https://evil.example")
+	evilRec := httptest.NewRecorder()
+	mux.ServeHTTP(evilRec, evilReq)
+	if evilRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for cross-origin SignIn POST, got %d", evilRec.Code)
+	}
+
+	// Debug.Close must prevent late collect calls from reopening or writing to the file
+	logPath := filepath.Join(t.TempDir(), "mobile-debug.log")
+	dbg, err := NewDebug(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbg.WithSameOrigin(trusted, "https://agy.example.com").Register(mux)
+	if err := dbg.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dbgReq := httptest.NewRequest(http.MethodPost, DebugLogPath, strings.NewReader(`{"events":[{"t":1}]}`))
+	dbgReq.Host = "agy.example.com"
+	dbgReq.Header.Set("Origin", "https://agy.example.com")
+	dbgRec := httptest.NewRecorder()
+	mux.ServeHTTP(dbgRec, dbgReq)
+	if dbgRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 after Debug.Close, got %d", dbgRec.Code)
+	}
+	if dbg.file != nil {
+		t.Fatalf("Debug.file must remain nil after Close()")
 	}
 }

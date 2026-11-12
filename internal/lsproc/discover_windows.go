@@ -3,9 +3,12 @@
 package lsproc
 
 import (
+	"errors"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func powershell(script string) (string, error) {
@@ -60,4 +63,33 @@ func listeningPorts(pid int) ([]int, error) {
 		ports = append(ports, port)
 	}
 	return ports, nil
+}
+
+func sendTerminate(proc *os.Process) error {
+	return proc.Kill()
+}
+
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := syscall.OpenProcess(syscall.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return errors.Is(err, syscall.ERROR_ACCESS_DENIED)
+	}
+	defer syscall.CloseHandle(h)
+	s, err := syscall.WaitForSingleObject(h, 0)
+	return err == nil && s == syscall.WAIT_TIMEOUT
+}
+
+func canControlProcess(pid int) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	_ = syscall.CloseHandle(h)
+	return true
 }

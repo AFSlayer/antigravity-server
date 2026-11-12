@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func standaloneProcesses() ([]process, error) {
@@ -194,4 +195,28 @@ func collectPorts(out string, re *regexp.Regexp, mustContain string) []int {
 		}
 	}
 	return ports
+}
+
+func sendTerminate(proc *os.Process) error {
+	return proc.Signal(syscall.SIGTERM)
+}
+
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		if idx := strings.LastIndexByte(string(data), ')'); idx >= 0 {
+			rest := strings.TrimSpace(string(data[idx+1:]))
+			if strings.HasPrefix(rest, "Z") {
+				return false
+			}
+		}
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func canControlProcess(pid int) bool {
+	return isProcessAlive(pid) && syscall.Kill(pid, 0) == nil
 }

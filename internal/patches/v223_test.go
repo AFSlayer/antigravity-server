@@ -180,10 +180,33 @@ func TestMobileSettingsProjectsAndDeepLinks(t *testing.T) {
 		t.Errorf("export patch output wrong:\n%s", gotExport)
 	}
 
+	chainedBody := `function RNb(){var a=Hm(wX),b=Hm(xX),c=Xm(),e=$t(),{logEvent:f}=aA(),[g,h]=V3("main"),k=42,{foo:l}={foo:7};return g+":"+k+":"+l}`
+	gotChained := applyOnly(t, "mobile-project-settings-export", chainedBody, Options{MobileUX: true})
+	if _, err := exec.LookPath("node"); err == nil {
+		script := `"use strict";
+globalThis.window = {};
+var wX=1,xX=2,Hm=x=>x,Xm=()=>3,$t=()=>4,aA=()=>({logEvent:()=>{}});
+var curTab = "subpage";
+var V3 = () => [curTab, next => { curTab = next; }];
+` + gotChained + `
+if (typeof window.__agyProjectSettings !== "function") throw new Error("not exported");
+if (window.__agyProjectSettings() !== "subpage:42:7") throw new Error("chained var broken");
+if (window.__agyProjectSettingsBack !== null) throw new Error("should not retain closure when host inactive");
+window.__agyProjectSettingsHost = true;
+window.__agyProjectSettings();
+if (typeof window.__agyProjectSettingsBack !== "function") throw new Error("expected back handler when host active");
+if (window.__agyProjectSettingsBack() !== true || curTab !== "main") throw new Error("back handler did not reset tab");
+`
+		if out, err := exec.Command("node", "-e", script).CombinedOutput(); err != nil {
+			t.Fatalf("chained strict-mode execution failed: %v\n%s", err, out)
+		}
+	}
+
 	gotSettings := applyOnly(t, "mobile-settings-projects", regexpFixtures["mobile-settings-projects"], Options{MobileUX: true})
 	for _, want := range []string{
 		`{text:"Projects"}`,
 		`{text:"Not in Project"}`,
+		`window.__agyProjectSettingsHost=!!m?.startsWith("project:")`,
 		`settingsScreen/navigateToProjectScreen`,
 		`else if(_scr&&_scr!=="General"){a(qX(_scr));k.push(_scr)}`,
 		`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):n?A.createElement(gMb,null):fNb(m)`,
@@ -489,8 +512,8 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `var NR=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,adminDisabled:h=!1,disabledReason:k,toggleTooltip:l,isLast:m=!1,onDelete:n,deleteTitle:q="Delete",onToggle:r,toggleChecked:t,toggleDisabled:u=!1,expandableContent:v,actions:w})=>{var x=w||n||r,[y,z]=(0,A.useState)(!1),B=(0,A.useRef)(null);return A.createElement("div",null,d,f,v)};`
 		got := applyOnly(t, "settings-rules-editor", v228, Options{})
 		for _, want := range []string{
-			`_rawP=String(b||"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/")`,
-			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`_rawP=String(b||"");if(/^file:\/\//i.test(_rawP)){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/")`,
+			`_canEdit=Boolean(_p&&q!=="Delete plugin"&&q!=="Delete agent"&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/(?:^|\/)(?:\.git|\.agy-uploads)(?:\/|$)/i.test(_p)&&!/\/(?:\.gemini|\.agents?)\/(?:(?:config|antigravity)\/)?(?:builtin|plugins|agents)(?:\/|$)/i.test(_p)&&(/\.(?:md|mdc|markdown|rules)$/i.test(_p)||/(?:^|\/)\.(?:cursor|windsurf|cline)rules$/i.test(_p)||/(?:\/|\/[^/.]+)$/.test(_p)))`,
 			`if(agySavedDesc!==null)d=agySavedDesc;`,
 			`var agyDoEdit=_canEdit?async()=>{`,
 			`var agyExp=v?_R.createElement(_R.Fragment,null,v,agyEditorNode):agyEditorNode;v=agyExp;`,
@@ -527,7 +550,7 @@ func TestAntigravity228PatchShapes(t *testing.T) {
 		v228 := `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;return A.createElement("div",null,f,g,k)}`
 		got := applyOnly(t, "settings-doc-row-editor", v228, Options{})
 		for _, want := range []string{
-			`_R=A,_rawP=String(c??b??"");if(_rawP.startsWith("file://")){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/\/(?:\.gemini|\.agents?)\/(?:[^/]+\/)*(?:builtin|plugins|agents)\//.test(_p)&&!/\.json$/i.test(_p))`,
+			`_R=A,_rawP=String(c??b??"");if(/^file:\/\//i.test(_rawP)){_rawP=_rawP.slice(7);try{_rawP=decodeURIComponent(_rawP)}catch(_){}}var _p=_rawP.replace(/\\/g,"/"),_canEdit=Boolean(_p&&!m&&!g&&!l&&(/^(\/|~|[a-zA-Z]:\/)/.test(_p))&&!/(?:^|\/)(?:\.git|\.agy-uploads)(?:\/|$)/i.test(_p)&&!/\/(?:\.gemini|\.agents?)\/(?:(?:config|antigravity)\/)?(?:builtin|plugins|agents)(?:\/|$)/i.test(_p)&&(/\.(?:md|mdc|markdown|rules)$/i.test(_p)||/(?:^|\/)\.(?:cursor|windsurf|cline)rules$/i.test(_p)||/(?:\/|\/[^/.]+)$/.test(_p)))`,
 			`if(!q&&agyEdit){if(_tmr.current){clearTimeout(_tmr.current);_tmr.current=null;}agySetDone(!1);agySetErr("");agySetEdit(!1);}`,
 			`if(agySaved!==null){f=n&&_hadFm?agySaved:_stripFm(agySaved);d=_parseDesc(agySaved);}`,
 			`if(q&&agyEdit){agySetEdit(!1);return;}`,

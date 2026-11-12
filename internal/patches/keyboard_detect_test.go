@@ -469,6 +469,85 @@ editor.blurred = 0;
 newConvoBtnVNode.props.onClick();
 assert.strictEqual(editor.blurred, 0, "New Conversation tap during suppression window must not be blurred");
 assert.strictEqual(bottom(), "280px");
+resetKeyboard();
+
+// 14. Android resizes-content mode (both layout clientHeight and visualViewport.height shrink together):
+//     must cancel speculative --agy-bottom immediately (no double shrink), keep agy-kb-open active,
+//     support swipe-down dismiss, and learn usesLayoutResize for subsequent taps.
+tap(paragraph);
+clock += 20;
+focusField(editor);
+assert.strictEqual(bottom(), "280px");
+
+// Simulate Android browser shrinking layout + visual viewports together 80ms later (well within 500ms holdUntil)
+clock += 80;
+docEl.clientHeight = 520;
+global.innerHeight = 520;
+vv.height = 520;
+fire(vvListeners, "resize", {});
+flushRaf();
+assert.strictEqual(bottom(), "", "Android layout-resize mode must clear --agy-bottom immediately without waiting for holdUntil");
+assert.strictEqual(bodyEl.classList.contains("agy-kb-open"), true, "agy-kb-open must stay active while Android layout viewport is shrunk");
+
+// Swipe-down gesture must still blur the active input in Android layout-resize mode
+editor.blurred = 0;
+fire(docListeners, "touchstart", { target: bodyEl, touches: [{ clientX: 180, clientY: 200 }] });
+fire(winListeners, "touchmove", { target: bodyEl, touches: [{ clientX: 180, clientY: 270 }] });
+assert.strictEqual(editor.blurred, 1, "swipe-down must dismiss keyboard in Android layout-resize mode");
+
+// Restore full layout height -> agy-kb-open clears cleanly
+docEl.clientHeight = 844;
+global.innerHeight = 844;
+vv.height = 844;
+clock += 200;
+fire(vvListeners, "resize", {});
+flushRaf();
+assert.strictEqual(bodyEl.classList.contains("agy-kb-open"), false);
+
+// Subsequent tap on this Android session skips speculative --agy-bottom jump entirely
+tap(paragraph);
+clock += 20;
+focusField(editor);
+assert.strictEqual(bottom(), "", "subsequent focus on layout-resizing device must not speculatively set --agy-bottom");
+resetKeyboard();
+
+// 15. Window / toolbar / split-screen shrink while no input is focused must recalibrate maxBaseP downward
+//     so focusing afterwards does NOT falsely trigger layoutKbOpen, and an actual visualViewport keyboard
+//     (target > 0) restores usesLayoutResize = false.
+clock += 600;
+docEl.clientHeight = 700;
+global.innerHeight = 700;
+vv.height = 700;
+fire(winListeners, "resize", {});
+flushRaf();
+assert.strictEqual(bodyEl.classList.contains("agy-kb-open"), false, "non-keyboard window shrink must not mark keyboard open");
+
+tap(paragraph);
+clock += 20;
+focusField(editor);
+flushRaf();
+assert.strictEqual(bodyEl.classList.contains("agy-kb-open"), false, "focusing after baseline recalibration must not falsely detect layout-resize keyboard");
+
+// Now simulate overlay keyboard shrinking only visualViewport (target = 700 - 420 = 280) -> clears usesLayoutResize
+vv.height = 420;
+fire(vvListeners, "resize", {});
+flushRaf();
+clock += 300;
+flushRaf();
+assert.strictEqual(bottom(), "280px", "overlay keyboard must apply --agy-bottom");
+vv.height = 700;
+clock += 2000;
+fire(vvListeners, "resize", {});
+flushRaf();
+document.activeElement = bodyEl;
+assert.strictEqual(bottom(), "");
+assert.strictEqual(bodyEl.classList.contains("agy-kb-open"), false);
+
+// Because usesLayoutResize was cleared when target > 0, next portrait tap speculatively shrinks again
+tap(paragraph);
+clock += 20;
+focusField(editor);
+assert.strictEqual(bottom(), "280px", "speculative shrink must resume once overlay keyboard resets usesLayoutResize");
 
 process.exit(0);
 `

@@ -6,13 +6,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/config"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 	"github.com/AFSlayer/antigravity-server/internal/signin"
 	"github.com/AFSlayer/antigravity-server/internal/ui"
+	"github.com/AFSlayer/antigravity-server/internal/updater"
 )
 
 func TestCSRFTokenPersistence(t *testing.T) {
@@ -233,5 +238,221 @@ func TestListenReturnsErrorWhenPortInUse(t *testing.T) {
 	if err == nil {
 		ln2.Close()
 		t.Fatalf("expected error when binding occupied port %d, got nil", port)
+	}
+}
+
+func TestResolveHeadlessImmediateCrashCancelsWaitAndRollsBack(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script binary fixture is unix-only")
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("AGY_HOME", tempDir)
+
+	binPath := filepath.Join(tempDir, "language_server")
+	bakScript := "#!/bin/sh\n# \"ideVersion\":\"2.30.0\"\nexit 1\n"
+	brokenScript := "#!/bin/sh\n# corrupted candidate without embedded version\nexit 1\n"
+
+	if err := os.WriteFile(binPath+".bak", []byte(bakScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte(brokenScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tempDir)
+	cfg.LanguageServer = binPath
+	cfg.IDEVersion = "2.30.0"
+	if err := os.WriteFile(cfg.Path("config.json"), []byte("{\n  \"ide_version\": \"2.30.0\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := updater.RecordMetadata(cfg, "2.30.0", binPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := updater.RecordStagedUpdate(cfg, "2.32.0", binPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &runner{mode: modeServe, cfg: cfg}
+	start := time.Now()
+	_, err := r.resolveHeadless(t.Context())
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected error when both candidate and backup scripts exit immediately")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("resolveHeadless blocked for %v on immediate child exit (want < 10s)", elapsed)
+	}
+
+	restoredBytes, err := os.ReadFile(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredBytes) != bakScript {
+		t.Fatalf("expected binary to be rolled back to .bak content, got %q", string(restoredBytes))
+	}
+
+	stateBytes, err := os.ReadFile(cfg.Path("updater-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stateBytes), `"broken_version": "2.32.0"`) {
+		t.Fatalf("expected broken_version 2.32.0 in updater-state.json, got:\n%s", string(stateBytes))
+	}
+	if strings.Contains(string(stateBytes), `"staged_version"`) {
+		t.Fatalf("expected staged_version to be cleared after rollback, got:\n%s", string(stateBytes))
+	}
+}
+
+func TestShouldConfirmReusedInstancePreservesUnverifiedStagedUpdate(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("AGY_HOME", tempDir)
+
+	binPath := filepath.Join(tempDir, "language_server")
+	if err := os.WriteFile(binPath, []byte("# \"ideVersion\":\"2.32.0\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tempDir)
+	cfg.LanguageServer = binPath
+	cfg.IDEVersion = "2.30.0"
+
+	if err := updater.RecordMetadata(cfg, "2.30.0", binPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without a staged update, reusing an external process may sync metadata.
+	if !shouldConfirmReusedInstance(cfg, binPath, os.Getpid()) {
+		t.Fatal("expected confirmation allowed when no unverified staged update exists")
+	}
+
+	// Stage 2.32.0 on disk while an older process (different inode than binPath) is still running.
+	if err := updater.RecordStagedUpdate(cfg, "2.32.0", binPath, false); err != nil {
+		t.Fatal(err)
+	}
+	if shouldConfirmReusedInstance(cfg, binPath, os.Getpid()) {
+		t.Fatal("expected unverified staged update NOT to be confirmed when reused process runs a different binary inode")
+	}
+	if !updater.HasUnverifiedStagedUpdate(cfg, binPath) {
+		t.Fatal("expected staged update protection to remain active")
+	}
+
+	if runtime.GOOS == "linux" {
+		if selfExe, err := os.Executable(); err == nil {
+			if !procExeMatchesDisk(os.Getpid(), selfExe) {
+				t.Fatalf("expected procExeMatchesDisk to return true for current process executable %s", selfExe)
+			}
+		}
+	}
+}
+
+func TestResolveHeadlessVerifiedVersionDoesNotRollbackToStaleBackup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script binary fixture is unix-only")
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("AGY_HOME", tempDir)
+
+	binPath := filepath.Join(tempDir, "language_server")
+	oldBakScript := "#!/bin/sh\n# \"ideVersion\":\"2.30.0\"\nexit 1\n"
+	verifiedScript := "#!/bin/sh\n# \"ideVersion\":\"2.31.0\"\nexit 1\n"
+
+	if err := os.WriteFile(binPath+".bak", []byte(oldBakScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte(verifiedScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.SetDir(tempDir)
+	cfg.LanguageServer = binPath
+	cfg.IDEVersion = "2.31.0"
+	if err := os.WriteFile(cfg.Path("config.json"), []byte("{\n  \"ide_version\": \"2.31.0\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 2.31.0 has already been confirmed healthy (no staged_version pending).
+	updater.ConfirmInstalledVersion(cfg, binPath)
+
+	r := &runner{mode: modeServe, cfg: cfg}
+	if _, err := r.resolveHeadless(t.Context()); err == nil {
+		t.Fatal("expected startup error when script exits immediately")
+	}
+
+	gotBytes, err := os.ReadFile(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotBytes) != verifiedScript {
+		t.Fatalf("verified binary was unexpectedly overwritten with stale .bak")
+	}
+	stateBytes, err := os.ReadFile(cfg.Path("updater-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stateBytes), `"broken_version"`) {
+		t.Fatalf("verified version must not be marked broken on transient failure:\n%s", string(stateBytes))
+	}
+}
+
+func TestPasswdStdinAndConfigTrustedProxiesPreservation(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("AGY_HOME", tempDir)
+
+	origStdin := os.Stdin
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wPipe.WriteString("stdin-secret-pw\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = wPipe.Close()
+	os.Stdin = rPipe
+	defer func() {
+		os.Stdin = origStdin
+		_ = rPipe.Close()
+	}()
+
+	if err := passwd([]string{"--stdin"}); err != nil {
+		t.Fatalf("passwd --stdin failed: %v", err)
+	}
+	creds, err := auth.LoadCredentials(filepath.Join(tempDir, "credentials.json"))
+	if err != nil {
+		t.Fatalf("LoadCredentials: %v", err)
+	}
+	if !creds.Verify("stdin-secret-pw") {
+		t.Fatal("password set via --stdin failed to verify")
+	}
+
+	// First config save with --public-url and empty trusted_proxies seeds loopback CIDRs.
+	if err := configCommand([]string{"--public-url", "https://agy.example.com"}); err != nil {
+		t.Fatalf("initial configCommand: %v", err)
+	}
+	cfg1, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg1.TrustedProxies) != 2 {
+		t.Fatalf("expected default loopback trusted_proxies on first save, got %v", cfg1.TrustedProxies)
+	}
+
+	// Customizing trusted_proxies and re-running config --public-url (as install.sh does) must preserve custom CIDRs.
+	cfg1.TrustedProxies = []string{"10.42.0.0/16"}
+	if err := cfg1.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := configCommand([]string{"--public-url", "https://agy.example.com"}); err != nil {
+		t.Fatalf("re-run configCommand: %v", err)
+	}
+	cfg2, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg2.TrustedProxies) != 1 || cfg2.TrustedProxies[0] != "10.42.0.0/16" {
+		t.Fatalf("custom trusted_proxies was overwritten: got %v", cfg2.TrustedProxies)
 	}
 }

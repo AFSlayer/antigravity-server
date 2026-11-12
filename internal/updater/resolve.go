@@ -1,21 +1,34 @@
 package updater
 
 import (
+	"bytes"
 	"compress/gzip"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const DefaultDownloadPage = "https://antigravity.google/download"
+const (
+	DefaultReleasesURL  = "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases"
+	DefaultDownloadPage = "https://antigravity.google/download"
+
+	hubBucketBaseURL = "https://storage.googleapis.com/antigravity-public/antigravity-hub"
+	maxMetadataBytes = 4 << 20
+)
 
 var (
-	hubURLRe     = regexp.MustCompile(`https://storage\.googleapis\.com/antigravity-public/antigravity-hub/[^"'<> ]+`)
-	hubVersionRe = regexp.MustCompile(`/antigravity-hub/([0-9][0-9.]*)-[0-9]+/`)
+	hubURLRe           = regexp.MustCompile(`https://storage\.googleapis\.com/antigravity-public/antigravity-hub/[^"'<> ]+`)
+	hubBuildVersionRe  = regexp.MustCompile(`/antigravity-hub/(([0-9][0-9.]*)-[0-9]+)/`)
+	autoUpdaterURLRe   = regexp.MustCompile(`https://antigravity-hub-auto-updater-[a-z0-9-]+\.[a-z0-9.-]+\.run\.app/releases`)
+	releaseVersionRe   = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)*$`)
+	releaseExecutionRe = regexp.MustCompile(`^\d+$`)
 )
 
 // ValidateDownloadURL verifies that the URL points to the trusted Google Cloud Storage hub bucket.
@@ -64,19 +77,17 @@ type UpdateInfo struct {
 	UpdateAvailable bool   `json:"update_available"`
 }
 
-// ResolveLatest queries the official download page and discovers the latest build for the current platform.
-func ResolveLatest(pageURL string, goos, goarch string) (*UpdateInfo, error) {
-	if pageURL == "" {
-		pageURL = DefaultDownloadPage
-	}
+type hubReleaseEntry struct {
+	Version     string `json:"version"`
+	ExecutionID string `json:"execution_id"`
+}
 
-	slug, err := PlatformSlug(goos, goarch)
-	if err != nil {
-		return nil, err
-	}
+type hubReleasesEnvelope struct {
+	Versions []hubReleaseEntry `json:"versions"`
+}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", pageURL, nil)
+func fetchMetadataBody(client *http.Client, rawURL string) ([]byte, error) {
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -85,16 +96,16 @@ func ResolveLatest(pageURL string, goos, goarch string) (*UpdateInfo, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch download page %s: %w", pageURL, err)
+		return nil, fmt.Errorf("fetch %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download page returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%s returned HTTP %d", rawURL, resp.StatusCode)
 	}
 
 	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" {
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		gz, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("decompress gzip: %w", err)
@@ -103,39 +114,241 @@ func ResolveLatest(pageURL string, goos, goarch string) (*UpdateInfo, error) {
 		reader = gz
 	}
 
-	body, err := io.ReadAll(reader)
+	body, err := io.ReadAll(io.LimitReader(reader, maxMetadataBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read download page body: %w", err)
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if len(body) > maxMetadataBytes {
+		return nil, fmt.Errorf("response body from %s exceeds %d bytes", rawURL, maxMetadataBytes)
+	}
+	return body, nil
+}
+
+func hubArtifactURL(version, executionID, goos, goarch, slug string) string {
+	artifactSlug := slug
+	if goos == "windows" && version == "2.0.0" {
+		switch goarch {
+		case "amd64":
+			artifactSlug = "windows-x64/Antigravity.exe"
+		case "arm64":
+			artifactSlug = "windows-arm/Antigravity.exe"
+		}
+	}
+	return fmt.Sprintf("%s/%s-%s/%s", hubBucketBaseURL, version, executionID, artifactSlug)
+}
+
+func parseReleasesJSON(body []byte, slug, goos, goarch string) (*UpdateInfo, error) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, errors.New("empty releases payload")
 	}
 
-	matches := hubURLRe.FindAllString(string(body), -1)
-	for _, m := range matches {
-		if strings.HasSuffix(m, slug) {
-			verMatch := hubVersionRe.FindStringSubmatch(m)
-			version := "unknown"
-			if len(verMatch) > 1 {
-				version = verMatch[1]
-			}
+	var entries []hubReleaseEntry
+	switch trimmed[0] {
+	case '[':
+		if err := json.Unmarshal(trimmed, &entries); err != nil {
+			return nil, fmt.Errorf("parse releases array: %w", err)
+		}
+	case '{':
+		var env hubReleasesEnvelope
+		if err := json.Unmarshal(trimmed, &env); err != nil {
+			return nil, fmt.Errorf("parse releases object: %w", err)
+		}
+		entries = env.Versions
+	default:
+		return nil, errors.New("unexpected releases payload format")
+	}
 
-			return &UpdateInfo{
-				Platform:      fmt.Sprintf("%s/%s", goos, goarch),
-				LatestVersion: version,
-				DownloadURL:   m,
-			}, nil
+	if len(entries) == 0 {
+		return nil, errors.New("releases feed returned no versions")
+	}
+
+	latest := entries[0]
+	if !releaseVersionRe.MatchString(latest.Version) || !releaseExecutionRe.MatchString(latest.ExecutionID) {
+		return nil, fmt.Errorf("invalid release entry: version=%q execution_id=%q", latest.Version, latest.ExecutionID)
+	}
+
+	return &UpdateInfo{
+		Platform:        fmt.Sprintf("%s/%s", goos, goarch),
+		LatestVersion:   latest.Version,
+		RawBuildVersion: latest.Version + "-" + latest.ExecutionID,
+		DownloadURL:     hubArtifactURL(latest.Version, latest.ExecutionID, goos, goarch, slug),
+	}, nil
+}
+
+func parseDownloadPageHTML(client *http.Client, body []byte, slug, goos, goarch, skipReleasesURL string) (*UpdateInfo, error) {
+	text := string(body)
+
+	var staticInfo *UpdateInfo
+	for _, m := range hubURLRe.FindAllString(text, -1) {
+		if strings.HasSuffix(m, slug) {
+			rawBuild := ""
+			version := "unknown"
+			if verMatch := hubBuildVersionRe.FindStringSubmatch(m); len(verMatch) > 2 {
+				rawBuild = verMatch[1]
+				version = verMatch[2]
+			}
+			staticInfo = &UpdateInfo{
+				Platform:        fmt.Sprintf("%s/%s", goos, goarch),
+				LatestVersion:   version,
+				RawBuildVersion: rawBuild,
+				DownloadURL:     m,
+			}
+			break
 		}
 	}
 
+	if dynURL := autoUpdaterURLRe.FindString(text); dynURL != "" && dynURL != skipReleasesURL && client != nil {
+		if dynBody, err := fetchMetadataBody(client, dynURL); err == nil {
+			if dynInfo, parseErr := parseReleasesJSON(dynBody, slug, goos, goarch); parseErr == nil {
+				if staticInfo == nil || staticInfo.LatestVersion == "unknown" || !isNewerVersion(staticInfo.LatestVersion, dynInfo.LatestVersion) {
+					return dynInfo, nil
+				}
+			}
+		}
+	}
+
+	if staticInfo != nil {
+		return staticInfo, nil
+	}
 	return nil, fmt.Errorf("no official download artifact found for %s (%s)", slug, goos+"/"+goarch)
+}
+
+// ResolveLatest queries the official Antigravity hub releases feed (or a custom metadata URL)
+// and discovers the latest build for the requested platform, falling back to the download page
+// if the primary releases feed is unreachable.
+func ResolveLatest(sourceURL string, goos, goarch string) (*UpdateInfo, error) {
+	slug, err := PlatformSlug(goos, goarch)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	if sourceURL == "" {
+		if relBody, relErr := fetchMetadataBody(client, DefaultReleasesURL); relErr == nil {
+			if info, parseErr := parseReleasesJSON(relBody, slug, goos, goarch); parseErr == nil {
+				return info, nil
+			} else {
+				err = parseErr
+			}
+		} else {
+			err = relErr
+		}
+
+		pageBody, pageErr := fetchMetadataBody(client, DefaultDownloadPage)
+		if pageErr != nil {
+			return nil, fmt.Errorf("releases feed failed (%v) and fallback page failed: %w", err, pageErr)
+		}
+		info, parseErr := parseDownloadPageHTML(client, pageBody, slug, goos, goarch, DefaultReleasesURL)
+		if parseErr != nil {
+			return nil, fmt.Errorf("releases feed failed (%v) and fallback page parse failed: %w", err, parseErr)
+		}
+		return info, nil
+	}
+
+	body, err := fetchMetadataBody(client, sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+		return parseReleasesJSON(trimmed, slug, goos, goarch)
+	}
+	return parseDownloadPageHTML(client, body, slug, goos, goarch, "")
+}
+
+// isNewerVersion reports whether latest is strictly newer than current.
+// When both strings parse as dot-separated numeric release versions, older
+// upstream snapshots (such as a cached static download page lagging behind an
+// installed point release) return false instead of triggering a downgrade.
+func isNewerVersion(latest, current string) bool {
+	if latest == current {
+		return false
+	}
+	if cmp, ok := compareReleaseVersions(latest, current); ok {
+		return cmp > 0
+	}
+	return true
+}
+
+func compareReleaseVersions(a, b string) (int, bool) {
+	aCore, aPre, aOK := parseReleaseVersion(a)
+	bCore, bPre, bOK := parseReleaseVersion(b)
+	if !aOK || !bOK {
+		return 0, false
+	}
+	maxLen := len(aCore)
+	if len(bCore) > maxLen {
+		maxLen = len(bCore)
+	}
+	for i := 0; i < maxLen; i++ {
+		var av, bv int
+		if i < len(aCore) {
+			av = aCore[i]
+		}
+		if i < len(bCore) {
+			bv = bCore[i]
+		}
+		if av != bv {
+			if av > bv {
+				return 1, true
+			}
+			return -1, true
+		}
+	}
+	switch {
+	case aPre == "" && bPre != "":
+		return 1, true
+	case aPre != "" && bPre == "":
+		return -1, true
+	case aPre != bPre:
+		if aPre > bPre {
+			return 1, true
+		}
+		return -1, true
+	default:
+		return 0, true
+	}
+}
+
+func parseReleaseVersion(raw string) ([]int, string, bool) {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "v"), "V")
+	if idx := strings.IndexByte(s, '+'); idx >= 0 {
+		s = s[:idx]
+	}
+	pre := ""
+	if idx := strings.IndexByte(s, '-'); idx >= 0 {
+		pre = s[idx+1:]
+		s = s[:idx]
+	}
+	if s == "" {
+		return nil, "", false
+	}
+	parts := strings.Split(s, ".")
+	nums := make([]int, len(parts))
+	for i, p := range parts {
+		if p == "" {
+			return nil, "", false
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return nil, "", false
+		}
+		nums[i] = n
+	}
+	return nums, pre, true
 }
 
 // CheckUpdate compares the installed version with the latest official version.
 func CheckUpdate(currentVersion string) (*UpdateInfo, error) {
-	info, err := ResolveLatest(DefaultDownloadPage, runtime.GOOS, runtime.GOARCH)
+	info, err := ResolveLatest("", runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return nil, err
 	}
-	if currentVersion != "" && info.LatestVersion != "unknown" {
-		info.UpdateAvailable = currentVersion != info.LatestVersion
+	if currentVersion != "" && currentVersion != "unknown" && info.LatestVersion != "" && info.LatestVersion != "unknown" {
+		info.UpdateAvailable = isNewerVersion(info.LatestVersion, currentVersion)
 	}
 	return info, nil
 }

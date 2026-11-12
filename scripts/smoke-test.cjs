@@ -92,16 +92,22 @@ async function runComprehensiveSmokeTest() {
     // -------------------------------------------------------------------------
     console.log("\n📂 [Domain 3] Verifying Desktop Workspace, Sidebar, & File Upload Bridge...");
     const uploadBridgeRegistered = await page.evaluate(() => typeof window.__agyUpload === "function");
+    if (!uploadBridgeRegistered) {
+      throw new Error("Workspace File Upload Bridge (window.__agyUpload) was not registered!");
+    }
     console.log(`  ✓ Workspace File Upload Bridge active: ${uploadBridgeRegistered}`);
 
     const sidebarElements = await page.evaluate(() => {
       const texts = Array.from(document.querySelectorAll("span, div")).map(e => e.textContent?.trim() || "");
       return {
-        hasProjects: texts.some(t => t.includes("Projects")),
+        hasProjects: texts.some(t => t.includes("Projects") || t.includes("Workspaces")),
         hasConversations: texts.some(t => t.includes("Conversations") || t.includes("Conversation History")),
         hasSettings: texts.some(t => t.includes("Settings"))
       };
     });
+    if (!sidebarElements.hasSettings || (!sidebarElements.hasProjects && !sidebarElements.hasConversations)) {
+      throw new Error(`Sidebar navigation elements missing: ${JSON.stringify(sidebarElements)}`);
+    }
     console.log(`  ✓ Sidebar Navigation detected:`, sidebarElements);
 
     // -------------------------------------------------------------------------
@@ -153,7 +159,7 @@ async function runComprehensiveSmokeTest() {
     });
 
     await mobilePage.goto(TARGET_URL, { waitUntil: "domcontentloaded", timeout: 15000 });
-    if (mobilePage.url().includes("/login")) {
+    if (mobilePage.url().includes("/__agy/login") || mobilePage.url().includes("/login")) {
       await mobilePage.waitForSelector("input[type=password]", { timeout: 5000 });
       await mobilePage.fill("input[type=password]", ACCESS_PASSWORD);
       await Promise.all([
@@ -168,10 +174,12 @@ async function runComprehensiveSmokeTest() {
     const mobileLayout = await mobilePage.evaluate(() => {
       return {
         hasViewportMeta: !!document.querySelector("meta[name=\"viewport\"]"),
-        hasAuxSidebarHidden: !document.querySelector("[data-testid=\"mobile-toggle-aux-sidebar\"]"),
         bodyScrollHeight: document.body.scrollHeight
       };
     });
+    if (!mobileLayout.hasViewportMeta || mobileLayout.bodyScrollHeight <= 0) {
+      throw new Error(`Mobile layout assertion failed: ${JSON.stringify(mobileLayout)}`);
+    }
     console.log(`  ✓ Mobile Touch Layout validated:`, mobileLayout);
 
     await mobileContext.close().catch(() => {});

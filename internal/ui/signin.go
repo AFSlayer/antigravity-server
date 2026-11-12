@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -22,11 +23,20 @@ const (
 // Antigravity's Google sign-in.
 type SignIn struct {
 	coordinator *signin.Coordinator
+	trusted     []*net.IPNet
+	publicURL   string
 }
 
 // NewSignIn returns a SignIn backed by coordinator.
 func NewSignIn(coordinator *signin.Coordinator) *SignIn {
 	return &SignIn{coordinator: coordinator}
+}
+
+// WithSameOrigin configures reverse-proxy origin verification to match Authenticator.
+func (s *SignIn) WithSameOrigin(trusted []*net.IPNet, publicURL string) *SignIn {
+	s.trusted = trusted
+	s.publicURL = publicURL
+	return s
 }
 
 // Register mounts the sign-in routes on mux.
@@ -68,7 +78,7 @@ func (s *SignIn) page(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
-	if !isPost(w, r) {
+	if !isPublicPost(w, r, s.trusted, s.publicURL) {
 		return
 	}
 
@@ -94,7 +104,7 @@ func (s *SignIn) begin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *SignIn) complete(w http.ResponseWriter, r *http.Request) {
-	if !isPost(w, r) {
+	if !isPublicPost(w, r, s.trusted, s.publicURL) {
 		return
 	}
 

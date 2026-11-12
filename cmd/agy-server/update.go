@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/AFSlayer/antigravity-server/internal/config"
@@ -22,26 +23,34 @@ func updateCommand(args []string) error {
 		return err
 	}
 
+	if !*checkOnly && runtime.GOOS != "linux" {
+		return fmt.Errorf("in-place language_server updates are only supported on Linux (current OS: %s); please update via the Antigravity desktop app", runtime.GOOS)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
-	targetPath := cfg.LanguageServer
+	targetPath := updater.EffectiveLanguageServer(cfg)
 	if targetPath == "" {
 		targetPath = lsproc.FindLanguageServer("")
 	}
-	if targetPath == "" {
+	if targetPath == "" && runtime.GOOS == "linux" {
 		targetPath = "/opt/agy-server/language_server"
 	}
 
-	currentVersion := cfg.IDEVersion
+	currentVersion := updater.EffectiveIDEVersion(cfg, targetPath)
 	if currentVersion == "" {
 		currentVersion = "unknown"
 	}
 
 	fmt.Printf("\n  %s\n\n", bold("Antigravity Language Server Updater"))
-	fmt.Printf("  Installed version : %s (%s)\n", cyan(currentVersion), targetPath)
+	if targetPath != "" {
+		fmt.Printf("  Installed version : %s (%s)\n", cyan(currentVersion), targetPath)
+	} else {
+		fmt.Printf("  Installed version : %s\n", cyan(currentVersion))
+	}
 	fmt.Printf("  Checking official download channel...\n")
 
 	info, err := updater.CheckUpdate(currentVersion)
@@ -51,7 +60,7 @@ func updateCommand(args []string) error {
 
 	fmt.Printf("  Latest version    : %s for %s\n\n", green(info.LatestVersion), info.Platform)
 
-	if !info.UpdateAvailable && !*force {
+	if !info.UpdateAvailable && currentVersion != "unknown" && !*force {
 		fmt.Printf("  %s\n\n", green("✓ Antigravity is already up to date."))
 		return nil
 	}
@@ -59,6 +68,8 @@ func updateCommand(args []string) error {
 	if *checkOnly {
 		if info.UpdateAvailable {
 			fmt.Printf("  %s\n\n", yellow(fmt.Sprintf("! A new version %s is available (run 'agy-server update' to install)", info.LatestVersion)))
+		} else if currentVersion == "unknown" {
+			fmt.Printf("  %s\n\n", yellow(fmt.Sprintf("! Installed version is unknown; latest official version is %s (run 'agy-server update' to install)", info.LatestVersion)))
 		}
 		return nil
 	}
@@ -76,7 +87,8 @@ func updateCommand(args []string) error {
 
 	fmt.Printf("\n  Downloading official Antigravity build...\n")
 	var lastPct int = -1
-	err = updater.DownloadAndInstall(context.Background(), info.DownloadURL, targetPath, func(downloaded, total int64) {
+	preserveBak := updater.HasUnverifiedStagedUpdate(cfg, targetPath)
+	err = updater.DownloadAndInstallWithBackupPolicy(context.Background(), info.DownloadURL, targetPath, preserveBak, func(downloaded, total int64) {
 		if total > 0 {
 			pct := int(float64(downloaded) / float64(total) * 100)
 			if pct != lastPct {
@@ -93,12 +105,9 @@ func updateCommand(args []string) error {
 	}
 	fmt.Printf("\n  %s\n\n", green(fmt.Sprintf("✓ Successfully installed Antigravity %s to %s", info.LatestVersion, targetPath)))
 
-	// Save new IDE version to config
-	cfg.IDEVersion = info.LatestVersion
-	if cfg.LanguageServer == "" {
-		cfg.LanguageServer = targetPath
-	}
-	_ = cfg.Save()
+	// Stage the downloaded version in updater-state.json (and clear any prior broken_version
+	// block) without committing config.json ide_version until the restarted binary verifies healthy.
+	_ = updater.RecordStagedUpdate(cfg, info.LatestVersion, targetPath, true)
 
 	fmt.Printf("  %s\n", dim("Next steps:"))
 	fmt.Printf("    • Restart the service: %s (or restart agy-server serve)\n", cyan("sudo systemctl restart agy-server"))
