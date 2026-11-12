@@ -156,19 +156,25 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if bytes.Contains(mainJS, []byte(".webPort")) && bytes.Contains(mainJS, []byte("http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
 		t.Error("sidecar-modal-endpoint-url: sidecar modal endpoint exists in bundle but patch regexp did not match")
 	}
-	if bytes.Contains(mainJS, []byte("browserAuxPane:")) && bytes.Contains(mainJS, []byte("openLoopbackInPreviewByDefault")) && !regexpMatch(loopbackPreviewFeatureGateRe, mainJS) {
+	if bytes.Contains(mainJS, []byte(`dataset.testid="sidecar-iframe"`)) && !regexpMatch(sidecarIframeSandboxRe, mainJS) {
+		t.Error("sidecar-iframe-sandbox: the sidecar panel's iframe exists in bundle but patch regexp did not match")
+	}
+	// These run when the registry's precondition holds or the feature shows
+	// in the bundle another way, so a precondition gone stale still fails.
+	if (preconditionHolds("loopback-preview-feature-gate", mainJS) ||
+		bytes.Contains(mainJS, []byte("browserAuxPane:")) && bytes.Contains(mainJS, []byte("openLoopbackInPreviewByDefault"))) &&
+		!regexpMatch(loopbackPreviewFeatureGateRe, mainJS) {
 		t.Error("loopback-preview-feature-gate: browserAuxPane loopback preview exists in bundle but patch regexp did not match")
 	}
 	if bytes.Contains(mainJS, []byte("fetchSandboxPort:")) && !regexpMatch(loopbackPreviewFetchFallbackRe, mainJS) {
 		t.Error("loopback-preview-fetch-fallback: fetchSandboxPort exists in bundle but patch regexp did not match")
 	}
-	if bytes.Contains(mainJS, []byte("startPluginAuthSignIn:")) && bytes.Contains(mainJS, []byte(`get("pluginAuth")`)) {
-		if !regexpMatch(routerNavigateBridgeRe, mainJS) {
-			t.Error("router-navigate-bridge: router useNavigate hook did not match")
-		}
-		if !regexpMatch(pluginMentionRemoteSignInRe, mainJS) {
-			t.Error("plugin-mention-remote-signin: plugin @-mention sign-in hook did not match")
-		}
+	pluginSignIn := bytes.Contains(mainJS, []byte("startPluginAuthSignIn:")) && bytes.Contains(mainJS, []byte(`get("pluginAuth")`))
+	if (pluginSignIn || preconditionHolds("router-navigate-bridge", mainJS)) && !regexpMatch(routerNavigateBridgeRe, mainJS) {
+		t.Error("router-navigate-bridge: router useNavigate hook did not match")
+	}
+	if (pluginSignIn || preconditionHolds("plugin-mention-remote-signin", mainJS)) && !regexpMatch(pluginMentionRemoteSignInRe, mainJS) {
+		t.Error("plugin-mention-remote-signin: plugin @-mention sign-in hook did not match")
 	}
 	if bytes.Contains(mainJS, []byte("completeMcpOAuth:")) && !regexpMatch(mcpOAuthRemoteCallbackRe, mainJS) {
 		t.Error("mcp-oauth-remote-callback: completeMcpOAuth exists in bundle but patch regexp did not match")
@@ -221,4 +227,15 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 			}
 		}
 	}
+}
+
+// preconditionHolds reports whether the registry's precondition for the patch
+// id holds for body.
+func preconditionHolds(id string, body []byte) bool {
+	for _, p := range All() {
+		if p.ID == id {
+			return p.Precondition != nil && p.Precondition(body)
+		}
+	}
+	return false
 }

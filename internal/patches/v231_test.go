@@ -166,6 +166,13 @@ func TestRemoteSidecarPreviewAndOAuthPatches2312(t *testing.T) {
 		`const u2={};const sidecarCatchless={resolveSidecarUrl:(C,F)=>{a:{var G=u2;F=F.startsWith("/")?F:`+"`/${F}`"+`;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?`+"`plugin://${M}${J.pathname}${J.search}`"+`:J.toString();break a}catch{H=(H=G[C])?`+"`plugin://${H}${F}`"+`:`+"`${C}${F}`"+`;break a}H=void 0}return H}};`,
 		Options{},
 	)
+	frameJS := applyOnly(t, "sidecar-iframe-sandbox",
+		`let m=document.createElement("iframe");m.setAttribute("allow","clipboard-read; clipboard-write");try{asa(m,2,b)}catch(n){}m.dataset.testid="sidecar-iframe";`,
+		Options{},
+	)
+	if want := `let m=document.createElement("iframe");m.setAttribute("sandbox","` + SidecarFrameSandbox + `");m.setAttribute("allow"`; !strings.Contains(frameJS, want) {
+		t.Fatalf("sidecar-iframe-sandbox: the sandbox is not set before the frame loads:\n%s", frameJS)
+	}
 	modalJS := applyOnly(t, "sidecar-modal-endpoint-url",
 		`function endpointFor(c){var A=c.baseUrl||(c.webPort?`+"`http://127.0.0.1:${c.webPort}`"+`:"\u2014");return A}`,
 		Options{},

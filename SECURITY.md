@@ -33,6 +33,21 @@ so `agy-server` relays these three, each behind the login.
 | `/__agy/api/loopback-fetch` | Fetches `http://localhost:<port><path>` for a localhost preview, including the requests the previewed page makes itself. | POST from the same origin with a valid session. The previewed page's scripts choose the port, so only listeners of the language server or a process it started are fetched. Besides a dev server the agent ran, these include MCP servers and other tools the agent runs that listen on a port, and the previewed page can send them any request and read the reply, so preview only pages you trust. Any other port is answered as having no listener without being contacted, so other services on the host stay out of reach and a server started outside Antigravity cannot be previewed. Ports used by `agy-server`, the language server itself and sidecars are refused too, as are the ports browsers block. `Origin` and `Referer` are passed on only when they name the target port. Bodies are capped at 16 MiB and at most 12 fetches run at once. |
 | `/__agy/api/oauth-callback` | Delivers a pasted `http://localhost:<port>/...?code=...` redirect as a GET. | POST from the same origin with a valid session. The port must be a listener of the language server or a process it started, and the request goes to the loopback address family it listens on. Redirects from the listener are not followed, so the one-time code is used once. |
 
+A sidecar's capability is in its URL path, and a gateway's token in its query.
+Whoever has that URL can use the sidecar, including sending messages to the
+agent through the Swarm board, until the capability expires or the session
+ends. A reverse proxy in front of `agy-server` may write these URLs to its
+access log, so keep such logs private or leave `/__agy/sidecar/` out of them.
+
+Known limits:
+
+- In a sidecar, root-relative URLs in ES module imports, in `new Worker(...)`
+  and in navigation through `location` are not rewritten into the sidecar's
+  path, so a UI plugin that uses them may not load parts of itself.
+- A server the agent starts detached so that it outlives its shell, for
+  example with `setsid` or `disown`, can leave the language server's process
+  tree and then cannot be previewed.
+
 ## Running behind a reverse proxy
 
 If a proxy terminates TLS in front of `agy-server`, tell it which peers to trust:

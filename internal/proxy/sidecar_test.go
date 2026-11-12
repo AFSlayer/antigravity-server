@@ -315,14 +315,17 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	// 1. Unauthenticated entry without session cookie is rejected by auth middleware.
-	unauthResp, err := noRedirectClient.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
+	// 1. Unauthenticated entry without session cookie is rejected by auth
+	// middleware with 403, not sent to the login page inside the frame.
+	unauthReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort), nil)
+	unauthReq.Header.Set("Accept", "text/html")
+	unauthResp, err := noRedirectClient.Do(unauthReq)
 	if err != nil {
 		t.Fatal(err)
 	}
 	unauthResp.Body.Close()
-	if unauthResp.StatusCode != http.StatusFound && unauthResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated entry status = %d, want 302/401", unauthResp.StatusCode)
+	if unauthResp.StatusCode != http.StatusForbidden || unauthResp.Header.Get("Location") != "" {
+		t.Fatalf("unauthenticated entry status = %d Location %q, want 403 without a redirect", unauthResp.StatusCode, unauthResp.Header.Get("Location"))
 	}
 
 	// 2. Cross-site top-level navigation to initial entry is rejected with 403 even with valid session cookie.

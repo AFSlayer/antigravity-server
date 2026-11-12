@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -119,6 +120,12 @@ var (
 			`\s*:\s*)` +
 			`(` + "`\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" + `)`,
 	)
+	// sidecarIframeSandboxRe finds where the sidecar panel creates its iframe,
+	// before it sets the frame's src.
+	sidecarIframeSandboxRe = regexp.MustCompile(
+		`(let\s+([a-zA-Z0-9_$]+)\s*=\s*document\.createElement\("iframe"\)\s*;)` +
+			`(\s*[a-zA-Z0-9_$]+\.setAttribute\(\s*"allow"\s*,\s*"clipboard-read;)`,
+	)
 	sidecarModalEndpointRe = regexp.MustCompile(
 		`([a-zA-Z0-9_$]+\s*=\s*)` +
 			`([a-zA-Z0-9_$]+\.baseUrl\s*\|\|\s*\(\s*[a-zA-Z0-9_$]+\.webPort\s*\?\s*` +
@@ -159,6 +166,10 @@ var (
 			`(\s*\)\s*\)\s*\))`,
 	)
 )
+
+// SidecarFrameSandbox is the sandbox of a sidecar's frame: the iframe's
+// attribute, and the proxy's CSP sandbox for every sidecar response.
+const SidecarFrameSandbox = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
 
 const (
 	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
@@ -1047,6 +1058,16 @@ func All() []Patch {
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("resolveSidecarUrl:")) },
 			FindRe:       sidecarResolveURLRe,
 			Replace:      `${1}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${2}):${2})${3}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${4}):${4})`,
+		},
+		{
+			ID:           "sidecar-iframe-sandbox",
+			Desc:         "Sandbox the sidecar panel's iframe, so a page the proxy did not give a sandbox CSP still has an opaque origin",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`dataset.testid="sidecar-iframe"`)) },
+			FindRe:       sidecarIframeSandboxRe,
+			Replace:      `${1}${2}.setAttribute("sandbox",` + strconv.Quote(SidecarFrameSandbox) + `);${3}`,
 		},
 		{
 			ID:       "sidecar-modal-endpoint-url",

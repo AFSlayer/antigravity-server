@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
+	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
 
 // Variables so tests can shorten them.
@@ -63,7 +64,7 @@ const (
 	sidecarRPCTimeout      = 3 * time.Second
 	sidecarWSWriteTimeout  = 30 * time.Second
 
-	sidecarSandboxDirective = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
+	sidecarSandboxDirective = "sandbox " + patches.SidecarFrameSandbox
 	sidecarFrameAncestors   = "frame-ancestors 'self'"
 	sidecarDefaultCSP       = sidecarSandboxDirective + "; " + sidecarFrameAncestors
 )
@@ -730,16 +731,40 @@ func (p *Proxy) pruneExpiredSidecarCapsLocked(now time.Time) {
 // ValidateSidecarCapability authorizes capability-scoped sidecar requests
 // (/.../~s/<cap>/...) sent from opaque-origin (Origin: null) sandboxed frames
 // without relying on ambient browser cookies.
-func (p *Proxy) ValidateSidecarCapability(r *http.Request) bool {
+func (p *Proxy) ValidateSidecarCapability(r *http.Request) (*http.Request, bool) {
 	if p == nil || r == nil || r.URL == nil {
-		return false
+		return r, false
 	}
 	port, capToken, _, _, invalidCap, ok := parseSidecarRoute(r.URL.EscapedPath())
 	if !ok || invalidCap || capToken == "" {
-		return false
+		return r, false
 	}
-	sess, _ := p.authorizeSidecarCapRequest(r, port, capToken)
-	return sess != nil
+	sess, dialMode := p.authorizeSidecarCapRequest(r, port, capToken)
+	if sess == nil {
+		return r, false
+	}
+	found := sidecarCapAuth{port: port, token: capToken, sess: sess, dialMode: dialMode}
+	return r.WithContext(context.WithValue(r.Context(), sidecarCapAuthKey{}, found)), true
+}
+
+type sidecarCapAuthKey struct{}
+
+// sidecarCapAuth is what ValidateSidecarCapability found for a request, kept
+// so serveSidecar does not check the session and the sidecar list again.
+type sidecarCapAuth struct {
+	port     int
+	token    string
+	sess     *sidecarCapSession
+	dialMode string
+}
+
+// authorizedSidecarCap returns what ValidateSidecarCapability found for r, or
+// checks the capability now when r did not pass through it.
+func (p *Proxy) authorizedSidecarCap(r *http.Request, port int, capToken string) (*sidecarCapSession, string) {
+	if found, ok := r.Context().Value(sidecarCapAuthKey{}).(sidecarCapAuth); ok && found.port == port && found.token == capToken {
+		return found.sess, found.dialMode
+	}
+	return p.authorizeSidecarCapRequest(r, port, capToken)
 }
 
 func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) (*sidecarCapSession, string) {
@@ -838,7 +863,7 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		return
 	}
 
-	capSess, dialMode := p.authorizeSidecarCapRequest(r, port, capToken)
+	capSess, dialMode := p.authorizedSidecarCap(r, port, capToken)
 	if capSess == nil {
 		http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
 		return
@@ -881,10 +906,7 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		w.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Length", strconv.Itoa(len(shim)))
-		if r.Method == http.MethodGet {
-			_, _ = w.Write(shim)
-		}
+		writeSidecarGenerated(w, r, shim)
 		return
 	}
 
@@ -909,12 +931,19 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 
 			prepareSidecarUpstreamHeaders(req.Header, upstreamOrigin, vaultCookie)
 			req.Header["X-Forwarded-For"] = nil
+			// The transport asks the sidecar for gzip itself and hands back
+			// the body decoded, so it can be rewritten. What reaches the
+			// browser is compressed again below. Validators are passed on:
+			// a rewritten response carries none and is not stored, so the
+			// browser only revalidates bodies passed through unchanged.
 			req.Header.Del("Accept-Encoding")
-			req.Header.Del("If-None-Match")
-			req.Header.Del("If-Modified-Since")
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			return p.modifySidecarResponse(resp, r, port, capPrefix, capSess, releaseHTTPReq)
+			if err := p.modifySidecarResponse(resp, r, port, capPrefix, capSess, releaseHTTPReq); err != nil {
+				return err
+			}
+			compressSidecarResponse(resp, r)
+			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
 			if req.Context().Err() != nil {
@@ -1026,7 +1055,10 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 		resp.Header.Del("Content-Length")
 		return nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified || resp.Header.Get("Content-Encoding") != "" {
+	// A partial body cannot be rewritten: its Content-Range counts the
+	// sidecar's bytes.
+	if resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusPartialContent ||
+		resp.StatusCode == http.StatusNotModified || resp.Header.Get("Content-Encoding") != "" {
 		return nil
 	}
 
@@ -2057,7 +2089,9 @@ func hasURIScheme(s string) bool {
 
 func rewriteSidecarRelativeOrLoopbackURL(val string, port int, capPrefix string, baseDir string) string {
 	trimmed := strings.TrimSpace(val)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+	// A reference that is only a query or a fragment resolves against the
+	// document itself, which is already under the capability prefix.
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "?") || strings.HasPrefix(trimmed, "//") {
 		return val
 	}
 	leadLen := len(val) - len(strings.TrimLeft(val, " \t\r\n"))
