@@ -783,3 +783,35 @@ func TestSidecarDataAttributeOnlyOnObject(t *testing.T) {
 		t.Errorf("an object's data URL was not rewritten: %s", got)
 	}
 }
+
+// A language server without the GetSidecars RPC answers 404. It has no
+// sidecars, and must not make every port reserved. Other failures still
+// fail closed.
+func TestSidecarsMissingRPCMeansNoSidecars(t *testing.T) {
+	var code atomic.Int32
+	code.Store(http.StatusNotFound)
+	ls := newSidecarUpstreamWithStatus(t, func() (int, []stubSidecarEntry) {
+		return int(code.Load()), nil
+	})
+	p, err := New(Options{TargetPort: upstreamPort(t, ls), Patch: patches.Options{CacheKey: "k1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+
+	if p.IsSidecarReservedPort(context.Background(), 5173) {
+		t.Fatal("a missing GetSidecars RPC reserved a port")
+	}
+	if _, ok := p.allowedSidecarDialMode(context.Background(), 5173); ok {
+		t.Fatal("a missing GetSidecars RPC allowed a sidecar")
+	}
+
+	code.Store(http.StatusInternalServerError)
+	p.sidecarMu.Lock()
+	p.sidecarCachedAt = time.Time{}
+	p.sidecarFreePorts = nil
+	p.sidecarMu.Unlock()
+	if !p.IsSidecarReservedPort(context.Background(), 5173) {
+		t.Fatal("a failing GetSidecars did not fail closed")
+	}
+}

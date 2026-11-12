@@ -480,6 +480,11 @@ func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed map[int]strin
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		// A language server without the GetSidecars RPC has no sidecars.
+		// Failing here would reserve every port and block previews.
+		return map[int]string{}, map[int]struct{}{}, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("GetSidecars returned %s", resp.Status)
 	}
@@ -1079,6 +1084,12 @@ func (p *Proxy) enforceSidecarSecurityHeaders(h http.Header, clientReq *http.Req
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Del("Content-Security-Policy-Report-Only")
+	// These act on the app's whole origin, not the sidecar's path: one
+	// sidecar response could clear the app's cookies and storage, or pin
+	// HSTS or another transport for the app's host.
+	h.Del("Clear-Site-Data")
+	h.Del("Strict-Transport-Security")
+	h.Del("Alt-Svc")
 
 	policies := splitCSPPolicies(h.Values("Content-Security-Policy"))
 	h.Del("Content-Security-Policy")

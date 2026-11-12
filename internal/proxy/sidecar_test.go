@@ -228,6 +228,9 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 			w.Header().Add("Set-Cookie", "agy_session=evil_override; Path=/; HttpOnly")
 			w.Header().Add("Set-Cookie", "swarm_auth=tok123; Domain=localhost; Path=/; HttpOnly")
 			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Clear-Site-Data", `"cookies", "storage"`)
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+			w.Header().Set("Alt-Svc", `h3=":443"`)
 			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'sha256-xyz123='; frame-ancestors 'none'")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(`<!doctype html><html><head>` +
@@ -403,6 +406,11 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 	}
 	if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
 		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+	}
+	for _, name := range []string{"Clear-Site-Data", "Strict-Transport-Security", "Alt-Svc"} {
+		if v := resp.Header.Get(name); v != "" {
+			t.Errorf("origin-wide header %s: %q reached the browser", name, v)
+		}
 	}
 	csp := resp.Header.Get("Content-Security-Policy")
 	if !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") || strings.Contains(csp, "allow-top-navigation") {

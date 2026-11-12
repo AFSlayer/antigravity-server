@@ -39,9 +39,12 @@ const (
 	maxConcurrentFetches = 12
 
 	dialTimeout  = 5 * time.Second
-	fetchTimeout = 30 * time.Second
 	oauthTimeout = 15 * time.Second
 )
+
+// fetchTimeout bounds a loopback fetch, including its wait for a slot. A
+// variable so tests can shorten it.
+var fetchTimeout = 30 * time.Second
 
 // Options configures a Handler.
 type Options struct {
@@ -232,6 +235,9 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 	case h.sem <- struct{}{}:
 		defer func() { <-h.sem }()
 	case <-ctx.Done():
+		if r.Context().Err() == nil {
+			http.Error(w, "too many loopback fetches in progress", http.StatusServiceUnavailable)
+		}
 		return
 	}
 

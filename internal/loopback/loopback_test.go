@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
@@ -624,5 +625,29 @@ func TestLoopbackFetchStreamsBody(t *testing.T) {
 		if !sawHeader {
 			t.Fatalf("%d-byte body: headers %v lost X-Test", n, out.Headers)
 		}
+	}
+}
+
+// A fetch that waits too long for one of the slots gets an error status, not
+// an empty 200 the page would fail to parse.
+func TestLoopbackFetchFullQueue(t *testing.T) {
+	saved := fetchTimeout
+	fetchTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { fetchTimeout = saved })
+
+	h := New(Options{ResolveFetchTarget: func(context.Context, int) (string, bool) { return "127.0.0.1", true }})
+	t.Cleanup(h.Close)
+	for i := 0; i < maxConcurrentFetches; i++ {
+		h.sem <- struct{}{}
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: 5173, Path: "/"})
+	r.Body.Close()
+	if r.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status %d with every slot taken, want 503", r.StatusCode)
 	}
 }
