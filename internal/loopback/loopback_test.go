@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -231,10 +230,7 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 		}
 	}
 
-	// 6. A served port with nothing bound returns HTTP 200 with {"noListener": true}, and Windows WSAECONNREFUSED (10061) is recognized.
-	if !isConnRefused(syscall.Errno(10061)) {
-		t.Fatal("expected Windows WSAECONNREFUSED (errno 10061) to be recognized by isConnRefused")
-	}
+	// 6. A served port with nothing bound returns HTTP 200 with {"noListener": true}.
 	closedLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -19,11 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/httpenc"
+	"github.com/AFSlayer/antigravity-server/internal/netutil"
 )
 
 const (
@@ -264,7 +264,7 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "port is blocked", http.StatusForbidden)
 		return
 	}
-	if h.isReservedPort != nil && h.isReservedPort(r.Context(), req.Port) {
+	if h.isReservedPort != nil && h.isReservedPort(ctx, req.Port) {
 		http.Error(w, "port is reserved by Antigravity", http.StatusForbidden)
 		return
 	}
@@ -335,7 +335,7 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.client.Do(outReq)
 	if err != nil {
-		if isConnRefused(err) {
+		if netutil.IsConnRefused(err) {
 			writeJSON(w, http.StatusOK, fetchResponse{NoListener: true})
 			return
 		}
@@ -522,17 +522,6 @@ func dialLoopbackExact(ctx context.Context, network, addr string) (net.Conn, err
 	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	return dialer.DialContext(ctx, network, net.JoinHostPort(host, strconv.Itoa(port)))
-}
-
-func isConnRefused(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.Errno(10061)) {
-		return true
-	}
-	lower := strings.ToLower(err.Error())
-	return strings.Contains(lower, "connection refused") || strings.Contains(lower, "actively refused")
 }
 
 func isAllowedFetchMethod(method string) bool {

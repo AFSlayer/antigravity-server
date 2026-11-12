@@ -41,9 +41,12 @@ access log, so keep such logs private or leave `/__agy/sidecar/` out of them.
 
 Known limits:
 
-- In a sidecar, root-relative URLs in ES module imports and in navigation
-  through `location` are not rewritten into the sidecar's path, so a UI
-  plugin that uses them may not load parts of itself.
+- In a sidecar, root-relative URLs in ES module imports, in navigation
+  through `location`, in SVG `xlink:href`, in `<meta http-equiv="refresh">`
+  and in `Link` response headers are not rewritten into the sidecar's path,
+  so a UI plugin that uses them may not load parts of itself.
+- Sidecar capabilities live in `agy-server`'s memory. After a restart, such
+  as an update, an open sidecar panel answers 403 until it is reopened.
 - A sidecar's frame has an opaque origin. It cannot start a `Worker` from a
   script URL, cannot show its own pages in a nested frame, which
   `frame-ancestors 'self'` refuses there, and is not granted permissions such

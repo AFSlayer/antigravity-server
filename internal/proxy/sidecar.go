@@ -22,10 +22,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
+	"github.com/AFSlayer/antigravity-server/internal/netutil"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 )
 
@@ -269,7 +269,7 @@ func dialSidecarAddress(ctx context.Context, network, addr string) (net.Conn, er
 		if err == nil {
 			return conn, nil
 		}
-		if isConnRefused(err) {
+		if netutil.IsConnRefused(err) {
 			if conn6, err6 := dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port))); err6 == nil {
 				return conn6, nil
 			}
@@ -292,17 +292,6 @@ func (p *Proxy) resolveSidecarDialAddr(ctx context.Context, dialMode string, por
 		}
 		return net.JoinHostPort("localhost", strconv.Itoa(port))
 	}
-}
-
-func isConnRefused(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.Errno(10061)) {
-		return true
-	}
-	lower := strings.ToLower(err.Error())
-	return strings.Contains(lower, "connection refused") || strings.Contains(lower, "actively refused")
 }
 
 // IsSidecarReservedPort reports whether port is forbidden or currently owned by
@@ -333,7 +322,7 @@ func (p *Proxy) IsSidecarReservedPort(ctx context.Context, port int) bool {
 		}
 	}
 
-	_, reserved, err := p.refreshSidecarPorts(ctx, true, callStart)
+	_, reserved, err := p.refreshSidecarPorts(ctx, callStart)
 	if err != nil {
 		return true
 	}
@@ -404,25 +393,31 @@ func (p *Proxy) allowedSidecarDialMode(ctx context.Context, port int) (string, b
 	}
 	p.sidecarMu.Unlock()
 
-	allowed, _, err := p.refreshSidecarPorts(ctx, true, now)
+	allowed, _, err := p.refreshSidecarPorts(ctx, now)
 	if err != nil {
+		// One failed GetSidecars does not close a sidecar in use: the last
+		// list that succeeded still allows it for two cache TTLs.
+		p.sidecarMu.Lock()
+		mode, ok := p.sidecarAllowed[port]
+		recent := !p.sidecarCachedAt.IsZero() && time.Since(p.sidecarCachedAt) < 2*sidecarCacheTTL
+		p.sidecarMu.Unlock()
+		if ok && recent {
+			return mode, true
+		}
 		return "", false
 	}
 	mode, ok := allowed[port]
 	return mode, ok
 }
 
-func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart time.Time) (allowed map[int]string, reserved map[int]struct{}, err error) {
+// refreshSidecarPorts returns a GetSidecars result from a call that started
+// at or after minStart, sharing a call in flight.
+func (p *Proxy) refreshSidecarPorts(ctx context.Context, minStart time.Time) (allowed map[int]string, reserved map[int]struct{}, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		p.sidecarMu.Lock()
-		if !force && !p.sidecarCachedAt.IsZero() && time.Since(p.sidecarCachedAt) < sidecarCacheTTL && p.sidecarLastErr == nil {
-			a, r := p.sidecarAllowed, p.sidecarReserved
-			p.sidecarMu.Unlock()
-			return a, r, nil
-		}
 		if lastErr := p.sidecarLastErr; lastErr != nil && p.sidecarInflight == nil && time.Since(p.sidecarLastProbe) < sidecarFailBackoff {
 			p.sidecarMu.Unlock()
 			return nil, nil, lastErr
@@ -441,7 +436,7 @@ func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart ti
 			p.sidecarMu.Lock()
 			a, r, lastErr := p.sidecarAllowed, p.sidecarReserved, p.sidecarLastErr
 			p.sidecarMu.Unlock()
-			if !force || !started.Before(minStart) || attempt == 1 {
+			if !started.Before(minStart) || attempt == 1 {
 				if lastErr != nil {
 					return nil, nil, lastErr
 				}
@@ -1744,6 +1739,11 @@ func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string,
 			i += next
 			continue
 		}
+		if !isHTMLTagOpen(body, i) {
+			out.WriteByte('<')
+			i++
+			continue
+		}
 
 		if i+4 <= n && bytes.Equal(body[i:i+4], []byte("<!--")) {
 			end := bytes.Index(body[i+4:], []byte("-->"))
@@ -1821,6 +1821,23 @@ func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string,
 		return combined.Bytes()
 	}
 	return out.Bytes()
+}
+
+// isHTMLTagOpen reports whether the '<' at i opens a tag, a comment or a
+// declaration, as the HTML tokenizer decides: only a letter, "/" and a
+// letter, "!" or "?" may follow. Any other '<' is text, as in "1 < 2".
+func isHTMLTagOpen(b []byte, i int) bool {
+	isLetter := func(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+	if i+1 >= len(b) {
+		return false
+	}
+	switch c := b[i+1]; {
+	case isLetter(c), c == '!', c == '?':
+		return true
+	case c == '/':
+		return i+2 < len(b) && isLetter(b[i+2])
+	}
+	return false
 }
 
 func isRawTextHTMLElement(tagName string) bool {
@@ -1943,7 +1960,10 @@ func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []
 
 	for i < n {
 		wsStart := i
-		for i < n && (tag[i] == ' ' || tag[i] == '\t' || tag[i] == '\r' || tag[i] == '\n') {
+		// A "/" that does not close the tag separates attributes like a
+		// space, as the HTML tokenizer treats it.
+		for i < n && (tag[i] == ' ' || tag[i] == '\t' || tag[i] == '\r' || tag[i] == '\n' ||
+			(tag[i] == '/' && !(i+1 < n && tag[i+1] == '>'))) {
 			i++
 		}
 		leadWS := tag[wsStart:i]
@@ -1969,6 +1989,13 @@ func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []
 			i++
 		}
 		if i >= n || tag[i] != '=' {
+			if len(rawName) == 0 {
+				// Nothing was read. Keep the rest as it is rather than
+				// looping on it.
+				tail = append(tail, leadWS...)
+				tail = append(tail, tag[attrStart:]...)
+				break
+			}
 			attrs = append(attrs, htmlAttrToken{
 				leadWS:  leadWS,
 				rawName: rawName,

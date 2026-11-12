@@ -165,7 +165,27 @@ func TestSidecarListFailureBackoffAnd503(t *testing.T) {
 		t.Fatalf("entry ended at %s", resp.Request.URL.Path)
 	}
 
+	capRequest := func() int {
+		sub, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/", nil)
+		sub.Header.Set("Origin", "null")
+		resp, err := http.DefaultClient.Do(sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// One failed call does not close a sidecar in use: the last list that
+	// succeeded allows it for two cache TTLs.
 	failing.Store(true)
+	p.sidecarMu.Lock()
+	p.sidecarCachedAt = time.Now().Add(-sidecarCacheTTL - 500*time.Millisecond)
+	p.sidecarMu.Unlock()
+	if code := capRequest(); code != http.StatusOK {
+		t.Fatalf("capability request right after GetSidecars failed: status %d, want 200 from the last list", code)
+	}
+
 	p.sidecarMu.Lock()
 	p.sidecarCachedAt = time.Time{}
 	p.sidecarMu.Unlock()
@@ -175,8 +195,8 @@ func TestSidecarListFailureBackoffAnd503(t *testing.T) {
 			t.Fatal("a failing GetSidecars did not fail closed")
 		}
 	}
-	if n := rpcs.Load(); n != 1 {
-		t.Fatalf("20 checks while GetSidecars fails sent %d calls, want 1", n)
+	if n := rpcs.Load(); n > 1 {
+		t.Fatalf("20 checks while GetSidecars fails sent %d calls, want at most 1", n)
 	}
 
 	sub, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/", nil)
@@ -187,6 +207,6 @@ func TestSidecarListFailureBackoffAnd503(t *testing.T) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
-		t.Fatalf("capability request while GetSidecars fails: status %d, want 503 with Retry-After", resp.StatusCode)
+		t.Fatalf("capability request while GetSidecars fails with no recent list: status %d, want 503 with Retry-After", resp.StatusCode)
 	}
 }

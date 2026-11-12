@@ -334,11 +334,14 @@ func (r *runner) start(runCtx context.Context) error {
 	// the language server's process tree listens on. A walk is slow and on
 	// macOS and Windows starts subprocesses, so one result serves a few
 	// seconds.
-	lsPortsTTL := 2 * time.Second
+	// A port missing from the tree is looked up again after treeMissRefresh,
+	// so a dev server that just started becomes reachable. On macOS and
+	// Windows that walk runs lsof or PowerShell, so it waits for the TTL.
+	lsPortsTTL, treeMissRefresh := 2*time.Second, time.Second
 	if runtime.GOOS != "linux" {
-		lsPortsTTL = 5 * time.Second
+		lsPortsTTL, treeMissRefresh = 5*time.Second, 5*time.Second
 	}
-	treeEndpoints := lsproc.NewTreeEndpointCache(instance.PID, lsPortsTTL, time.Second)
+	treeEndpoints := lsproc.NewTreeEndpointCache(instance.PID, lsPortsTTL, treeMissRefresh)
 
 	staticReserved := map[int]struct{}{publicPort: {}, instance.Port: {}}
 	if localPort > 0 {
