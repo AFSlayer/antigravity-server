@@ -162,6 +162,10 @@ func TestRemoteSidecarPreviewAndOAuthPatches2312(t *testing.T) {
 		`const u={};const sidecarHelper={resolveSidecarUrl:(C,F)=>{a:{var G=u;F=F.startsWith("/")?F:`+"`/${F}`"+`;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?`+"`plugin://${M}${J.pathname}${J.search}`"+`:J.toString();break a}catch(J){H=(H=G[C])?`+"`plugin://${H}${F}`"+`:`+"`${C}${F}`"+`;break a}H=void 0}return H}};`,
 		Options{},
 	)
+	sidecarCatchlessJS := applyOnly(t, "sidecar-resolve-url",
+		`const u2={};const sidecarCatchless={resolveSidecarUrl:(C,F)=>{a:{var G=u2;F=F.startsWith("/")?F:`+"`/${F}`"+`;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?`+"`plugin://${M}${J.pathname}${J.search}`"+`:J.toString();break a}catch{H=(H=G[C])?`+"`plugin://${H}${F}`"+`:`+"`${C}${F}`"+`;break a}H=void 0}return H}};`,
+		Options{},
+	)
 	modalJS := applyOnly(t, "sidecar-modal-endpoint-url",
 		`function endpointFor(c){var A=c.baseUrl||(c.webPort?`+"`http://127.0.0.1:${c.webPort}`"+`:"\u2014");return A}`,
 		Options{},
@@ -199,7 +203,7 @@ global.window = { location: global.location };
 let mockFetchHandler = async () => { throw new Error("unexpected fetch"); };
 global.fetch = (url, opts) => mockFetchHandler(url, opts);
 
-` + bridgeJS + "\n" + sidecarJS + "\n" + modalJS + "\n" + gateJS + `
+` + bridgeJS + "\n" + sidecarJS + "\n" + sidecarCatchlessJS + "\n" + modalJS + "\n" + gateJS + `
 
 let upstreamClient = {};
 ` + fetchFallbackJS + `
@@ -219,10 +223,14 @@ const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
 ` + routerJS + "\n" + mentionJS + "\n" + mcpOAuthJS + "\n" + pluginOAuthJS + `
 
 (async () => {
-  // 1. Sidecar URL resolution + modal endpoint
+  // 1. Sidecar URL resolution (both catch(e) and catch{} minifier forms) + modal endpoint
   assert.strictEqual(
     sidecarHelper.resolveSidecarUrl("http://localhost:39715", "/board?token=t1"),
     "https://agy.example.com/__agy/sidecar/39715/board?token=t1"
+  );
+  assert.strictEqual(
+    sidecarCatchless.resolveSidecarUrl("http://127.0.0.1:39716", "sub"),
+    "https://agy.example.com/__agy/sidecar/39716/sub"
   );
   assert.strictEqual(
     endpointFor({ baseUrl: "http://127.0.0.1:41234" }),
@@ -274,10 +282,22 @@ const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
   const mention = nCc([]);
   assert.strictEqual(mention.canSignIn, true);
   mention.startSignIn({ plugin: "/home/ubuntu/.gemini/config/plugins/figma", provider: "oauth", accountId: "" });
-  assert.strictEqual(navCalls.length, 1);
+  mention.startSignIn({ plugin: "C:\\Users\\alice\\.gemini\\config\\plugins\\figma\\", provider: "oauth", accountId: "" });
+  mention.startSignIn({ plugin: "file:///C:/Users/alice/.gemini/config/plugins/linear?rev=1#frag", provider: "oauth", accountId: "" });
+  assert.strictEqual(navCalls.length, 3);
   assert.deepStrictEqual(navCalls[0], {
     to: "/customizations/plugins/$pluginId",
     params: { pluginId: "figma" },
+    search: { pluginTab: "accounts" }
+  });
+  assert.deepStrictEqual(navCalls[1], {
+    to: "/customizations/plugins/$pluginId",
+    params: { pluginId: "figma" },
+    search: { pluginTab: "accounts" }
+  });
+  assert.deepStrictEqual(navCalls[2], {
+    to: "/customizations/plugins/$pluginId",
+    params: { pluginId: "linear" },
     search: { pluginTab: "accounts" }
   });
 

@@ -45,8 +45,12 @@ type Options struct {
 	// DisableWSRelay passes the RPC WebSocket through untouched instead of
 	// terminating and compressing it in the proxy.
 	DisableWSRelay bool
-	Patch          patches.Options
-	OnReport       ReportFunc
+	// ValidateSession reports whether an agy_session cookie value is still active.
+	// When set, revoking or expiring a parent session immediately invalidates any
+	// sandboxed sidecar capabilities minted from it.
+	ValidateSession func(token string) bool
+	Patch           patches.Options
+	OnReport        ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
@@ -69,11 +73,20 @@ type Proxy struct {
 	cachedHTML          []byte
 	cachedHTMLMissingWS bool
 
-	sidecarMu        sync.Mutex
-	sidecarAllowed   map[int]struct{}
-	sidecarReserved  map[int]struct{}
-	sidecarCachedAt  time.Time
-	sidecarLastProbe time.Time
+	closed    chan struct{}
+	closeOnce sync.Once
+
+	sidecarMu              sync.Mutex
+	sidecarAllowed         map[int]struct{}
+	sidecarReserved        map[int]struct{}
+	sidecarCachedAt        time.Time
+	sidecarLastProbe       time.Time
+	sidecarLastErr         error
+	sidecarInflight        chan struct{}
+	sidecarInflightStarted time.Time
+
+	sidecarCapMu sync.Mutex
+	sidecarCaps  map[string]*sidecarCapSession
 
 	// wsTransportMissing remembers the last main.js outcome for the HTML patches.
 	wsTransportMissing atomic.Bool
@@ -86,7 +99,12 @@ func New(opts Options) (*Proxy, error) {
 		return nil, err
 	}
 
-	p := &Proxy{opts: opts, target: target}
+	p := &Proxy{
+		opts:        opts,
+		target:      target,
+		closed:      make(chan struct{}),
+		sidecarCaps: make(map[string]*sidecarCapSession),
+	}
 	p.touchActivity()
 
 	rp := httputil.NewSingleHostReverseProxy(target)
@@ -143,9 +161,18 @@ func New(opts Options) (*Proxy, error) {
 func (p *Proxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		isWS := isWebSocketUpgrade(r)
+		isSidecar := strings.HasPrefix(r.URL.Path, SidecarPrefix)
 		isRelayWS := isWS && r.URL.Path == relayPath && !p.opts.DisableWSRelay
-		isPassthroughWS := isWS && !isRelayWS
+		isPassthroughWS := isWS && !isRelayWS && !isSidecar
 		p.activeConns.Add(1)
+		var releaseHTTPOnce sync.Once
+		releaseHTTPReq := func() {
+			if !isWS {
+				releaseHTTPOnce.Do(func() {
+					p.activeHTTPReqs.Add(-1)
+				})
+			}
+		}
 		if !isWS {
 			p.activeHTTPReqs.Add(1)
 		} else if isPassthroughWS {
@@ -154,7 +181,7 @@ func (p *Proxy) Handler() http.Handler {
 		p.touchActivity()
 		defer func() {
 			if !isWS {
-				p.activeHTTPReqs.Add(-1)
+				releaseHTTPReq()
 				p.touchActivity()
 			} else if isPassthroughWS {
 				p.activePassthroughWS.Add(-1)
@@ -162,6 +189,11 @@ func (p *Proxy) Handler() http.Handler {
 			}
 			p.activeConns.Add(-1)
 		}()
+
+		if isSidecar {
+			p.serveSidecar(w, r, releaseHTTPReq)
+			return
+		}
 
 		if isWS && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
@@ -174,11 +206,6 @@ func (p *Proxy) Handler() http.Handler {
 
 		if isRelayWS {
 			p.relayWebSocket(w, r)
-			return
-		}
-
-		if strings.HasPrefix(r.URL.Path, SidecarPrefix) {
-			p.serveSidecar(w, r)
 			return
 		}
 		if p.redirectSidecarOrphanRequest(w, r) {
@@ -419,11 +446,17 @@ func (p *Proxy) PrewarmContext(parent context.Context) error {
 	return p.modifyResponse(resp)
 }
 
-// Close releases idle upstream transport connections when a proxy instance is retired.
+// Close releases idle upstream transport connections and active sidecar sockets
+// when a proxy instance is retired.
 func (p *Proxy) Close() {
 	if p == nil {
 		return
 	}
+	p.closeOnce.Do(func() {
+		if p.closed != nil {
+			close(p.closed)
+		}
+	})
 	if p.transport != nil {
 		p.transport.CloseIdleConnections()
 	}

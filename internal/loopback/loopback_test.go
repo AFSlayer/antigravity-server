@@ -15,9 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
+	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 )
 
 func serverPort(t *testing.T, rawURL string) int {
@@ -102,7 +104,7 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 	front := httptest.NewServer(mux)
 	t.Cleanup(front.Close)
 
-	// 1. Valid POST to dev server strips agy_session & internal CSRF, rewrites non-loopback Origin, and decodes body.
+	// 1. Valid POST to dev server strips agy_session & internal CSRF, drops non-loopback Origin (no forging), and decodes body.
 	resp := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{
 		Port:   devPort,
 		Method: "POST",
@@ -136,8 +138,8 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 	if got, _ := gotCookie.Load().(string); strings.Contains(got, "secret_master") || got != "dev_sid=abc" {
 		t.Fatalf("upstream Cookie = %q, want dev_sid=abc", got)
 	}
-	if got, _ := gotOrigin.Load().(string); got != fmt.Sprintf("http://localhost:%d", devPort) {
-		t.Fatalf("upstream Origin = %q", got)
+	if got, _ := gotOrigin.Load().(string); got != "" {
+		t.Fatalf("non-loopback Origin must be dropped rather than forged, got %q", got)
 	}
 	if got, _ := gotCSRF.Load().(string); got != "" {
 		t.Fatalf("upstream received x-codeium-csrf-token = %q", got)
@@ -149,6 +151,21 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 		if strings.EqualFold(hdr.Name, "set-cookie") && strings.Contains(hdr.Value, "agy_session") {
 			t.Fatalf("response headers leaked agy_session Set-Cookie: %+v", hdr)
 		}
+	}
+
+	// Explicit matching loopback Origin header from the preview runtime is preserved.
+	loopOrigin := fmt.Sprintf("http://localhost:%d", devPort)
+	loopOriginResp := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{
+		Port:   devPort,
+		Method: "POST",
+		Path:   "/submit-loop",
+		Headers: []headerEntry{
+			{Name: "Origin", Value: loopOrigin},
+		},
+	})
+	loopOriginResp.Body.Close()
+	if got, _ := gotOrigin.Load().(string); got != loopOrigin {
+		t.Fatalf("matching loopback Origin = %q, want %q", got, loopOrigin)
 	}
 
 	// 2. Gzipped response is automatically decompressed so preview HTML rewriter receives plain UTF-8 bytes.
@@ -176,8 +193,12 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 		t.Fatalf("redirect statusCode = %d, want 302", redirParsed.StatusCode)
 	}
 
-	// 4. Reserved Antigravity ports and sensitive daemon ports (SSH 22, Redis 6379, Docker 2375) return 403.
-	for _, blocked := range []int{reservedControlPort, reservedLSPort, 22, 2375, 3306, 5432, 6379, 11211, 27017} {
+	// 4. Reserved Antigravity ports and sensitive daemon / debug / agent ports return 403.
+	for _, blocked := range []int{
+		reservedControlPort, reservedLSPort,
+		22, 2375, 2376, 2379, 2380, 3306, 4444, 5037, 5432, 6379, 6443,
+		8001, 8500, 9222, 9229, 9515, 10250, 10255, 11211, 11434, 27017,
+	} {
 		r := postJSON(t, front.URL, FetchAPIPath, front.URL, fetchRequest{Port: blocked, Path: "/"})
 		r.Body.Close()
 		if r.StatusCode != http.StatusForbidden {
@@ -200,7 +221,10 @@ func TestLoopbackFetchProxiesDevServerAndEnforcesIsolation(t *testing.T) {
 		}
 	}
 
-	// 6. Unbound local port returns HTTP 200 with {"noListener": true}.
+	// 6. Unbound local port returns HTTP 200 with {"noListener": true}, and Windows WSAECONNREFUSED (10061) is recognized.
+	if !isConnRefused(syscall.Errno(10061)) {
+		t.Fatal("expected Windows WSAECONNREFUSED (errno 10061) to be recognized by isConnRefused")
+	}
 	closedLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -312,5 +336,87 @@ func TestOAuthCallbackRelaysOnlyToAllowedProcessTreePortAndDiscardsBody(t *testi
 	}
 	if got, _ := receivedCookie.Load().(string); got != "" {
 		t.Fatalf("listener received Cookie = %q, want empty", got)
+	}
+}
+
+func TestOAuthCallbackIsolatesLoopbackAddressFamily(t *testing.T) {
+	ln6, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = ln6.Close() })
+	sharedPort := ln6.Addr().(*net.TCPAddr).Port
+
+	ln4, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", sharedPort))
+	if err != nil {
+		t.Skipf("could not bind parallel IPv4 listener on port %d: %v", sharedPort, err)
+	}
+	t.Cleanup(func() { _ = ln4.Close() })
+
+	var v4Hits atomic.Int32
+	var v6Hits atomic.Int32
+	var v6Code atomic.Value
+
+	srv4 := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v4Hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() { _ = srv4.Serve(ln4) }()
+	t.Cleanup(func() { _ = srv4.Close() })
+
+	srv6 := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v6Hits.Add(1)
+		v6Code.Store(r.URL.Query().Get("code"))
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() { _ = srv6.Serve(ln6) }()
+	t.Cleanup(func() { _ = srv6.Close() })
+
+	// Only the [::1] listener belongs to the language server process tree; 127.0.0.1
+	// on the same port belongs to an unrelated local process.
+	h := New(Options{
+		ResolveOAuthTarget: func(_ context.Context, port int, urlHost string) (string, bool) {
+			if port != sharedPort {
+				return "", false
+			}
+			return lsproc.ListenIPv6.ResolveDialHost(urlHost)
+		},
+	})
+	t.Cleanup(h.Close)
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	// 1. Explicit IPv4 callback URL must NOT dial the unrelated 127.0.0.1 listener or fall back to [::1].
+	r4 := postJSON(t, front.URL, OAuthCallbackAPIPath, front.URL, oauthCallbackRequest{
+		URL: fmt.Sprintf("http://127.0.0.1:%d/cb?code=leak_attempt", sharedPort),
+	})
+	var out4 oauthCallbackResponse
+	_ = json.NewDecoder(r4.Body).Decode(&out4)
+	r4.Body.Close()
+	if out4.Delivered {
+		t.Fatal("expected 127.0.0.1 callback URL to be rejected when tree owns only [::1]")
+	}
+	if v4Hits.Load() != 0 || v6Hits.Load() != 0 {
+		t.Fatalf("unexpected hits after rejected v4 callback: v4=%d v6=%d", v4Hits.Load(), v6Hits.Load())
+	}
+
+	// 2. "localhost" callback URL dials ONLY [::1] (the owned family), never touching 127.0.0.1.
+	rLocal := postJSON(t, front.URL, OAuthCallbackAPIPath, front.URL, oauthCallbackRequest{
+		URL: fmt.Sprintf("http://localhost:%d/cb?code=safe_v6_code", sharedPort),
+	})
+	var outLocal oauthCallbackResponse
+	_ = json.NewDecoder(rLocal.Body).Decode(&outLocal)
+	rLocal.Body.Close()
+	if !outLocal.Delivered || outLocal.StatusCode != http.StatusOK {
+		t.Fatalf("expected localhost callback to deliver to [::1], got %+v", outLocal)
+	}
+	if v4Hits.Load() != 0 {
+		t.Fatalf("unrelated 127.0.0.1 listener was contacted %d times", v4Hits.Load())
+	}
+	if v6Hits.Load() != 1 || v6Code.Load() != "safe_v6_code" {
+		t.Fatalf("expected 1 delivery to [::1] with safe_v6_code, got hits=%d code=%v", v6Hits.Load(), v6Code.Load())
 	}
 }

@@ -3,8 +3,11 @@
 package lsproc
 
 import (
+	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +21,9 @@ func standaloneProcesses() ([]process, error) {
 	if procs, err := standaloneProcessesViaProc(); err == nil && len(procs) > 0 {
 		return procs, nil
 	}
-	return standaloneProcessesViaPS()
+	ctx, cancel := discoveryContext(context.Background())
+	defer cancel()
+	return standaloneProcessesViaPS(ctx)
 }
 
 func standaloneProcessesViaProc() ([]process, error) {
@@ -59,8 +64,8 @@ func standaloneProcessesViaProc() ([]process, error) {
 	return procs, nil
 }
 
-func standaloneProcessesViaPS() ([]process, error) {
-	out, err := exec.Command("ps", "ax", "-o", "pid=,command=").Output()
+func standaloneProcessesViaPS(ctx context.Context) ([]process, error) {
+	out, err := exec.CommandContext(ctx, "ps", "ax", "-o", "pid=,command=").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -86,23 +91,62 @@ func standaloneProcessesViaPS() ([]process, error) {
 }
 
 func listeningPorts(pid int) ([]int, error) {
-	if ports, err := portsViaProc(pid); err == nil && len(ports) > 0 {
-		return ports, nil
+	ctx, cancel := discoveryContext(context.Background())
+	defer cancel()
+	return listeningPortsContext(ctx, pid)
+}
+
+func listeningPortsContext(ctx context.Context, pid int) ([]int, error) {
+	ports, _, err := discoverPIDsListeners(ctx, []int{pid})
+	if err != nil {
+		return nil, err
 	}
-	if ports, err := portsViaLsof(pid); err == nil && len(ports) > 0 {
-		return ports, nil
+	return ports, nil
+}
+
+func processTreeListeningPorts(ctx context.Context, rootPID int) ([]int, error) {
+	pids := descendantPIDs(ctx, rootPID)
+	ports, _, err := discoverPIDsListeners(ctx, pids)
+	if err != nil {
+		return nil, err
 	}
-	if ports, err := portsViaSS(pid); err == nil && len(ports) > 0 {
-		return ports, nil
+	return ports, nil
+}
+
+func processTreeListeningEndpoints(ctx context.Context, rootPID int) (map[int]LoopbackListenMask, error) {
+	pids := descendantPIDs(ctx, rootPID)
+	_, endpoints, err := discoverPIDsListeners(ctx, pids)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("could not determine listening ports")
+	if len(endpoints) == 0 {
+		return nil, errors.New("no loopback listening endpoints found for process tree")
+	}
+	return endpoints, nil
+}
+
+func discoverPIDsListeners(ctx context.Context, pids []int) ([]int, map[int]LoopbackListenMask, error) {
+	if len(pids) == 0 {
+		return nil, nil, errors.New("no pids to inspect")
+	}
+	if ports, endpoints, err := listenersForPIDsViaProc(pids); err == nil && len(ports) > 0 {
+		return ports, endpoints, nil
+	}
+	if ports, endpoints, err := listenersForPIDsViaLsof(ctx, pids); err == nil && len(ports) > 0 {
+		return ports, endpoints, nil
+	}
+	if ports, endpoints, err := listenersForPIDsViaSS(ctx, pids); err == nil && len(ports) > 0 {
+		return ports, endpoints, nil
+	}
+	return nil, nil, errors.New("could not determine listening ports")
 }
 
 func portsViaProc(pid int) ([]int, error) {
-	return portsForPIDsViaProc([]int{pid})
+	ports, _, err := listenersForPIDsViaProc([]int{pid})
+	return ports, err
 }
 
-func portsForPIDsViaProc(pids []int) ([]int, error) {
+func listenersForPIDsViaProc(pids []int) ([]int, map[int]LoopbackListenMask, error) {
 	socketInodes := make(map[string]bool)
 	for _, pid := range pids {
 		fdDir := fmt.Sprintf("/proc/%d/fd", pid)
@@ -123,13 +167,21 @@ func portsForPIDsViaProc(pids []int) ([]int, error) {
 	}
 
 	if len(socketInodes) == 0 {
-		return nil, errors.New("no socket inodes found in /proc")
+		return nil, nil, errors.New("no socket inodes found in /proc")
 	}
 
 	var ports []int
 	seen := make(map[int]bool)
-	for _, netFile := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-		data, err := os.ReadFile(netFile)
+	endpoints := make(map[int]LoopbackListenMask)
+
+	for _, src := range []struct {
+		path string
+		ipv6 bool
+	}{
+		{path: "/proc/net/tcp", ipv6: false},
+		{path: "/proc/net/tcp6", ipv6: true},
+	} {
+		data, err := os.ReadFile(src.path)
 		if err != nil {
 			continue
 		}
@@ -139,59 +191,86 @@ func portsForPIDsViaProc(pids []int) ([]int, error) {
 			if len(fields) < 10 {
 				continue
 			}
-			state := fields[3]
-			inode := fields[9]
-			if state == "0A" && socketInodes[inode] { // 0A = TCP_LISTEN
-				addrParts := strings.Split(fields[1], ":")
-				if len(addrParts) == 2 {
-					if port64, err := strconv.ParseInt(addrParts[1], 16, 32); err == nil {
-						port := int(port64)
-						if port > 0 && port <= 65535 && !seen[port] {
-							seen[port] = true
-							ports = append(ports, port)
-						}
-					}
-				}
+			if fields[3] != "0A" || !socketInodes[fields[9]] { // 0A = TCP_LISTEN
+				continue
+			}
+			addrParts := strings.Split(fields[1], ":")
+			if len(addrParts) != 2 {
+				continue
+			}
+			port64, err := strconv.ParseInt(addrParts[1], 16, 32)
+			if err != nil {
+				continue
+			}
+			port := int(port64)
+			if port <= 0 || port > 65535 {
+				continue
+			}
+			if !seen[port] {
+				seen[port] = true
+				ports = append(ports, port)
+			}
+			if mask := parseProcHexAddrMask(addrParts[0], src.ipv6); mask != 0 {
+				endpoints[port] |= mask
 			}
 		}
 	}
 
 	if len(ports) == 0 {
-		return nil, errors.New("no listening ports matched socket inodes in /proc")
+		return nil, nil, errors.New("no listening ports matched socket inodes in /proc")
 	}
-	return ports, nil
+	return ports, endpoints, nil
 }
 
-func processTreeListeningPorts(rootPID int) ([]int, error) {
-	pids := descendantPIDs(rootPID)
-	if ports, err := portsForPIDsViaProc(pids); err == nil && len(ports) > 0 {
-		return ports, nil
-	}
-
-	seen := make(map[int]bool)
-	var out []int
-	for _, pid := range pids {
-		ports, err := listeningPorts(pid)
+func parseProcHexAddrMask(hexAddr string, ipv6 bool) LoopbackListenMask {
+	if !ipv6 {
+		if len(hexAddr) != 8 {
+			return 0
+		}
+		v, err := strconv.ParseUint(hexAddr, 16, 32)
 		if err != nil {
-			continue
+			return 0
 		}
-		for _, port := range ports {
-			if !seen[port] {
-				seen[port] = true
-				out = append(out, port)
-			}
+		var b [4]byte
+		binary.NativeEndian.PutUint32(b[:], uint32(v))
+		ip := net.IPv4(b[0], b[1], b[2], b[3])
+		if ip.IsUnspecified() || ip.IsLoopback() {
+			return ListenIPv4
 		}
+		return 0
 	}
-	if len(out) == 0 {
-		return nil, errors.New("could not determine listening ports for process tree")
+
+	if len(hexAddr) != 32 {
+		return 0
 	}
-	return out, nil
+	var b [16]byte
+	for i := 0; i < 4; i++ {
+		w, err := strconv.ParseUint(hexAddr[i*8:(i+1)*8], 16, 32)
+		if err != nil {
+			return 0
+		}
+		binary.NativeEndian.PutUint32(b[i*4:(i+1)*4], uint32(w))
+	}
+	ip := net.IP(b[:])
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4.IsUnspecified() || ip4.IsLoopback() {
+			return ListenIPv4
+		}
+		return 0
+	}
+	if ip.IsUnspecified() {
+		return ListenIPv6Wildcard
+	}
+	if ip.IsLoopback() {
+		return ListenIPv6
+	}
+	return 0
 }
 
-func descendantPIDs(rootPID int) []int {
+func descendantPIDs(ctx context.Context, rootPID int) []int {
 	children := childPIDMapViaProc()
 	if len(children) == 0 {
-		children = childPIDMapViaPS()
+		children = childPIDMapViaPS(ctx)
 	}
 
 	seen := map[int]bool{rootPID: true}
@@ -208,12 +287,17 @@ func descendantPIDs(rootPID int) []int {
 	return queue
 }
 
+type procStatMeta struct {
+	ppid      int
+	startTime uint64
+}
+
 func childPIDMapViaProc() map[int][]int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
-	children := make(map[int][]int)
+	meta := make(map[int]procStatMeta, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -231,23 +315,33 @@ func childPIDMapViaProc() map[int][]int {
 			continue
 		}
 		fields := strings.Fields(string(data[closeIdx+1:]))
-		if len(fields) < 2 {
-			continue
-		}
-		if fields[0] == "Z" {
+		if len(fields) < 2 || fields[0] == "Z" {
 			continue
 		}
 		ppid, err := strconv.Atoi(fields[1])
 		if err != nil || ppid <= 0 {
 			continue
 		}
-		children[ppid] = append(children[ppid], pid)
+		var startTicks uint64
+		if len(fields) > 19 {
+			startTicks, _ = strconv.ParseUint(fields[19], 10, 64)
+		}
+		meta[pid] = procStatMeta{ppid: ppid, startTime: startTicks}
+	}
+
+	children := make(map[int][]int)
+	for pid, m := range meta {
+		if parent, ok := meta[m.ppid]; ok && parent.startTime > 0 && m.startTime > 0 && m.startTime < parent.startTime {
+			// Guard against PID reuse where a stale parent PID now belongs to a newer process.
+			continue
+		}
+		children[m.ppid] = append(children[m.ppid], pid)
 	}
 	return children
 }
 
-func childPIDMapViaPS() map[int][]int {
-	out, err := exec.Command("ps", "ax", "-o", "pid=,ppid=").Output()
+func childPIDMapViaPS(ctx context.Context) map[int][]int {
+	out, err := exec.CommandContext(ctx, "ps", "ax", "-o", "pid=,ppid=").Output()
 	if err != nil {
 		return nil
 	}
@@ -267,44 +361,121 @@ func childPIDMapViaPS() map[int][]int {
 	return children
 }
 
-var lsofPortRe = regexp.MustCompile(`:(\d+)\s+\(LISTEN\)`)
+var lsofListenLineRe = regexp.MustCompile(`\bTCP\s+(\S+):(\d+)\s+\(LISTEN\)`)
 
-func portsViaLsof(pid int) ([]int, error) {
-	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n").Output()
-	if err != nil {
-		return nil, err
-	}
-	return collectPorts(string(out), lsofPortRe, ""), nil
-}
+func listenersForPIDsViaLsof(ctx context.Context, pids []int) ([]int, map[int]LoopbackListenMask, error) {
+	const batchSize = 256
+	var allPorts []int
+	seen := make(map[int]bool)
+	endpoints := make(map[int]LoopbackListenMask)
 
-var ssPortRe = regexp.MustCompile(`[:\]](\d+)\s`)
-
-func portsViaSS(pid int) ([]int, error) {
-	out, err := exec.Command("ss", "-tlnpH").Output()
-	if err != nil {
-		return nil, err
-	}
-	return collectPorts(string(out), ssPortRe, "pid="+strconv.Itoa(pid)+","), nil
-}
-
-func collectPorts(out string, re *regexp.Regexp, mustContain string) []int {
-	var ports []int
-	seen := map[int]bool{}
-
-	for _, line := range strings.Split(out, "\n") {
-		if mustContain != "" && !strings.Contains(line, mustContain) {
+	for start := 0; start < len(pids); start += batchSize {
+		end := start + batchSize
+		if end > len(pids) {
+			end = len(pids)
+		}
+		parts := make([]string, 0, end-start)
+		for _, pid := range pids[start:end] {
+			if pid > 0 {
+				parts = append(parts, strconv.Itoa(pid))
+			}
+		}
+		if len(parts) == 0 {
 			continue
 		}
-		for _, m := range re.FindAllStringSubmatch(line, -1) {
-			port, err := strconv.Atoi(m[1])
-			if err != nil || port <= 0 || port > 65535 || seen[port] {
-				continue
-			}
+		out, err := exec.CommandContext(ctx, "lsof", "-a", "-p", strings.Join(parts, ","), "-iTCP", "-sTCP:LISTEN", "-P", "-n").Output()
+		if len(out) == 0 && err != nil {
+			continue
+		}
+		parseLsofOutput(string(out), &allPorts, seen, endpoints)
+	}
+
+	if len(allPorts) == 0 {
+		return nil, nil, errors.New("no listening ports found via lsof")
+	}
+	return allPorts, endpoints, nil
+}
+
+func parseLsofOutput(out string, ports *[]int, seen map[int]bool, endpoints map[int]LoopbackListenMask) {
+	for _, line := range strings.Split(out, "\n") {
+		m := lsofListenLineRe.FindStringSubmatch(line)
+		if len(m) != 3 {
+			continue
+		}
+		port, err := strconv.Atoi(m[2])
+		if err != nil || port <= 0 || port > 65535 {
+			continue
+		}
+		if !seen[port] {
 			seen[port] = true
-			ports = append(ports, port)
+			*ports = append(*ports, port)
+		}
+		ipv6Hint := strings.Contains(line, "IPv6") || strings.HasPrefix(m[1], "[")
+		if mask := parseListenHostMask(m[1], ipv6Hint); mask != 0 {
+			endpoints[port] |= mask
 		}
 	}
-	return ports
+}
+
+var ssPIDRe = regexp.MustCompile(`pid=(\d+)\b`)
+
+func listenersForPIDsViaSS(ctx context.Context, pids []int) ([]int, map[int]LoopbackListenMask, error) {
+	out, err := exec.CommandContext(ctx, "ss", "-tlnpH").Output()
+	if err != nil {
+		return nil, nil, err
+	}
+	pidSet := make(map[int]bool, len(pids))
+	for _, pid := range pids {
+		if pid > 0 {
+			pidSet[pid] = true
+		}
+	}
+
+	var ports []int
+	seen := make(map[int]bool)
+	endpoints := make(map[int]LoopbackListenMask)
+	parseSSOutput(string(out), pidSet, &ports, seen, endpoints)
+	if len(ports) == 0 {
+		return nil, nil, errors.New("no listening ports found via ss")
+	}
+	return ports, endpoints, nil
+}
+
+func parseSSOutput(out string, pidSet map[int]bool, ports *[]int, seen map[int]bool, endpoints map[int]LoopbackListenMask) {
+	for _, line := range strings.Split(out, "\n") {
+		matchedPID := false
+		for _, pm := range ssPIDRe.FindAllStringSubmatch(line, -1) {
+			if pid, err := strconv.Atoi(pm[1]); err == nil && pidSet[pid] {
+				matchedPID = true
+				break
+			}
+		}
+		if !matchedPID {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		localAddr := fields[3]
+		colon := strings.LastIndexByte(localAddr, ':')
+		if colon <= 0 || colon+1 >= len(localAddr) {
+			continue
+		}
+		hostPart := localAddr[:colon]
+		port, err := strconv.Atoi(localAddr[colon+1:])
+		if err != nil || port <= 0 || port > 65535 {
+			continue
+		}
+		if !seen[port] {
+			seen[port] = true
+			*ports = append(*ports, port)
+		}
+		ipv6Hint := strings.HasPrefix(hostPart, "[") || strings.Contains(hostPart, ":")
+		if mask := parseListenHostMask(hostPart, ipv6Hint); mask != 0 {
+			endpoints[port] |= mask
+		}
+	}
 }
 
 func sendTerminate(proc *os.Process) error {

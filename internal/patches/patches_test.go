@@ -1405,3 +1405,37 @@ func TestWindowedRegexpMatchesFullScan(t *testing.T) {
 		t.Fatal("$ anchor falsely matched interior window boundary")
 	}
 }
+
+func TestOptionalPatchPreconditionDetectsDrift(t *testing.T) {
+	// Drifted bundle: contains the feature's stable identifier ("resolveSidecarUrl:")
+	// so Precondition returns true, but its body shape changed so FindRe does not match.
+	drifted := []byte(`var helper={resolveSidecarUrl:(a,b)=>completelyChangedShape(a,b)};`)
+	_, driftedReport := Apply(MainJS, drifted, fullOptions())
+
+	var gotDrifted Result
+	for _, r := range driftedReport {
+		if r.ID == "sidecar-resolve-url" {
+			gotDrifted = r
+			break
+		}
+	}
+	if gotDrifted.Status != StatusMissing {
+		t.Fatalf("drifted bundle with satisfied Precondition: got status %q, want %q", gotDrifted.Status, StatusMissing)
+	}
+
+	// Older bundle without the feature at all: Precondition returns false, so Optional
+	// cleanly reports StatusNotNeeded rather than a false alarm.
+	older := []byte(`var legacyBundleWithoutSidecars = 1;`)
+	_, olderReport := Apply(MainJS, older, fullOptions())
+
+	var gotOlder Result
+	for _, r := range olderReport {
+		if r.ID == "sidecar-resolve-url" {
+			gotOlder = r
+			break
+		}
+	}
+	if gotOlder.Status != StatusNotNeeded {
+		t.Fatalf("older bundle without feature: got status %q, want %q", gotOlder.Status, StatusNotNeeded)
+	}
+}

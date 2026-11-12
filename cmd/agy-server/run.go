@@ -326,6 +326,17 @@ func (r *runner) start(runCtx context.Context) error {
 	if localPort > 0 {
 		forbiddenPorts = append(forbiddenPorts, localPort)
 	}
+	initialLSPorts := make(map[int]struct{})
+	if instance.PID > 0 {
+		if pts, lerr := lsproc.ListeningPorts(instance.PID); lerr == nil {
+			for _, pt := range pts {
+				if pt > 0 && pt <= 65535 {
+					initialLSPorts[pt] = struct{}{}
+					forbiddenPorts = append(forbiddenPorts, pt)
+				}
+			}
+		}
+	}
 
 	p, err := proxy.New(proxy.Options{
 		TargetPort:      instance.Port,
@@ -334,6 +345,7 @@ func (r *runner) start(runCtx context.Context) error {
 		PublicURL:       r.cfg.PublicURL,
 		TrustedProxies:  trusted,
 		DisableWSRelay:  r.cfg.DisableWSRelay,
+		ValidateSession: r.authState.sessions.Validate,
 		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)
@@ -358,12 +370,13 @@ func (r *runner) start(runCtx context.Context) error {
 	})
 
 	authenticator := auth.New(auth.Options{
-		Credentials: r.authState.creds,
-		Sessions:    r.authState.sessions,
-		Trusted:     trusted,
-		PublicURL:   r.cfg.PublicURL,
-		LoginPage:   ui.LoginPage(),
-		IsPublic:    assets.IsPublicPath,
+		Credentials:  r.authState.creds,
+		Sessions:     r.authState.sessions,
+		Trusted:      trusted,
+		PublicURL:    r.cfg.PublicURL,
+		LoginPage:    ui.LoginPage(),
+		IsPublic:     assets.IsPublicPath,
+		AllowSidecar: p.ValidateSidecarCapability,
 	})
 
 	publicMux := http.NewServeMux()
@@ -393,31 +406,72 @@ func (r *runner) start(runCtx context.Context) error {
 		lsPortsMu       sync.Mutex
 		lsDirectPorts   map[int]struct{}
 		lsPortsCachedAt time.Time
+		lsPortsLastErr  error
+		lsPortsInflight chan struct{}
 	)
-	hasLanguageServerOwnPort := func(port int) bool {
+	hasLanguageServerOwnPort := func(ctx context.Context, port int) bool {
+		if _, ok := initialLSPorts[port]; ok {
+			return true
+		}
 		if instance.PID <= 0 {
 			return false
 		}
 		lsPortsMu.Lock()
-		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < time.Second {
-			_, ok := lsDirectPorts[port]
+		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < 500*time.Millisecond && lsPortsLastErr == nil {
+			if _, ok := lsDirectPorts[port]; ok {
+				lsPortsMu.Unlock()
+				return true
+			}
+			if time.Since(lsPortsCachedAt) < 200*time.Millisecond {
+				lsPortsMu.Unlock()
+				return false
+			}
+		}
+		if lsPortsInflight != nil {
+			waitCh := lsPortsInflight
 			lsPortsMu.Unlock()
+			select {
+			case <-waitCh:
+			case <-ctx.Done():
+				return true
+			}
+			lsPortsMu.Lock()
+			portsMap, lastErr := lsDirectPorts, lsPortsLastErr
+			lsPortsMu.Unlock()
+			if lastErr != nil {
+				return true
+			}
+			_, ok := portsMap[port]
 			return ok
 		}
+		ch := make(chan struct{})
+		lsPortsInflight = ch
 		lsPortsMu.Unlock()
 
-		ports, err := lsproc.ListeningPorts(instance.PID)
-		if err != nil {
-			return false
+		ports, perr := lsproc.ListeningPortsContext(context.Background(), instance.PID)
+		var next map[int]struct{}
+		if perr == nil {
+			next = make(map[int]struct{}, len(ports))
+			for _, pt := range ports {
+				next[pt] = struct{}{}
+			}
 		}
-		next := make(map[int]struct{}, len(ports))
-		for _, pt := range ports {
-			next[pt] = struct{}{}
-		}
+
 		lsPortsMu.Lock()
-		lsDirectPorts = next
-		lsPortsCachedAt = time.Now()
+		if perr == nil {
+			lsDirectPorts = next
+			lsPortsCachedAt = time.Now()
+			lsPortsLastErr = nil
+		} else {
+			lsPortsLastErr = perr
+		}
+		lsPortsInflight = nil
+		close(ch)
 		lsPortsMu.Unlock()
+
+		if perr != nil || ctx.Err() != nil {
+			return true
+		}
 		_, ok := next[port]
 		return ok
 	}
@@ -425,29 +479,30 @@ func (r *runner) start(runCtx context.Context) error {
 		if port == publicPort || (localPort > 0 && port == localPort) || port == instance.Port {
 			return true
 		}
-		_, sidecarReserved := p.ReservedSidecarPorts(ctx)[port]
-		return sidecarReserved
+		if _, ok := initialLSPorts[port]; ok {
+			return true
+		}
+		return p.IsSidecarReservedPort(ctx, port)
 	}
 	loopbackHandler := loopback.New(loopback.Options{
 		Trusted:   trusted,
 		PublicURL: r.cfg.PublicURL,
 		IsReservedPort: func(ctx context.Context, port int) bool {
-			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(port)
+			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port)
 		},
-		AllowOAuthPort: func(ctx context.Context, port int) bool {
+		ResolveOAuthTarget: func(ctx context.Context, port int, urlHost string) (string, bool) {
 			if isCoreReservedPort(ctx, port) || instance.PID <= 0 {
-				return false
+				return "", false
 			}
-			ports, err := lsproc.ProcessTreeListeningPorts(instance.PID)
-			if err != nil {
-				return false
+			endpoints, perr := lsproc.ProcessTreeListeningEndpoints(ctx, instance.PID)
+			if perr != nil {
+				return "", false
 			}
-			for _, pt := range ports {
-				if pt == port {
-					return true
-				}
+			mask, ok := endpoints[port]
+			if !ok {
+				return "", false
 			}
-			return false
+			return mask.ResolveDialHost(urlHost)
 		},
 	})
 	defer loopbackHandler.Close()

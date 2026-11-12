@@ -71,11 +71,13 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 
 		switch p.Kind {
 		case Literal:
-			if n := bytes.Count(body, []byte(p.Find)); n != 1 && (!p.Optional || n != 0) {
+			wantOne := !p.Optional || (p.Precondition != nil && p.Precondition(body))
+			if n := bytes.Count(body, []byte(p.Find)); n != 1 && (wantOne || n != 0) {
 				t.Errorf("%s: anchor matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		case Regexp:
-			if n := len(regexpFindAllIndex(p.FindRe, body, -1)); n != 1 && (!p.Optional || n != 0) {
+			wantOne := !p.Optional || (p.Precondition != nil && p.Precondition(body))
+			if n := len(regexpFindAllIndex(p.FindRe, body, -1)); n != 1 && (wantOne || n != 0) {
 				t.Errorf("%s: regexp matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		}
@@ -151,7 +153,7 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if bytes.Contains(mainJS, []byte("resolveSidecarUrl:")) && !regexpMatch(sidecarResolveURLRe, mainJS) {
 		t.Error("sidecar-resolve-url: resolveSidecarUrl exists in bundle but patch regexp did not match")
 	}
-	if bytes.Contains(mainJS, []byte("c.webPort?`http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
+	if bytes.Contains(mainJS, []byte(".webPort")) && bytes.Contains(mainJS, []byte("http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
 		t.Error("sidecar-modal-endpoint-url: sidecar modal endpoint exists in bundle but patch regexp did not match")
 	}
 	if bytes.Contains(mainJS, []byte("browserAuxPane:")) && bytes.Contains(mainJS, []byte("openLoopbackInPreviewByDefault")) && !regexpMatch(loopbackPreviewFeatureGateRe, mainJS) {
@@ -205,6 +207,17 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 			cmd := exec.Command("node", "--check", tmp)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("JavaScript Syntax Error in patched bundle: %v\nOutput: %s", err, string(out))
+			}
+		} else if target.target == HTML {
+			for _, helper := range []string{
+				"window.__agyResolveSidecarUrl",
+				"window.__agyFetchLoopbackPort",
+				"window.__agyOpenPluginAuth",
+				"window.__agyCompleteRemoteOAuth",
+			} {
+				if !bytes.Contains(patched, []byte(helper)) {
+					t.Errorf("patched live HTML missing %s", helper)
+				}
 			}
 		}
 	}

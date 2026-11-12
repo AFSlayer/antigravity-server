@@ -1,6 +1,7 @@
 package patches
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -113,7 +114,7 @@ var (
 			"`plugin://\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\.pathname\\}\\$\\{[a-zA-Z0-9_$]+\\.search\\}`" +
 			`\s*:\s*)` +
 			`([a-zA-Z0-9_$]+\.toString\(\))` +
-			`(\s*;\s*break\s+[a-zA-Z0-9_$]+\s*\}\s*catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*\(\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\[[a-zA-Z0-9_$]+\]\s*\)\s*\?\s*` +
+			`(\s*;\s*break\s+[a-zA-Z0-9_$]+\s*\}\s*catch(?:\s*\(\s*[a-zA-Z0-9_$]+\s*\))?\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*\(\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\[[a-zA-Z0-9_$]+\]\s*\)\s*\?\s*` +
 			"`plugin://\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" +
 			`\s*:\s*)` +
 			`(` + "`\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" + `)`,
@@ -1038,13 +1039,14 @@ func All() []Patch {
 			Replace: remoteRuntimeBridgeScript,
 		},
 		{
-			ID:       "sidecar-resolve-url",
-			Desc:     "Rewrite localhost sidecar gateway URLs (Swarm UI and UI plugins) through the same-origin sidecar proxy",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   sidecarResolveURLRe,
-			Replace:  `${1}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${2}):${2})${3}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${4}):${4})`,
+			ID:           "sidecar-resolve-url",
+			Desc:         "Rewrite localhost sidecar gateway URLs (Swarm UI and UI plugins) through the same-origin sidecar proxy",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("resolveSidecarUrl:")) },
+			FindRe:       sidecarResolveURLRe,
+			Replace:      `${1}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${2}):${2})${3}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${4}):${4})`,
 		},
 		{
 			ID:       "sidecar-modal-endpoint-url",
@@ -1052,8 +1054,11 @@ func All() []Patch {
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			FindRe:   sidecarModalEndpointRe,
-			Replace:  `${1}(_u=>window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(_u):_u)(${2})`,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(".webPort")) && bytes.Contains(b, []byte("http://127.0.0.1:"))
+			},
+			FindRe:  sidecarModalEndpointRe,
+			Replace: `${1}(_u=>window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(_u):_u)(${2})`,
 		},
 		{
 			ID:       "loopback-preview-feature-gate",
@@ -1061,17 +1066,21 @@ func All() []Patch {
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			FindRe:   loopbackPreviewFeatureGateRe,
-			Replace:  `${1}${2}${4}${3}`,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("browserAuxPane:")) && bytes.Contains(b, []byte("remoteConversationBrowserPane:"))
+			},
+			FindRe:  loopbackPreviewFeatureGateRe,
+			Replace: `${1}${2}${4}${3}`,
 		},
 		{
-			ID:       "loopback-preview-fetch-fallback",
-			Desc:     "Fall back to /__agy/api/loopback-fetch when FetchSandboxPort is unimplemented on standalone language_server",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   loopbackPreviewFetchFallbackRe,
-			Replace:  `${1}{if(!${2}[0]?.conversationId&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);try{return await ${4}.fetchSandboxPort(...${2})}catch(_e){if(_e?.code===12&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);throw _e}}${5}`,
+			ID:           "loopback-preview-fetch-fallback",
+			Desc:         "Fall back to /__agy/api/loopback-fetch when FetchSandboxPort is unimplemented on standalone language_server",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("fetchSandboxPort:")) },
+			FindRe:       loopbackPreviewFetchFallbackRe,
+			Replace:      `${1}{if(!${2}[0]?.conversationId&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);try{return await ${4}.fetchSandboxPort(...${2})}catch(_e){if(_e?.code===12&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);throw _e}}${5}`,
 		},
 		{
 			ID:       "router-navigate-bridge",
@@ -1079,35 +1088,41 @@ func All() []Patch {
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			FindRe:   routerNavigateBridgeRe,
-			Replace:  `${1}window.__agyRouter=${2};${3}`,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(".navigate({")) && bytes.Contains(b, []byte("startPluginAuthSignIn:"))
+			},
+			FindRe:  routerNavigateBridgeRe,
+			Replace: `${1}window.__agyRouter=${2};${3}`,
 		},
 		{
-			ID:       "plugin-mention-remote-signin",
-			Desc:     "Route plugin @-mention sign-in clicks on web to the plugin Accounts settings tab",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   pluginMentionRemoteSignInRe,
-			Replace:  `${1}${5}&&(${6}||!!window.__agyOpenPluginAuth)${7}!(${6})&&window.__agyOpenPluginAuth?window.__agyOpenPluginAuth(${8}.plugin):${4}&&${3}&&${9}`,
+			ID:           "plugin-mention-remote-signin",
+			Desc:         "Route plugin @-mention sign-in clicks on web to the plugin Accounts settings tab",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("startPluginAuthSignIn:")) },
+			FindRe:       pluginMentionRemoteSignInRe,
+			Replace:      `${1}${5}&&(${6}||!!window.__agyOpenPluginAuth)${7}!(${6})&&window.__agyOpenPluginAuth?window.__agyOpenPluginAuth(${8}.plugin):${4}&&${3}&&${9}`,
 		},
 		{
-			ID:       "mcp-oauth-remote-callback",
-			Desc:     "Relay pasted loopback OAuth redirect URLs and extract auth codes in CompleteMcpOAuth",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   mcpOAuthRemoteCallbackRe,
-			Replace:  `${1}{const _sub=_c=>${4}_c${5};return window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${3},_sub):_sub(${3})}`,
+			ID:           "mcp-oauth-remote-callback",
+			Desc:         "Relay pasted loopback OAuth redirect URLs and extract auth codes in CompleteMcpOAuth",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("completeMcpOAuth:")) },
+			FindRe:       mcpOAuthRemoteCallbackRe,
+			Replace:      `${1}{const _sub=_c=>${4}_c${5};return window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${3},_sub):_sub(${3})}`,
 		},
 		{
-			ID:       "plugin-oauth-remote-callback",
-			Desc:     "Relay pasted loopback OAuth redirect URLs and extract auth codes in SignInPluginAuthProvider",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			FindRe:   pluginOAuthRemoteCallbackRe,
-			Replace:  `${1}{const _sub=_s=>${3}{...${2},secret:_s}${4};return ${2}?.secret&&window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${2}.secret,_sub):${3}${2}${4}}`,
+			ID:           "plugin-oauth-remote-callback",
+			Desc:         "Relay pasted loopback OAuth redirect URLs and extract auth codes in SignInPluginAuthProvider",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("signInPluginAuthProvider:")) },
+			FindRe:       pluginOAuthRemoteCallbackRe,
+			Replace:      `${1}{const _sub=_s=>${3}{...${2},secret:_s}${4};return ${2}?.secret&&window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${2}.secret,_sub):${3}${2}${4}}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -4851,7 +4866,16 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
 
   window.__agyOpenPluginAuth = function (pluginPath) {
     if (!pluginPath || typeof pluginPath !== "string") return;
-    var clean = pluginPath.replace(/^file:\/\//, "").replace(/\/+$/, "");
+    var clean = pluginPath;
+    if (/^file:/i.test(clean)) {
+      try {
+        clean = new URL(clean).pathname;
+      } catch (e) {
+        clean = clean.replace(/^file:\/\/\/?/i, "").replace(/[?#].*$/, "");
+      }
+    }
+    clean = clean.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (/^\/?[a-zA-Z]:$/.test(clean)) return;
     var seg = clean.split("/").pop() || "";
     var pluginId = seg;
     try { pluginId = decodeURIComponent(seg); } catch (e) {}

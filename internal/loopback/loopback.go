@@ -33,8 +33,9 @@ const (
 
 	maxDecodedBodyBytes  = 16 << 20
 	maxFetchRequestBytes = 24 << 20
-	maxResponseBodyBytes = 32 << 20
+	maxResponseBodyBytes = 16 << 20
 	maxOAuthRequestBytes = 16 << 10
+	maxConcurrentFetches = 12
 
 	dialTimeout  = 5 * time.Second
 	fetchTimeout = 30 * time.Second
@@ -51,16 +52,24 @@ type Options struct {
 	// AllowOAuthPort reports whether port is an unreserved listener owned by the
 	// language server process tree and may receive an OAuth callback GET.
 	AllowOAuthPort func(ctx context.Context, port int) bool
+	// ResolveOAuthTarget verifies that port is an unreserved listener owned by
+	// the language server process tree and returns the exact loopback IP literal
+	// ("127.0.0.1" or "::1") to dial for urlHost without cross-family fallback.
+	ResolveOAuthTarget func(ctx context.Context, port int, urlHost string) (dialHost string, allowed bool)
 }
 
 // Handler serves FetchAPIPath and OAuthCallbackAPIPath.
 type Handler struct {
-	trusted        []*net.IPNet
-	publicURL      string
-	isReservedPort func(ctx context.Context, port int) bool
-	allowOAuthPort func(ctx context.Context, port int) bool
-	transport      *http.Transport
-	client         *http.Client
+	trusted            []*net.IPNet
+	publicURL          string
+	isReservedPort     func(ctx context.Context, port int) bool
+	allowOAuthPort     func(ctx context.Context, port int) bool
+	resolveOAuthTarget func(ctx context.Context, port int, urlHost string) (string, bool)
+	transport          *http.Transport
+	oauthTransport     *http.Transport
+	client             *http.Client
+	oauthClient        *http.Client
+	sem                chan struct{}
 
 	activeReqs     atomic.Int64
 	lastActivityNs atomic.Int64
@@ -68,24 +77,40 @@ type Handler struct {
 
 // New constructs a loopback Handler.
 func New(opts Options) *Handler {
+	noRedirect := func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	tr := &http.Transport{
-		MaxIdleConns:        32,
-		MaxIdleConnsPerHost: 8,
-		IdleConnTimeout:     60 * time.Second,
-		DialContext:         dialLoopbackOnly,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       60 * time.Second,
+		ResponseHeaderTimeout: fetchTimeout,
+		DialContext:           dialLoopbackOnly,
+	}
+	oauthTr := &http.Transport{
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       30 * time.Second,
+		ResponseHeaderTimeout: oauthTimeout,
+		DialContext:           dialLoopbackExact,
 	}
 	h := &Handler{
-		trusted:        opts.Trusted,
-		publicURL:      opts.PublicURL,
-		isReservedPort: opts.IsReservedPort,
-		allowOAuthPort: opts.AllowOAuthPort,
-		transport:      tr,
+		trusted:            opts.Trusted,
+		publicURL:          opts.PublicURL,
+		isReservedPort:     opts.IsReservedPort,
+		allowOAuthPort:     opts.AllowOAuthPort,
+		resolveOAuthTarget: opts.ResolveOAuthTarget,
+		transport:          tr,
+		oauthTransport:     oauthTr,
 		client: &http.Client{
-			Transport: tr,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			Transport:     tr,
+			CheckRedirect: noRedirect,
 		},
+		oauthClient: &http.Client{
+			Transport:     oauthTr,
+			CheckRedirect: noRedirect,
+		},
+		sem: make(chan struct{}, maxConcurrentFetches),
 	}
 	h.touchActivity()
 	return h
@@ -106,8 +131,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // Close releases idle upstream connections.
 func (h *Handler) Close() {
-	if h != nil && h.transport != nil {
+	if h == nil {
+		return
+	}
+	if h.transport != nil {
 		h.transport.CloseIdleConnections()
+	}
+	if h.oauthTransport != nil {
+		h.oauthTransport.CloseIdleConnections()
 	}
 }
 
@@ -250,6 +281,13 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), fetchTimeout)
 	defer cancel()
 
+	select {
+	case h.sem <- struct{}{}:
+		defer func() { <-h.sem }()
+	case <-ctx.Done():
+		return
+	}
+
 	var bodyReader io.Reader
 	if len(reqBody) > 0 {
 		bodyReader = bytes.NewReader(reqBody)
@@ -263,7 +301,7 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	outReq.Host = fmt.Sprintf("localhost:%d", req.Port)
 	outReq.ContentLength = int64(len(reqBody))
-	sanitizeFetchHeaders(outReq.Header, req.Headers, req.Port)
+	sanitizeFetchHeaders(outReq.Header, req.Headers)
 
 	resp, err := h.client.Do(outReq)
 	if err != nil {
@@ -354,10 +392,6 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
 		return
 	}
-	if h.allowOAuthPort == nil || !h.allowOAuthPort(r.Context(), port) {
-		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
-		return
-	}
 
 	escapedPath := u.EscapedPath()
 	if escapedPath == "" {
@@ -368,13 +402,38 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, escapedPath)
+	ctx, cancel := context.WithTimeout(r.Context(), oauthTimeout)
+	defer cancel()
+
+	dialHost := "127.0.0.1"
+	doClient := h.oauthClient
+	if h.resolveOAuthTarget != nil {
+		resolvedHost, ok := h.resolveOAuthTarget(ctx, port, host)
+		if !ok || (resolvedHost != "127.0.0.1" && resolvedHost != "::1") {
+			writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
+			return
+		}
+		dialHost = resolvedHost
+	} else {
+		if h.allowOAuthPort == nil || !h.allowOAuthPort(ctx, port) {
+			writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
+			return
+		}
+		switch host {
+		case "::1":
+			dialHost = "::1"
+		case "127.0.0.1":
+			dialHost = "127.0.0.1"
+		default:
+			dialHost = "127.0.0.1"
+			doClient = h.client
+		}
+	}
+
+	targetURL := fmt.Sprintf("http://%s%s", net.JoinHostPort(dialHost, strconv.Itoa(port)), escapedPath)
 	if u.RawQuery != "" {
 		targetURL += "?" + u.RawQuery
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), oauthTimeout)
-	defer cancel()
 
 	outReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
@@ -384,7 +443,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	outReq.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	outReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
 
-	resp, err := h.client.Do(outReq)
+	resp, err := doClient.Do(outReq)
 	if err != nil {
 		writeJSON(w, http.StatusOK, oauthCallbackResponse{Delivered: false})
 		return
@@ -421,14 +480,31 @@ func dialLoopbackOnly(ctx context.Context, network, addr string) (net.Conn, erro
 	return nil, err
 }
 
+func dialLoopbackExact(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host != "127.0.0.1" && host != "::1" {
+		return nil, fmt.Errorf("disallowed loopback host %q", host)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid loopback port %q", portStr)
+	}
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(host, strconv.Itoa(port)))
+}
+
 func isConnRefused(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.Errno(10061)) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "connection refused") || strings.Contains(lower, "actively refused")
 }
 
 func isAllowedFetchMethod(method string) bool {
@@ -456,8 +532,7 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.RawStdEncoding.DecodeString(s)
 }
 
-func sanitizeFetchHeaders(dst http.Header, entries []headerEntry, port int) {
-	loopbackOrigin := fmt.Sprintf("http://localhost:%d", port)
+func sanitizeFetchHeaders(dst http.Header, entries []headerEntry) {
 	for _, e := range entries {
 		name := strings.TrimSpace(e.Name)
 		if !isValidHeaderName(name) || hasInvalidHeaderValue(e.Value) {
@@ -473,10 +548,11 @@ func sanitizeFetchHeaders(dst http.Header, entries []headerEntry, port int) {
 				dst.Add("Cookie", cleaned)
 			}
 		case "origin":
+			// Forward Origin only if the caller explicitly specified a loopback
+			// origin; never synthesize http://localhost:<port> for cross-origin
+			// callers, which would bypass Origin-based CSRF checks on local daemons.
 			if isLoopbackOriginURL(e.Value) {
 				dst.Set("Origin", strings.TrimSpace(e.Value))
-			} else {
-				dst.Set("Origin", loopbackOrigin)
 			}
 		case "referer":
 			if isLoopbackOriginURL(e.Value) {
@@ -603,8 +679,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // blockedLoopbackPorts combines WHATWG Fetch restricted ports with common local
-// non-HTTP daemons so cross-protocol requests cannot talk to SSH, SMTP, Redis,
-// Memcached, Docker, or database sockets.
+// non-HTTP daemons and privileged local control APIs (Docker, etcd, ADB,
+// Kubernetes, Consul, Chrome DevTools / Node Inspector, WebDriver, Ollama,
+// Redis, Memcached, databases) so preview/callback relays cannot reach them.
 var blockedLoopbackPorts = map[int]struct{}{
 	1: {}, 7: {}, 9: {}, 11: {}, 13: {}, 15: {}, 17: {}, 19: {}, 20: {}, 21: {},
 	22: {}, 23: {}, 25: {}, 37: {}, 42: {}, 43: {}, 53: {}, 69: {}, 77: {}, 79: {},
@@ -613,9 +690,11 @@ var blockedLoopbackPorts = map[int]struct{}{
 	161: {}, 179: {}, 389: {}, 427: {}, 465: {}, 512: {}, 513: {}, 514: {}, 515: {},
 	526: {}, 530: {}, 531: {}, 532: {}, 540: {}, 548: {}, 554: {}, 556: {}, 563: {},
 	587: {}, 601: {}, 636: {}, 989: {}, 990: {}, 993: {}, 995: {}, 1719: {}, 1720: {},
-	1723: {}, 2049: {}, 2375: {}, 2376: {}, 3306: {}, 3659: {}, 4045: {}, 5060: {},
-	5061: {}, 5432: {}, 6000: {}, 6379: {}, 6566: {}, 6665: {}, 6666: {}, 6667: {},
-	6668: {}, 6669: {}, 6697: {}, 10080: {}, 11211: {}, 27017: {},
+	1723: {}, 2049: {}, 2375: {}, 2376: {}, 2379: {}, 2380: {}, 3306: {}, 3659: {},
+	4045: {}, 4444: {}, 5037: {}, 5060: {}, 5061: {}, 5432: {}, 6000: {}, 6379: {},
+	6443: {}, 6566: {}, 6665: {}, 6666: {}, 6667: {}, 6668: {}, 6669: {}, 6697: {},
+	8001: {}, 8500: {}, 9222: {}, 9229: {}, 9515: {}, 10080: {}, 10250: {}, 10255: {},
+	11211: {}, 11434: {}, 27017: {},
 }
 
 func isBlockedLoopbackPort(port int) bool {

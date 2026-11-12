@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -31,14 +33,19 @@ type stubSidecarEntry struct {
 	Status  string `json:"status,omitempty"`
 }
 
-func newSidecarUpstream(t *testing.T, entries func() []stubSidecarEntry) *httptest.Server {
+func newSidecarUpstreamWithStatus(t *testing.T, handler func() (int, []stubSidecarEntry)) *httptest.Server {
 	t.Helper()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/exa.language_server_pb.LanguageServerService/GetSidecars", func(w http.ResponseWriter, r *http.Request) {
+		code, list := handler()
+		if code != http.StatusOK {
+			http.Error(w, "GetSidecars failure", code)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"sidecars": entries(),
+			"sidecars": list,
 		})
 	})
 	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +62,14 @@ func newSidecarUpstream(t *testing.T, entries func() []stubSidecarEntry) *httpte
 	return srv
 }
 
-func TestSidecarPortAllowlistAndReservedPorts(t *testing.T) {
+func newSidecarUpstream(t *testing.T, entries func() []stubSidecarEntry) *httptest.Server {
+	t.Helper()
+	return newSidecarUpstreamWithStatus(t, func() (int, []stubSidecarEntry) {
+		return http.StatusOK, entries()
+	})
+}
+
+func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 	activeSidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -87,8 +101,15 @@ func TestSidecarPortAllowlistAndReservedPorts(t *testing.T) {
 	t.Cleanup(forbiddenSrv.Close)
 	forbiddenPort := serverPort(t, forbiddenSrv.URL)
 
-	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
-		return []stubSidecarEntry{
+	newlySpawnedPort := 49876
+	var includeNewSidecar atomic.Bool
+	var failGetSidecars atomic.Bool
+
+	ls := newSidecarUpstreamWithStatus(t, func() (int, []stubSidecarEntry) {
+		if failGetSidecars.Load() {
+			return http.StatusServiceUnavailable, nil
+		}
+		list := []stubSidecarEntry{
 			{
 				BaseURL: fmt.Sprintf("http://localhost:%d", activePort),
 				WebPort: rawPort,
@@ -103,6 +124,13 @@ func TestSidecarPortAllowlistAndReservedPorts(t *testing.T) {
 				Status:  "SIDECAR_STATUS_RUNNING",
 			},
 		}
+		if includeNewSidecar.Load() {
+			list = append(list, stubSidecarEntry{
+				BaseURL: fmt.Sprintf("http://localhost:%d", newlySpawnedPort),
+				Status:  "SIDECAR_STATUS_RUNNING",
+			})
+		}
+		return http.StatusOK, list
 	})
 
 	p, err := New(Options{
@@ -128,7 +156,7 @@ func TestSidecarPortAllowlistAndReservedPorts(t *testing.T) {
 	}
 
 	// Raw webPort behind a gateway must NOT be directly reachable via sidecar route,
-	// yet MUST appear in ReservedSidecarPorts so generic loopback fetch blocks it too.
+	// yet MUST appear in ReservedSidecarPorts / IsSidecarReservedPort so generic loopback fetch blocks it too.
 	for _, blocked := range []int{rawPort, stoppedPort, unrelatedPort, forbiddenPort, upstreamPort(t, ls)} {
 		r, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, blocked))
 		if err != nil {
@@ -140,48 +168,93 @@ func TestSidecarPortAllowlistAndReservedPorts(t *testing.T) {
 		}
 	}
 
-	reserved := p.ReservedSidecarPorts(context.Background())
+	reserved, err := p.ReservedSidecarPorts(context.Background())
+	if err != nil {
+		t.Fatalf("ReservedSidecarPorts failed: %v", err)
+	}
 	if _, ok := reserved[activePort]; !ok {
 		t.Errorf("expected gateway port %d in ReservedSidecarPorts", activePort)
 	}
 	if _, ok := reserved[rawPort]; !ok {
 		t.Errorf("expected raw webPort %d in ReservedSidecarPorts", rawPort)
 	}
+
+	// Unrelated dev server port is NOT reserved while GetSidecars is healthy.
+	if p.IsSidecarReservedPort(context.Background(), unrelatedPort) {
+		t.Fatalf("unrelated port %d should not be reserved", unrelatedPort)
+	}
+
+	// Newly spawned sidecar within the cache TTL window is caught immediately via live refresh.
+	includeNewSidecar.Store(true)
+	if !p.IsSidecarReservedPort(context.Background(), newlySpawnedPort) {
+		t.Fatalf("newly spawned sidecar port %d escaped IsSidecarReservedPort during cache TTL window", newlySpawnedPort)
+	}
+
+	// Fail-closed: if GetSidecars fails, IsSidecarReservedPort returns true (blocks loopback preview)
+	// and sidecar allowlist returns 403 once cache expires (no error grace window).
+	failGetSidecars.Store(true)
+	if !p.IsSidecarReservedPort(context.Background(), unrelatedPort) {
+		t.Fatal("IsSidecarReservedPort must fail closed (true) when GetSidecars fails")
+	}
+	p.sidecarMu.Lock()
+	p.sidecarCachedAt = time.Now().Add(-10 * time.Second)
+	p.sidecarMu.Unlock()
+
+	failResp, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/api/state", front.URL, activePort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failResp.Body.Close()
+	if failResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("sidecar proxy must fail closed (403) when GetSidecars is down, got %d", failResp.StatusCode)
+	}
 }
 
-func TestSidecarCookieIsolationAndHTMLRewrite(t *testing.T) {
+func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 	var gotCookieHeader atomic.Value
 	var gotCSRFHeader atomic.Value
 	var gotOriginHeader atomic.Value
+	var gotXFFHeader atomic.Value
 
 	sidecarSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCookieHeader.Store(r.Header.Get("Cookie"))
 		gotCSRFHeader.Store(r.Header.Get("x-codeium-csrf-token"))
 		gotOriginHeader.Store(r.Header.Get("Origin"))
+		gotXFFHeader.Store(r.Header.Get("X-Forwarded-For"))
 
 		switch r.URL.Path {
 		case "/":
 			w.Header().Add("Set-Cookie", "agy_session=evil_override; Path=/; HttpOnly")
 			w.Header().Add("Set-Cookie", "swarm_auth=tok123; Domain=localhost; Path=/; HttpOnly")
 			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'sha256-xyz123='; frame-ancestors 'none'")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(`<!doctype html><html><head><link rel="stylesheet" href="/app.css"><style>body{background:url('/bg.svg')}</style></head>` +
-				`<body><script src="/preload.js"></script><script>const tpl = '<a href="/keep-js-literal">x</a>';</script>` +
+			_, _ = w.Write([]byte(`<!doctype html><html><head>` +
+				`<title><a href="/keep-in-title">Title</a></title>` +
+				`<link rel="stylesheet" href="styles/app.css" integrity="sha384-localbad">` +
+				`<link rel="stylesheet" href="https://cdn.example.org/ext.css" integrity="sha384-keepcdn">` +
+				`<style>body{background:url('img/bg.svg')}</style></head>` +
+				`<body><script src="/preload.js" integrity="sha256-stripme"></script>` +
+				`<script>const tpl = '<a href="/keep-js-literal">x</a>';</script>` +
+				`<textarea><a href="/keep-in-textarea">raw</a></textarea>` +
 				`<iframe srcdoc="<a href='/keep-srcdoc'>inner</a>"></iframe>` +
-				`<img src="/logo.png" srcset="/logo-1x.png 1x, /logo-2x.png 2x"></body></html>`))
+				`<img src="/logo.png" srcset="logo-1x.png 1x, /logo-2x.png 2x"></body></html>`))
+		case "/sub/":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<html><head></head><body><script src="bundle.js"></script><a href="../top">up</a></body></html>`))
+		case "/not-found-spa":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`<html><head></head><body><script src="/spa-404.js"></script></body></html>`))
 		case "/gzip-page":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Content-Encoding", "gzip")
 			gz := gzip.NewWriter(w)
 			_, _ = gz.Write([]byte(`<html><head></head><body><a href="/inside-gz">gz</a></body></html>`))
 			_ = gz.Close()
-		case "/preload.js":
-			w.Header().Set("Content-Type", "application/javascript")
-			_, _ = w.Write([]byte(`window.__preloadLoaded = true;`))
-		case "/assets/chunk.js":
-			w.Header().Set("Content-Type", "application/javascript")
-			_, _ = w.Write([]byte(`export const ok = 1;`))
+		case "/api/mutate":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"mutated":true}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -189,19 +262,83 @@ func TestSidecarCookieIsolationAndHTMLRewrite(t *testing.T) {
 	t.Cleanup(sidecarSrv.Close)
 	scPort := serverPort(t, sidecarSrv.URL)
 
+	otherSidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("other-sidecar"))
+	}))
+	t.Cleanup(otherSidecar.Close)
+	otherPort := serverPort(t, otherSidecar.URL)
+
 	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
-		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://localhost:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"}}
+		return []stubSidecarEntry{
+			{BaseURL: fmt.Sprintf("http://localhost:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"},
+			{BaseURL: fmt.Sprintf("http://localhost:%d", otherPort), Status: "SIDECAR_STATUS_RUNNING"},
+		}
 	})
-	front, _ := newTestProxyWith(t, ls, func(o *Options) {
-		o.TargetCSRFToken = "secret-ls-csrf"
+
+	sessStore, err := auth.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, _, err := auth.LoadOrCreateCredentials(filepath.Join(t.TempDir(), "creds.json"), "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessToken, err := sessStore.Create("test-agent", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := New(Options{
+		TargetPort:      upstreamPort(t, ls),
+		TargetCSRFToken: "secret-ls-csrf",
+		ValidateSession: sessStore.Validate,
+		Patch:           patches.Options{CacheKey: "k1"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+
+	authn := auth.New(auth.Options{
+		Credentials:  creds,
+		Sessions:     sessStore,
+		AllowSidecar: p.ValidateSidecarCapability,
+	})
+	front := httptest.NewServer(authn.Middleware(p.Handler()))
+	t.Cleanup(front.Close)
 
 	noRedirectClient := &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	// Missing trailing slash redirects with query preserved.
-	slashResp, err := noRedirectClient.Get(fmt.Sprintf("%s/__agy/sidecar/%d?token=t1", front.URL, scPort))
+	// 1. Unauthenticated entry without session cookie is rejected by auth middleware.
+	unauthResp, err := noRedirectClient.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp.Body.Close()
+	if unauthResp.StatusCode != http.StatusFound && unauthResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated entry status = %d, want 302/401", unauthResp.StatusCode)
+	}
+
+	// 2. Cross-site top-level navigation to initial entry is rejected with 403 even with valid session cookie.
+	crossNavReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort), nil)
+	crossNavReq.Header.Set("Cookie", auth.CookieName+"="+sessToken)
+	crossNavReq.Header.Set("Sec-Fetch-Site", "cross-site")
+	crossNavResp, err := noRedirectClient.Do(crossNavReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossNavResp.Body.Close()
+	if crossNavResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site initial entry status = %d, want 403", crossNavResp.StatusCode)
+	}
+
+	// 3. Missing trailing slash redirects with query preserved.
+	slashReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d?token=t1", front.URL, scPort), nil)
+	slashReq.Header.Set("Cookie", auth.CookieName+"="+sessToken)
+	slashReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	slashResp, err := noRedirectClient.Do(slashReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,65 +346,71 @@ func TestSidecarCookieIsolationAndHTMLRewrite(t *testing.T) {
 	if slashResp.StatusCode != http.StatusTemporaryRedirect {
 		t.Fatalf("slash redirect status = %d, want 307", slashResp.StatusCode)
 	}
-	wantLoc := fmt.Sprintf("/__agy/sidecar/%d/?token=t1", scPort)
-	if got := slashResp.Header.Get("Location"); got != wantLoc {
-		t.Fatalf("Location = %q, want %q", got, wantLoc)
+	if got, want := slashResp.Header.Get("Location"), fmt.Sprintf("/__agy/sidecar/%d/?token=t1", scPort); got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
 	}
 
-	// Fetch HTML with agy_session + sidecar cookie.
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/?token=t1", front.URL, scPort), nil)
+	// 4. Authenticated initial entry isolates sidecar in an opaque-origin CSP sandbox,
+	// never forwards browser cookies or X-Forwarded-For upstream, and vaults Set-Cookie server-side.
+	entryReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/__agy/sidecar/%d/?token=t1", front.URL, scPort), nil)
+	entryReq.Header.Set("Cookie", auth.CookieName+"="+sessToken+"; browser_other=do_not_forward")
+	entryReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, err := noRedirectClient.Do(entryReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Cookie", auth.CookieName+"=top_secret_master_token; swarm_auth=tok123")
-	resp, err := noRedirectClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
 	html := string(bodyBytes)
 
-	if got, _ := gotCookieHeader.Load().(string); strings.Contains(got, "top_secret_master_token") || got != "swarm_auth=tok123" {
-		t.Fatalf("upstream received Cookie = %q, want only swarm_auth=tok123", got)
+	if got, _ := gotCookieHeader.Load().(string); got != "" {
+		t.Fatalf("initial entry forwarded browser Cookie upstream: %q, want empty", got)
 	}
 	if got, _ := gotCSRFHeader.Load().(string); got != "" {
 		t.Fatalf("upstream received language_server CSRF token %q", got)
 	}
+	if got, _ := gotXFFHeader.Load().(string); got != "" {
+		t.Fatalf("upstream received X-Forwarded-For %q, want empty", got)
+	}
 	if got, _ := gotOriginHeader.Load().(string); got != fmt.Sprintf("http://localhost:%d", scPort) {
-		t.Fatalf("upstream Origin = %q, want http://localhost:%d", got, scPort)
+		t.Fatalf("upstream Origin = %q", got)
+	}
+	if cookies := resp.Header.Values("Set-Cookie"); len(cookies) != 0 {
+		t.Fatalf("browser received Set-Cookie headers %v; all sidecar cookies must stay in server vault", cookies)
+	}
+	if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+	}
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") || strings.Contains(csp, "allow-top-navigation") {
+		t.Fatalf("unsafe sidecar CSP %q: must enforce opaque-origin sandbox without allow-same-origin or allow-top-navigation", csp)
+	}
+	if !strings.Contains(csp, "frame-ancestors 'self'") {
+		t.Errorf("CSP %q missing frame-ancestors 'self'", csp)
 	}
 
-	// Verify Set-Cookie filtering and Path scoping.
-	cookies := resp.Header.Values("Set-Cookie")
-	if len(cookies) != 1 {
-		t.Fatalf("Set-Cookie count = %d (%v), want 1 (agy_session override dropped)", len(cookies), cookies)
+	// Extract capability prefix /__agy/sidecar/<port>/~s/<cap> from injected shim tag.
+	capRe := regexp.MustCompile(fmt.Sprintf(`/__agy/sidecar/%d/~s/([0-9a-f]{32})`, scPort))
+	m := capRe.FindStringSubmatch(html)
+	if len(m) < 2 {
+		t.Fatalf("rewritten HTML missing capability prefix:\n%s", html)
 	}
-	if strings.Contains(strings.ToLower(cookies[0]), "domain=") {
-		t.Errorf("Set-Cookie retained Domain attribute: %q", cookies[0])
-	}
-	wantPathAttr := fmt.Sprintf("Path=/__agy/sidecar/%d/", scPort)
-	if !strings.Contains(cookies[0], wantPathAttr) {
-		t.Errorf("Set-Cookie %q missing scoped %q", cookies[0], wantPathAttr)
-	}
-	if got := resp.Header.Get("X-Frame-Options"); got != "SAMEORIGIN" {
-		t.Errorf("X-Frame-Options = %q, want SAMEORIGIN", got)
-	}
-	if got := resp.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'self'") {
-		t.Errorf("CSP = %q, want frame-ancestors 'self'", got)
-	}
+	capPrefix := m[0]
 
-	prefix := fmt.Sprintf("/__agy/sidecar/%d", scPort)
+	// Verify nonce propagation (because upstream CSP had sha256 hash), relative/root URL rewrites,
+	// SRI integrity stripping on rewritten local assets (while preserving external CDN integrity),
+	// and untouched <title>, <textarea>, <script>, and srcdoc contents.
 	for _, want := range []string{
-		fmt.Sprintf(`<script src="%s/__agy_sidecar_shim.js"></script>`, prefix),
-		fmt.Sprintf(`href="%s/app.css"`, prefix),
-		fmt.Sprintf(`url('%s/bg.svg')`, prefix),
-		fmt.Sprintf(`src="%s/preload.js"`, prefix),
-		fmt.Sprintf(`src="%s/logo.png"`, prefix),
-		fmt.Sprintf(`srcset="%s/logo-1x.png 1x, %s/logo-2x.png 2x"`, prefix, prefix),
+		fmt.Sprintf(`src="%s/__agy_sidecar_shim.js"`, capPrefix),
+		`nonce="`,
+		fmt.Sprintf(`href="%s/styles/app.css"`, capPrefix),
+		`href="https://cdn.example.org/ext.css" integrity="sha384-keepcdn"`,
+		fmt.Sprintf(`url('%s/img/bg.svg')`, capPrefix),
+		fmt.Sprintf(`src="%s/preload.js"`, capPrefix),
+		fmt.Sprintf(`src="%s/logo.png"`, capPrefix),
+		fmt.Sprintf(`srcset="%s/logo-1x.png 1x, %s/logo-2x.png 2x"`, capPrefix, capPrefix),
+		`<title><a href="/keep-in-title">Title</a></title>`,
+		`<textarea><a href="/keep-in-textarea">raw</a></textarea>`,
 		`const tpl = '<a href="/keep-js-literal">x</a>';`,
 		`srcdoc="<a href='/keep-srcdoc'>inner</a>"`,
 	} {
@@ -275,61 +418,129 @@ func TestSidecarCookieIsolationAndHTMLRewrite(t *testing.T) {
 			t.Errorf("rewritten HTML missing %q\nGot:\n%s", want, html)
 		}
 	}
+	if strings.Contains(html, "sha384-localbad") || strings.Contains(html, "sha256-stripme") {
+		t.Errorf("SRI integrity attribute was not stripped from rewritten tag:\n%s", html)
+	}
+
+	// 5. Subdirectory relative URL resolution and non-200 HTML rewrite.
+	subReq, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/sub/", nil)
+	subReq.Header.Set("Origin", "null")
+	subReq.Header.Set("Sec-Fetch-Site", "cross-site")
+	subResp, err := noRedirectClient.Do(subReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subBytes, _ := io.ReadAll(subResp.Body)
+	subResp.Body.Close()
+	subHTML := string(subBytes)
+	for _, want := range []string{
+		fmt.Sprintf(`src="%s/sub/bundle.js"`, capPrefix),
+		fmt.Sprintf(`href="%s/top"`, capPrefix),
+	} {
+		if !strings.Contains(subHTML, want) {
+			t.Errorf("sub-path HTML missing %q:\n%s", want, subHTML)
+		}
+	}
+
+	nfReq, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/not-found-spa", nil)
+	nfResp, err := noRedirectClient.Do(nfReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nfBytes, _ := io.ReadAll(nfResp.Body)
+	nfResp.Body.Close()
+	if nfResp.StatusCode != http.StatusNotFound || !strings.Contains(string(nfBytes), fmt.Sprintf(`src="%s/spa-404.js"`, capPrefix)) {
+		t.Fatalf("non-200 HTML response was not rewritten (status=%d): %s", nfResp.StatusCode, string(nfBytes))
+	}
 
 	// Forced-gzip upstream HTML is transparently decompressed and rewritten.
-	gzResp, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/gzip-page", front.URL, scPort))
+	gzResp, err := noRedirectClient.Get(front.URL + capPrefix + "/gzip-page")
 	if err != nil {
 		t.Fatal(err)
 	}
 	gzBody, _ := io.ReadAll(gzResp.Body)
 	gzResp.Body.Close()
-	if !strings.Contains(string(gzBody), fmt.Sprintf(`href="%s/inside-gz"`, prefix)) {
+	if !strings.Contains(string(gzBody), fmt.Sprintf(`href="%s/inside-gz"`, capPrefix)) {
 		t.Errorf("gzipped HTML was not rewritten: %s", string(gzBody))
 	}
 
-	// Same-origin Referer orphan request redirects into the sidecar prefix, while foreign Referer does not.
-	orphanReq, _ := http.NewRequest(http.MethodGet, front.URL+"/assets/chunk.js?v=2", nil)
-	orphanReq.Header.Set("Referer", fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
-	orphanResp, err := noRedirectClient.Do(orphanReq)
+	// 6. Sandboxed iframe subrequests (no agy_session cookie, Origin: null, Sec-Fetch-Site: cross-site):
+	//    CORS preflight succeeds with 204, POST succeeds through auth.Middleware, and vaulted cookie
+	//    (swarm_auth=tok123) is automatically injected upstream!
+	optReq, _ := http.NewRequest(http.MethodOptions, front.URL+capPrefix+"/api/mutate", nil)
+	optReq.Header.Set("Origin", "null")
+	optReq.Header.Set("Sec-Fetch-Site", "cross-site")
+	optReq.Header.Set("Access-Control-Request-Method", "POST")
+	optReq.Header.Set("Access-Control-Request-Headers", "content-type,x-custom")
+	optResp, err := noRedirectClient.Do(optReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orphanResp.Body.Close()
-	if orphanResp.StatusCode != http.StatusTemporaryRedirect {
-		t.Fatalf("orphan redirect status = %d, want 307", orphanResp.StatusCode)
-	}
-	if got := orphanResp.Header.Get("Location"); got != fmt.Sprintf("%s/assets/chunk.js?v=2", prefix) {
-		t.Fatalf("orphan redirect Location = %q", got)
+	optResp.Body.Close()
+	if optResp.StatusCode != http.StatusNoContent || optResp.Header.Get("Access-Control-Allow-Origin") != "null" {
+		t.Fatalf("CORS preflight failed: status=%d allow-origin=%q", optResp.StatusCode, optResp.Header.Get("Access-Control-Allow-Origin"))
 	}
 
-	foreignReq, _ := http.NewRequest(http.MethodGet, front.URL+"/assets/chunk.js", nil)
-	foreignReq.Header.Set("Referer", fmt.Sprintf("https://evil.example/__agy/sidecar/%d/", scPort))
-	foreignResp, err := noRedirectClient.Do(foreignReq)
+	postReq, _ := http.NewRequest(http.MethodPost, front.URL+capPrefix+"/api/mutate", strings.NewReader(`{"a":1}`))
+	postReq.Header.Set("Origin", "null")
+	postReq.Header.Set("Sec-Fetch-Site", "cross-site")
+	postReq.Header.Set("Content-Type", "application/json")
+	postResp, err := noRedirectClient.Do(postReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignResp.Body.Close()
-	if foreignResp.StatusCode == http.StatusTemporaryRedirect {
-		t.Fatalf("foreign Referer must not trigger sidecar orphan redirect")
+	postResp.Body.Close()
+	if postResp.StatusCode != http.StatusOK {
+		t.Fatalf("sandboxed capability POST status = %d, want 200", postResp.StatusCode)
+	}
+	if got := postResp.Header.Get("Access-Control-Allow-Origin"); got != "null" {
+		t.Fatalf("POST Access-Control-Allow-Origin = %q, want null", got)
+	}
+	if got, _ := gotCookieHeader.Load().(string); got != "swarm_auth=tok123" {
+		t.Fatalf("server cookie vault did not inject swarm_auth=tok123 on capability POST: got %q", got)
 	}
 
-	// Cross-origin POST to sidecar must be rejected with 403.
-	crossPost, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/__agy/sidecar/%d/api", front.URL, scPort), strings.NewReader("{}"))
-	crossPost.Header.Set("Origin", "https://evil.example")
-	crossResp, err := noRedirectClient.Do(crossPost)
+	// 7. Capability token cannot be replayed against another sidecar port, parent routes, or foreign Origin.
+	wrongPortURL := fmt.Sprintf("%s/__agy/sidecar/%d/~s/%s/api", front.URL, otherPort, m[1])
+	wpReq, _ := http.NewRequest(http.MethodGet, wrongPortURL, nil)
+	wpReq.Header.Set("Origin", "null")
+	wpResp, err := noRedirectClient.Do(wpReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	crossResp.Body.Close()
-	if crossResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("cross-origin POST status = %d, want 403", crossResp.StatusCode)
+	wpResp.Body.Close()
+	if wpResp.StatusCode != http.StatusFound && wpResp.StatusCode != http.StatusUnauthorized && wpResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("capability token replay on another port must fail, got %d", wpResp.StatusCode)
+	}
+
+	evilOriginReq, _ := http.NewRequest(http.MethodPost, front.URL+capPrefix+"/api/mutate", strings.NewReader("{}"))
+	evilOriginReq.Header.Set("Origin", "https://evil.example")
+	evilResp, err := noRedirectClient.Do(evilOriginReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evilResp.Body.Close()
+	if evilResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign Origin with capability token must be rejected (403), got %d", evilResp.StatusCode)
+	}
+
+	// 8. Revoking the parent agy_session immediately invalidates the sidecar capability token.
+	if err := sessStore.Revoke(sessToken); err != nil {
+		t.Fatal(err)
+	}
+	revokedReq, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/sub/", nil)
+	revokedReq.Header.Set("Origin", "null")
+	revokedResp, err := noRedirectClient.Do(revokedReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedResp.Body.Close()
+	if revokedResp.StatusCode != http.StatusFound && revokedResp.StatusCode != http.StatusUnauthorized && revokedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("revoked parent session did not invalidate sidecar capability: got %d", revokedResp.StatusCode)
 	}
 }
 
-func TestSidecarWebSocketPreservesInitialBufferedFrame(t *testing.T) {
-	// Raw TCP listener that writes 101 Switching Protocols AND an unmasked server
-	// WebSocket text frame ("hello") in a single Write syscall so bufio.Reader
-	// buffers the frame alongside the HTTP response headers.
+func TestSidecarWebSocketHardeningCloseAndIdle(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -338,60 +549,142 @@ func TestSidecarWebSocketPreservesInitialBufferedFrame(t *testing.T) {
 	scPort := ln.Addr().(*net.TCPAddr).Port
 
 	var wsCookie atomic.Value
+	wsConnected := make(chan struct{}, 1)
+
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				req, err := http.ReadRequest(br)
+				if err != nil {
+					return
+				}
+				switch req.URL.Path {
+				case "/":
+					body := "<html><head></head><body>entry</body></html>"
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: ws_vault=ok77\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+					return
+				case "/ws-reject":
+					body := `<html><head></head><body><a href="/login">Auth Required</a></body></html>`
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+					return
+				case "/sse":
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\ndata: ping\n\n")
+					time.Sleep(300 * time.Millisecond)
+					return
+				}
+
+				wsCookie.Store(req.Header.Get("Cookie"))
+				acceptKey := computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key"))
+				handshakeAndFrame := fmt.Sprintf(
+					"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSet-Cookie: agy_session=bad; Path=/\r\nSet-Cookie: sc_ws=1; Path=/\r\n\r\n",
+					acceptKey,
+				)
+				packet := append([]byte(handshakeAndFrame), 0x81, 0x05, 'h', 'e', 'l', 'l', 'o')
+				_, _ = c.Write(packet)
+				select {
+				case wsConnected <- struct{}{}:
+				default:
+				}
+				buf := make([]byte, 64)
+				for {
+					if _, err := br.Read(buf); err != nil {
+						return
+					}
+				}
+			}(conn)
 		}
-		defer conn.Close()
-
-		br := bufio.NewReader(conn)
-		req, err := http.ReadRequest(br)
-		if err != nil {
-			return
-		}
-		wsCookie.Store(req.Header.Get("Cookie"))
-		acceptKey := computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key"))
-
-		// Text frame (0x81), length 5, payload "hello" coalesced with HTTP 101 headers.
-		handshakeAndFrame := fmt.Sprintf(
-			"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSet-Cookie: agy_session=bad; Path=/\r\nSet-Cookie: sc_ws=1; Path=/\r\n\r\n",
-			acceptKey,
-		)
-		packet := append([]byte(handshakeAndFrame), 0x81, 0x05, 'h', 'e', 'l', 'l', 'o')
-		_, _ = conn.Write(packet)
-
-		// Wait briefly for client close/echo.
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		buf := make([]byte, 64)
-		_, _ = br.Read(buf)
 	}()
 
 	ls := newSidecarUpstream(t, func() []stubSidecarEntry {
 		return []stubSidecarEntry{{BaseURL: fmt.Sprintf("http://localhost:%d", scPort), Status: "SIDECAR_STATUS_RUNNING"}}
 	})
-	front, _ := newTestProxy(t, ls)
 
-	wsURL := "ws" + strings.TrimPrefix(front.URL, "http") + fmt.Sprintf("/__agy/sidecar/%d/ws", scPort)
+	p, err := New(Options{
+		TargetPort: upstreamPort(t, ls),
+		Patch:      patches.Options{CacheKey: "k1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// Mint capability token via initial entry (which also stores ws_vault=ok77 in the server cookie vault).
+	entryResp, err := http.Get(fmt.Sprintf("%s/__agy/sidecar/%d/", front.URL, scPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryBytes, _ := io.ReadAll(entryResp.Body)
+	entryResp.Body.Close()
+	capRe := regexp.MustCompile(fmt.Sprintf(`/__agy/sidecar/%d/~s/[0-9a-f]{32}`, scPort))
+	capPrefix := capRe.FindString(string(entryBytes))
+	if capPrefix == "" {
+		t.Fatalf("missing capability prefix in %s", string(entryBytes))
+	}
+
+	// 1. POST request smuggling with Upgrade: websocket is rejected with 400.
+	badMethodReq, _ := http.NewRequest(http.MethodPost, front.URL+capPrefix+"/ws", strings.NewReader("smuggle"))
+	badMethodReq.Header.Set("Origin", "null")
+	badMethodReq.Header.Set("Connection", "Upgrade")
+	badMethodReq.Header.Set("Upgrade", "websocket")
+	badMethodReq.Header.Set("Sec-WebSocket-Version", "13")
+	badMethodReq.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	badMethodResp, err := http.DefaultClient.Do(badMethodReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badMethodResp.Body.Close()
+	if badMethodResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST websocket upgrade status = %d, want 400", badMethodResp.StatusCode)
+	}
+
+	// 2. Non-101 HTML rejection rewrites body cleanly without Content-Length mismatch.
+	rejReq, _ := http.NewRequest(http.MethodGet, front.URL+capPrefix+"/ws-reject", nil)
+	rejReq.Header.Set("Origin", "null")
+	rejReq.Header.Set("Connection", "Upgrade")
+	rejReq.Header.Set("Upgrade", "websocket")
+	rejReq.Header.Set("Sec-WebSocket-Version", "13")
+	rejReq.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rejResp, err := http.DefaultClient.Do(rejReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejBody, rErr := io.ReadAll(rejResp.Body)
+	rejResp.Body.Close()
+	if rErr != nil {
+		t.Fatalf("failed reading rewritten non-101 WS response (Content-Length mismatch): %v", rErr)
+	}
+	if rejResp.StatusCode != http.StatusUnauthorized || !strings.Contains(string(rejBody), capPrefix+"/login") {
+		t.Fatalf("unexpected non-101 WS response (%d): %s", rejResp.StatusCode, string(rejBody))
+	}
+
+	// 3. Long-lived SSE stream releases activeHTTPReqs once headers arrive so idle shutdown is not pinned forever.
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+	sseReq, _ := http.NewRequestWithContext(sseCtx, http.MethodGet, front.URL+capPrefix+"/sse", nil)
+	sseReq.Header.Set("Origin", "null")
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sseResp.Body.Close()
+
+	// 4. Capability-scoped Origin: null WebSocket upgrade succeeds, injects vaulted cookie,
+	// strips 101 Set-Cookie, preserves coalesced initial frame, does not pin IsIdle, and closes promptly on p.Close().
+	wsURL := "ws" + strings.TrimPrefix(front.URL, "http") + capPrefix + "/ws"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Cross-origin WS upgrade must fail.
-	_, badResp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Origin": []string{"https://evil.example"}},
-	})
-	if err == nil {
-		t.Fatal("expected cross-origin WebSocket upgrade to fail")
-	}
-	if badResp != nil && badResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("cross-origin WS status = %d, want 403", badResp.StatusCode)
-	}
-
-	// Same-origin WS upgrade succeeds, strips agy_session, and delivers the coalesced initial frame.
 	c, hsResp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: http.Header{
-			"Origin": []string{front.URL},
-			"Cookie": []string{auth.CookieName + "=master_secret; other=ok"},
+			"Origin": []string{"null"},
+			"Cookie": []string{auth.CookieName + "=master_secret"},
 		},
 	})
 	if err != nil {
@@ -399,23 +692,36 @@ func TestSidecarWebSocketPreservesInitialBufferedFrame(t *testing.T) {
 	}
 	defer c.CloseNow()
 
-	if got, _ := wsCookie.Load().(string); strings.Contains(got, "master_secret") || got != "other=ok" {
-		t.Fatalf("upstream WS Cookie = %q, want other=ok", got)
+	<-wsConnected
+	if got, _ := wsCookie.Load().(string); got != "ws_vault=ok77" {
+		t.Fatalf("upstream WS Cookie = %q, want vaulted ws_vault=ok77 (never master_secret)", got)
 	}
-	if hsResp != nil {
-		for _, sc := range hsResp.Header.Values("Set-Cookie") {
-			if strings.Contains(sc, "agy_session") {
-				t.Errorf("WS 101 leaked agy_session Set-Cookie: %q", sc)
-			}
-		}
+	if hsResp != nil && len(hsResp.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("WS 101 leaked Set-Cookie headers to browser: %v", hsResp.Header.Values("Set-Cookie"))
 	}
 
 	_, msg, err := c.Read(ctx)
-	if err != nil {
-		t.Fatalf("failed reading initial buffered WS frame: %v", err)
+	if err != nil || string(msg) != "hello" {
+		t.Fatalf("initial buffered WS frame = %q, err = %v", string(msg), err)
 	}
-	if string(msg) != "hello" {
-		t.Fatalf("initial WS message = %q, want %q", string(msg), "hello")
+
+	// Wait briefly past idle window; open idle sidecar WS + SSE must not block IsIdle.
+	time.Sleep(40 * time.Millisecond)
+	if !p.IsIdle(20 * time.Millisecond) {
+		t.Fatal("open idle sidecar WS/SSE pinned Proxy.IsIdle to false")
+	}
+
+	// Closing the proxy immediately tears down hijacked sidecar WS sockets.
+	closeDone := make(chan error, 1)
+	go func() {
+		_, _, err := c.Read(context.Background())
+		closeDone <- err
+	}()
+	p.Close()
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("p.Close() did not tear down hijacked sidecar WebSocket connection")
 	}
 }
 
@@ -425,54 +731,87 @@ func TestSidecarShimJSRuntimeRewrites(t *testing.T) {
 		t.Skip("node not available")
 	}
 
-	shim := sidecarShimJS(39715)
+	capPrefix := "/__agy/sidecar/39715/~s/0123456789abcdef0123456789abcdef"
+	shim := sidecarShimJS(39715, capPrefix)
 	script := `
 const assert = require("assert");
 const calls = [];
 global.location = {
   protocol: "https:",
   host: "agy.example.com",
-  origin: "https://agy.example.com",
+  origin: "null",
   href: "https://agy.example.com/__agy/sidecar/39715/?token=abc",
   pathname: "/__agy/sidecar/39715/"
 };
+global.navigator = {
+  sendBeacon: function(url) { calls.push(["beacon", String(url)]); return true; }
+};
 global.window = {
+  origin: "null",
   location: global.location,
-  fetch: function(input) { calls.push(["fetch", String(input)]); return Promise.resolve({}); },
+  fetch: function(input) {
+    const u = (input && typeof input === "object" && "url" in input) ? input.url : String(input);
+    calls.push(["fetch", u]);
+    return Promise.resolve({});
+  },
   WebSocket: function(url, protocols) { this.url = url; this.protocols = protocols; calls.push(["ws", url]); },
   EventSource: function(url) { this.url = url; calls.push(["es", String(url)]); },
   history: {
-    pushState: function(s, t, u) { calls.push(["pushState", u]); },
+    pushState: function(s, t, u) {
+      if (String(u).startsWith("/")) { throw new Error("SecurityError in opaque origin"); }
+      calls.push(["pushState", u]);
+    },
     replaceState: function(s, t, u) { calls.push(["replaceState", u]); }
   }
 };
+// Simulate opaque-origin SecurityError on window.localStorage / sessionStorage getters.
+Object.defineProperty(global.window, "localStorage", {
+  configurable: true,
+  get() { throw new Error("SecurityError: Storage disabled inside sandboxed iframe"); }
+});
+global.Request = function Request(input, init) {
+  this.url = typeof input === "string" ? input : input.url;
+  this.init = init;
+};
+global.window.Request = global.Request;
 global.XMLHttpRequest = function() {};
 global.XMLHttpRequest.prototype.open = function(m, u) { calls.push(["xhr", String(u)]); };
 
 ` + shim + `
 
+// In-memory storage polyfill prevents crashes under Origin: null sandbox.
+window.localStorage.setItem("theme", "dark");
+assert.strictEqual(window.localStorage.getItem("theme"), "dark");
+
+const P = "` + capPrefix + `";
 window.fetch("/api/board?x=1");
+window.fetch("api/relative?y=2");
+window.fetch(new window.Request("/api/from-req"));
 window.fetch("http://localhost:39715/state");
 window.fetch("https://cdn.example.org/lib.js");
+navigator.sendBeacon("/api/telemetry");
 new window.WebSocket("/ws");
 new window.WebSocket("ws://agy.example.com/ws");
 new window.WebSocket("ws://agy.example.com/__agy/sidecar/39715/ws");
 new window.WebSocket("ws://127.0.0.1:39715/live?tok=1");
 new window.EventSource("/events");
 new XMLHttpRequest().open("GET", "/poll");
+// Must not throw even when opaque-origin history.pushState throws SecurityError.
 window.history.pushState(null, "", "/board/2");
 
 assert.deepStrictEqual(calls, [
-  ["fetch", "/__agy/sidecar/39715/api/board?x=1"],
-  ["fetch", "https://agy.example.com/__agy/sidecar/39715/state"],
+  ["fetch", P + "/api/board?x=1"],
+  ["fetch", "https://agy.example.com" + P + "/api/relative?y=2"],
+  ["fetch", P + "/api/from-req"],
+  ["fetch", "https://agy.example.com" + P + "/state"],
   ["fetch", "https://cdn.example.org/lib.js"],
-  ["ws", "wss://agy.example.com/__agy/sidecar/39715/ws"],
-  ["ws", "wss://agy.example.com/__agy/sidecar/39715/ws"],
-  ["ws", "wss://agy.example.com/__agy/sidecar/39715/ws"],
-  ["ws", "wss://agy.example.com/__agy/sidecar/39715/live?tok=1"],
-  ["es", "/__agy/sidecar/39715/events"],
-  ["xhr", "/__agy/sidecar/39715/poll"],
-  ["pushState", "/__agy/sidecar/39715/board/2"]
+  ["beacon", P + "/api/telemetry"],
+  ["ws", "wss://agy.example.com" + P + "/ws"],
+  ["ws", "wss://agy.example.com" + P + "/ws"],
+  ["ws", "wss://agy.example.com" + P + "/ws"],
+  ["ws", "wss://agy.example.com" + P + "/live?tok=1"],
+  ["es", P + "/events"],
+  ["xhr", P + "/poll"]
 ]);
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

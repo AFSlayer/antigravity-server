@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -389,21 +390,144 @@ func CanControlPID(pid int) bool {
 	return canControlProcess(pid)
 }
 
+// LoopbackListenMask records which loopback address families a TCP listener accepts.
+type LoopbackListenMask uint8
+
+const (
+	// ListenIPv4 indicates 127.0.0.0/8 or 0.0.0.0.
+	ListenIPv4 LoopbackListenMask = 1 << iota
+	// ListenIPv6 indicates ::1.
+	ListenIPv6
+	// ListenIPv6Wildcard indicates :: (which accepts ::1 and, on dual-stack systems, IPv4).
+	ListenIPv6Wildcard
+)
+
+// ResolveDialHost returns the exact loopback IP to dial for urlHost ("localhost",
+// "127.0.0.1", or "::1") so OAuth callbacks never cross address families onto an
+// unrelated local process occupying the same port on another loopback address.
+func (m LoopbackListenMask) ResolveDialHost(urlHost string) (string, bool) {
+	if m == 0 {
+		return "", false
+	}
+	clean := strings.Trim(strings.ToLower(strings.TrimSpace(urlHost)), "[]")
+	switch clean {
+	case "127.0.0.1":
+		if m&ListenIPv4 != 0 {
+			return "127.0.0.1", true
+		}
+		if m&ListenIPv6Wildcard != 0 {
+			return "::1", true
+		}
+		return "", false
+	case "::1":
+		if m&(ListenIPv6|ListenIPv6Wildcard) != 0 {
+			return "::1", true
+		}
+		return "", false
+	case "localhost":
+		if m&ListenIPv4 != 0 {
+			return "127.0.0.1", true
+		}
+		if m&(ListenIPv6|ListenIPv6Wildcard) != 0 {
+			return "::1", true
+		}
+		return "", false
+	default:
+		return "", false
+	}
+}
+
+func parseListenHostMask(rawHost string, ipv6Hint bool) LoopbackListenMask {
+	h := strings.TrimSpace(rawHost)
+	if h == "" || h == "*" {
+		if ipv6Hint {
+			return ListenIPv6Wildcard
+		}
+		return ListenIPv4
+	}
+	h = strings.Trim(h, "[]")
+	if zone := strings.IndexByte(h, '%'); zone >= 0 {
+		h = h[:zone]
+	}
+	if h == "*" {
+		if ipv6Hint {
+			return ListenIPv6Wildcard
+		}
+		return ListenIPv4
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return 0
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4.IsUnspecified() || ip4.IsLoopback() {
+			return ListenIPv4
+		}
+		return 0
+	}
+	if ip.IsUnspecified() {
+		return ListenIPv6Wildcard
+	}
+	if ip.IsLoopback() {
+		return ListenIPv6
+	}
+	return 0
+}
+
+const defaultDiscoveryTimeout = 4 * time.Second
+
+func discoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultDiscoveryTimeout)
+}
+
 // ListeningPorts returns the TCP ports currently in LISTEN state owned by pid.
 func ListeningPorts(pid int) ([]int, error) {
+	return ListeningPortsContext(context.Background(), pid)
+}
+
+// ListeningPortsContext returns the TCP ports currently in LISTEN state owned by pid.
+func ListeningPortsContext(ctx context.Context, pid int) ([]int, error) {
 	if pid <= 0 {
 		return nil, errors.New("invalid pid")
 	}
-	return listeningPorts(pid)
+	cctx, cancel := discoveryContext(ctx)
+	defer cancel()
+	return listeningPortsContext(cctx, pid)
 }
 
 // ProcessTreeListeningPorts returns the TCP ports currently in LISTEN state
 // owned by rootPID or any of its descendant processes.
 func ProcessTreeListeningPorts(rootPID int) ([]int, error) {
+	return ProcessTreeListeningPortsContext(context.Background(), rootPID)
+}
+
+// ProcessTreeListeningPortsContext returns the TCP ports currently in LISTEN state
+// owned by rootPID or any of its descendant processes.
+func ProcessTreeListeningPortsContext(ctx context.Context, rootPID int) ([]int, error) {
 	if rootPID <= 0 {
 		return nil, errors.New("invalid root pid")
 	}
-	return processTreeListeningPorts(rootPID)
+	cctx, cancel := discoveryContext(ctx)
+	defer cancel()
+	return processTreeListeningPorts(cctx, rootPID)
+}
+
+// ProcessTreeListeningEndpoints returns the loopback-accessible TCP ports in
+// LISTEN state owned by rootPID or any of its descendants, paired with the
+// loopback address families each port is bound on.
+func ProcessTreeListeningEndpoints(ctx context.Context, rootPID int) (map[int]LoopbackListenMask, error) {
+	if rootPID <= 0 {
+		return nil, errors.New("invalid root pid")
+	}
+	cctx, cancel := discoveryContext(ctx)
+	defer cancel()
+	return processTreeListeningEndpoints(cctx, rootPID)
 }
 
 // WatchPID polls an externally started process by PID and closes the returned

@@ -94,6 +94,11 @@ type Patch struct {
 	Required bool
 	// Optional marks patches that may not match on newer upstream builds where Google already fixed/removed the element.
 	Optional bool
+	// Precondition, when set on an Optional patch, checks whether the bundle still
+	// contains the feature this patch hooks into. If Precondition returns true
+	// while Find or FindRe fails to match, Apply reports StatusMissing instead of
+	// StatusNotNeeded so minifier drift is caught immediately.
+	Precondition func(body []byte) bool
 	// Enabled gates the patch on configuration; nil means always enabled.
 	Enabled func(Options) bool
 }
@@ -205,7 +210,7 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 			if bytes.Contains(body, []byte(p.Find)) {
 				body = bytes.Replace(body, []byte(p.Find), []byte(p.replacement(opts)), 1)
 				res.Status = StatusApplied
-			} else if p.Optional {
+			} else if p.Optional && (p.Precondition == nil || !p.Precondition(body)) {
 				res.Status = StatusNotNeeded
 			} else {
 				res.Status = StatusMissing
@@ -226,7 +231,7 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 				out = append(out, body[loc[1]:]...)
 				body = out
 				res.Status = StatusApplied
-			} else if p.Optional {
+			} else if p.Optional && (p.Precondition == nil || !p.Precondition(body)) {
 				res.Status = StatusNotNeeded
 			} else {
 				res.Status = StatusMissing
@@ -259,7 +264,7 @@ func submatches(body []byte, loc []int) [][]byte {
 // appended to the /main.js URL so the bundle URL changes the moment the patches
 // or version change. It does not cover language server updates; the proxy's
 // ETag revalidation is what keeps browsers from running a stale bundle.
-const patchSetRevision = "2026-11-11-r7"
+const patchSetRevision = "2026-11-12-r8"
 
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()
