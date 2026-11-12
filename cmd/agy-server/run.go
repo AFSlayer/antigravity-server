@@ -19,6 +19,7 @@ import (
 	"github.com/AFSlayer/antigravity-server/internal/assets"
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/config"
+	"github.com/AFSlayer/antigravity-server/internal/loopback"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 	"github.com/AFSlayer/antigravity-server/internal/netinfo"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
@@ -321,9 +322,15 @@ func (r *runner) start(runCtx context.Context) error {
 
 	tracker := patches.NewTracker()
 
+	forbiddenPorts := []int{publicPort}
+	if localPort > 0 {
+		forbiddenPorts = append(forbiddenPorts, localPort)
+	}
+
 	p, err := proxy.New(proxy.Options{
 		TargetPort:      instance.Port,
 		TargetCSRFToken: instance.CSRFToken,
+		ForbiddenPorts:  forbiddenPorts,
 		PublicURL:       r.cfg.PublicURL,
 		TrustedProxies:  trusted,
 		DisableWSRelay:  r.cfg.DisableWSRelay,
@@ -383,6 +390,70 @@ func (r *runner) start(runCtx context.Context) error {
 	rulesMgr.Register(publicMux)
 
 	var (
+		lsPortsMu       sync.Mutex
+		lsDirectPorts   map[int]struct{}
+		lsPortsCachedAt time.Time
+	)
+	hasLanguageServerOwnPort := func(port int) bool {
+		if instance.PID <= 0 {
+			return false
+		}
+		lsPortsMu.Lock()
+		if !lsPortsCachedAt.IsZero() && time.Since(lsPortsCachedAt) < time.Second {
+			_, ok := lsDirectPorts[port]
+			lsPortsMu.Unlock()
+			return ok
+		}
+		lsPortsMu.Unlock()
+
+		ports, err := lsproc.ListeningPorts(instance.PID)
+		if err != nil {
+			return false
+		}
+		next := make(map[int]struct{}, len(ports))
+		for _, pt := range ports {
+			next[pt] = struct{}{}
+		}
+		lsPortsMu.Lock()
+		lsDirectPorts = next
+		lsPortsCachedAt = time.Now()
+		lsPortsMu.Unlock()
+		_, ok := next[port]
+		return ok
+	}
+	isCoreReservedPort := func(ctx context.Context, port int) bool {
+		if port == publicPort || (localPort > 0 && port == localPort) || port == instance.Port {
+			return true
+		}
+		_, sidecarReserved := p.ReservedSidecarPorts(ctx)[port]
+		return sidecarReserved
+	}
+	loopbackHandler := loopback.New(loopback.Options{
+		Trusted:   trusted,
+		PublicURL: r.cfg.PublicURL,
+		IsReservedPort: func(ctx context.Context, port int) bool {
+			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(port)
+		},
+		AllowOAuthPort: func(ctx context.Context, port int) bool {
+			if isCoreReservedPort(ctx, port) || instance.PID <= 0 {
+				return false
+			}
+			ports, err := lsproc.ProcessTreeListeningPorts(instance.PID)
+			if err != nil {
+				return false
+			}
+			for _, pt := range ports {
+				if pt == port {
+					return true
+				}
+			}
+			return false
+		},
+	})
+	defer loopbackHandler.Close()
+	loopbackHandler.Register(publicMux)
+
+	var (
 		shutdownReason string
 		shutdownMu     sync.Mutex
 		childCrashed   atomic.Bool
@@ -425,7 +496,7 @@ func (r *runner) start(runCtx context.Context) error {
 				return true
 			}
 			isIdle := func() bool {
-				return p.IsIdle(15*time.Minute) && uploader.IsIdle(15*time.Minute)
+				return p.IsIdle(15*time.Minute) && uploader.IsIdle(15*time.Minute) && loopbackHandler.IsIdle(15*time.Minute)
 			}
 			startBackground(func() {
 				updater.RunAutoUpdater(lifecycleCtx, r.cfg, reloadLS, isIdle)

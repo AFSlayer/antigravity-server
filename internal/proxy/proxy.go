@@ -37,8 +37,11 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
-	PublicURL       string
-	TrustedProxies  []*net.IPNet
+	// ForbiddenPorts lists local listener ports (such as the public HTTP port
+	// and loopback control panel port) that sidecar routing must never dial.
+	ForbiddenPorts []int
+	PublicURL      string
+	TrustedProxies []*net.IPNet
 	// DisableWSRelay passes the RPC WebSocket through untouched instead of
 	// terminating and compressing it in the proxy.
 	DisableWSRelay bool
@@ -50,6 +53,7 @@ type Options struct {
 type Proxy struct {
 	handler             *httputil.ReverseProxy
 	transport           *http.Transport
+	sidecarTransport    *http.Transport
 	target              *url.URL
 	opts                Options
 	reported            sync.Map
@@ -64,6 +68,12 @@ type Proxy struct {
 	htmlMu              sync.RWMutex
 	cachedHTML          []byte
 	cachedHTMLMissingWS bool
+
+	sidecarMu        sync.Mutex
+	sidecarAllowed   map[int]struct{}
+	sidecarReserved  map[int]struct{}
+	sidecarCachedAt  time.Time
+	sidecarLastProbe time.Time
 
 	// wsTransportMissing remembers the last main.js outcome for the HTML patches.
 	wsTransportMissing atomic.Bool
@@ -89,6 +99,7 @@ func New(opts Options) (*Proxy, error) {
 		IdleConnTimeout:     90 * time.Second,
 	}
 	rp.Transport = p.transport
+	p.sidecarTransport = newSidecarTransport()
 
 	host := target.Host
 	base := rp.Director
@@ -163,6 +174,14 @@ func (p *Proxy) Handler() http.Handler {
 
 		if isRelayWS {
 			p.relayWebSocket(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, SidecarPrefix) {
+			p.serveSidecar(w, r)
+			return
+		}
+		if p.redirectSidecarOrphanRequest(w, r) {
 			return
 		}
 
@@ -402,8 +421,14 @@ func (p *Proxy) PrewarmContext(parent context.Context) error {
 
 // Close releases idle upstream transport connections when a proxy instance is retired.
 func (p *Proxy) Close() {
-	if p != nil && p.transport != nil {
+	if p == nil {
+		return
+	}
+	if p.transport != nil {
 		p.transport.CloseIdleConnections()
+	}
+	if p.sidecarTransport != nil {
+		p.sidecarTransport.CloseIdleConnections()
 	}
 }
 

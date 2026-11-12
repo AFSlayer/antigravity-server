@@ -65,6 +65,44 @@ func listeningPorts(pid int) ([]int, error) {
 	return ports, nil
 }
 
+func processTreeListeningPorts(rootPID int) ([]int, error) {
+	script := `$children = @{}; ` +
+		`Get-CimInstance Win32_Process | ForEach-Object { ` +
+		`  $ppid = [int]$_.ParentProcessId; $pidVal = [int]$_.ProcessId; ` +
+		`  if (-not $children.ContainsKey($ppid)) { $children[$ppid] = @() }; ` +
+		`  $children[$ppid] += $pidVal ` +
+		`}; ` +
+		`$seen = @{}; $queue = New-Object System.Collections.Queue; ` +
+		`$seen[` + strconv.Itoa(rootPID) + `] = $true; $queue.Enqueue(` + strconv.Itoa(rootPID) + `); ` +
+		`while ($queue.Count -gt 0) { ` +
+		`  $cur = $queue.Dequeue(); ` +
+		`  if ($children.ContainsKey($cur)) { ` +
+		`    foreach ($c in $children[$cur]) { if (-not $seen.ContainsKey($c)) { $seen[$c] = $true; $queue.Enqueue($c) } } ` +
+		`  } ` +
+		`}; ` +
+		`Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $seen.ContainsKey([int]$_.OwningProcess) } | ForEach-Object { $_.LocalPort }`
+
+	out, err := powershell(script)
+	if err != nil {
+		return nil, err
+	}
+
+	var ports []int
+	seen := map[int]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		port, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil || port <= 0 || port > 65535 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	if len(ports) == 0 {
+		return nil, errors.New("could not determine listening ports for process tree")
+	}
+	return ports, nil
+}
+
 func sendTerminate(proc *os.Process) error {
 	return proc.Kill()
 }

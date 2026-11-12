@@ -146,6 +146,35 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Errorf("mobile-back-clears-section: the titlebar flags %q, not the home hook %q", hook, header[1])
 	}
 
+	// 2.31+ sidecar gateway, loopback preview, and remote OAuth patches are marked optional for older bundles,
+	// so assert they match whenever the corresponding feature exists in the live bundle.
+	if bytes.Contains(mainJS, []byte("resolveSidecarUrl:")) && !regexpMatch(sidecarResolveURLRe, mainJS) {
+		t.Error("sidecar-resolve-url: resolveSidecarUrl exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("c.webPort?`http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
+		t.Error("sidecar-modal-endpoint-url: sidecar modal endpoint exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("browserAuxPane:")) && bytes.Contains(mainJS, []byte("openLoopbackInPreviewByDefault")) && !regexpMatch(loopbackPreviewFeatureGateRe, mainJS) {
+		t.Error("loopback-preview-feature-gate: browserAuxPane loopback preview exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("fetchSandboxPort:")) && !regexpMatch(loopbackPreviewFetchFallbackRe, mainJS) {
+		t.Error("loopback-preview-fetch-fallback: fetchSandboxPort exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("startPluginAuthSignIn:")) && bytes.Contains(mainJS, []byte(`get("pluginAuth")`)) {
+		if !regexpMatch(routerNavigateBridgeRe, mainJS) {
+			t.Error("router-navigate-bridge: router useNavigate hook did not match")
+		}
+		if !regexpMatch(pluginMentionRemoteSignInRe, mainJS) {
+			t.Error("plugin-mention-remote-signin: plugin @-mention sign-in hook did not match")
+		}
+	}
+	if bytes.Contains(mainJS, []byte("completeMcpOAuth:")) && !regexpMatch(mcpOAuthRemoteCallbackRe, mainJS) {
+		t.Error("mcp-oauth-remote-callback: completeMcpOAuth exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("signInPluginAuthProvider:")) && !regexpMatch(pluginOAuthRemoteCallbackRe, mainJS) {
+		t.Error("plugin-oauth-remote-callback: signInPluginAuthProvider exists in bundle but patch regexp did not match")
+	}
+
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
 	opts.CacheKey = CacheKey("test", opts)
 

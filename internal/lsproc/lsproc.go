@@ -389,6 +389,23 @@ func CanControlPID(pid int) bool {
 	return canControlProcess(pid)
 }
 
+// ListeningPorts returns the TCP ports currently in LISTEN state owned by pid.
+func ListeningPorts(pid int) ([]int, error) {
+	if pid <= 0 {
+		return nil, errors.New("invalid pid")
+	}
+	return listeningPorts(pid)
+}
+
+// ProcessTreeListeningPorts returns the TCP ports currently in LISTEN state
+// owned by rootPID or any of its descendant processes.
+func ProcessTreeListeningPorts(rootPID int) ([]int, error) {
+	if rootPID <= 0 {
+		return nil, errors.New("invalid root pid")
+	}
+	return processTreeListeningPorts(rootPID)
+}
+
 // WatchPID polls an externally started process by PID and closes the returned
 // channel if the process exits before ctx is cancelled. When ctx ends first,
 // the goroutine exits without closing the channel.
