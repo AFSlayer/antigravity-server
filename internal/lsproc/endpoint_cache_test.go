@@ -183,8 +183,12 @@ func TestEndpointCacheHoldsFailsClosed(t *testing.T) {
 	if !c.Holds(context.Background(), 4001) {
 		t.Fatal("a failed walk did not fail closed")
 	}
+
+	// Two TTLs after the last walk that succeeded, its listeners are not
+	// trusted either.
+	f.advance(5 * time.Second)
 	if _, ok := c.Lookup(context.Background(), 4000); ok {
-		t.Fatal("Lookup reported a port after a failed walk")
+		t.Fatal("Lookup reported a port from a result two TTLs old after a failed walk")
 	}
 
 	f.set(map[int]LoopbackListenMask{}, nil)
@@ -357,4 +361,50 @@ func TestProcessPortCacheAnswersExpiredMissesInBackground(t *testing.T) {
 	}
 	close(f.gate)
 	<-answered
+}
+
+// A walk that fails, PowerShell timing out for instance, does not drop the
+// listeners a page is using: the last result that succeeded still answers for
+// two TTLs, and the failed walk is retried at most once per miss interval.
+func TestEndpointCacheKeepsListenersThroughFailedWalk(t *testing.T) {
+	f := &fakeTree{clock: time.Unix(1000, 0)}
+	f.set(map[int]LoopbackListenMask{4000: ListenIPv4}, nil)
+	c := newFakeCache(f, 2*time.Second, time.Second)
+	if _, ok := c.Lookup(context.Background(), 4000); !ok {
+		t.Fatal("known port not found")
+	}
+
+	f.set(nil, errors.New("powershell timed out"))
+	f.advance(2500 * time.Millisecond)
+	if _, ok := c.Lookup(context.Background(), 4000); !ok {
+		t.Fatal("an expired hit was not answered")
+	}
+	waitWalks(t, f, 2)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c.mu.Lock()
+		failed := c.err != nil
+		c.mu.Unlock()
+		if failed || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	for i := 0; i < 5; i++ {
+		if mask, ok := c.Lookup(context.Background(), 4000); !ok || mask != ListenIPv4 {
+			t.Fatalf("a listener was dropped after one failed walk: mask %v ok %v", mask, ok)
+		}
+	}
+	// A retry would start in the background, so give it time to show.
+	time.Sleep(50 * time.Millisecond)
+	if n := f.walks.Load(); n != 2 {
+		t.Fatalf("walks = %d right after a failure, want no retry yet", n)
+	}
+
+	f.advance(1100 * time.Millisecond)
+	if _, ok := c.Lookup(context.Background(), 4000); !ok {
+		t.Fatal("a listener was dropped while the result is under two TTLs old")
+	}
+	waitWalks(t, f, 3)
 }

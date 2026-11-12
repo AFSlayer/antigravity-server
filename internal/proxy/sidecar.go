@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -53,10 +54,13 @@ const (
 	sidecarVaultMaxCookies      = 64
 	sidecarVaultMaxCookieBytes  = 8192
 
-	sidecarCacheTTL        = 2 * time.Second
-	sidecarMissRefreshMin  = 200 * time.Millisecond
-	sidecarFreePortTTL     = time.Second
-	sidecarFreePortsMax    = 1024
+	sidecarCacheTTL       = 2 * time.Second
+	sidecarMissRefreshMin = 200 * time.Millisecond
+	sidecarFreePortTTL    = time.Second
+	sidecarFreePortsMax   = 1024
+	// sidecarFailBackoff spaces GetSidecars calls while it fails, so each
+	// sidecar request does not send one.
+	sidecarFailBackoff     = time.Second
 	sidecarMaxRewriteBytes = 16 << 20
 	sidecarMaxWSRejectBody = 4 << 20
 	sidecarDialTimeout     = 5 * time.Second
@@ -352,6 +356,24 @@ func (p *Proxy) IsSidecarReservedPort(ctx context.Context, port int) bool {
 	return false
 }
 
+// errSidecarListUnavailable means a capability is valid but GetSidecars
+// failed, so whether its sidecar still runs is unknown.
+var errSidecarListUnavailable = errors.New("the language server did not list its sidecars")
+
+func (p *Proxy) sidecarListFailed() bool {
+	p.sidecarMu.Lock()
+	defer p.sidecarMu.Unlock()
+	return p.sidecarLastErr != nil
+}
+
+// writeSidecarListUnavailable answers a sidecar request that failed only
+// because GetSidecars did, so the frame shows a retryable error rather than
+// an expired one.
+func writeSidecarListUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "the language server did not list its sidecars; try again shortly", http.StatusServiceUnavailable)
+}
+
 func (p *Proxy) isForbiddenPort(port int) bool {
 	if port <= 0 || port > 65535 || port == p.opts.TargetPort {
 		return true
@@ -400,6 +422,10 @@ func (p *Proxy) refreshSidecarPorts(ctx context.Context, force bool, minStart ti
 			a, r := p.sidecarAllowed, p.sidecarReserved
 			p.sidecarMu.Unlock()
 			return a, r, nil
+		}
+		if lastErr := p.sidecarLastErr; lastErr != nil && p.sidecarInflight == nil && time.Since(p.sidecarLastProbe) < sidecarFailBackoff {
+			p.sidecarMu.Unlock()
+			return nil, nil, lastErr
 		}
 		if p.sidecarInflight != nil {
 			waitCh := p.sidecarInflight
@@ -739,11 +765,13 @@ func (p *Proxy) ValidateSidecarCapability(r *http.Request) (*http.Request, bool)
 	if !ok || invalidCap || capToken == "" {
 		return r, false
 	}
-	sess, dialMode := p.authorizeSidecarCapRequest(r, port, capToken)
-	if sess == nil {
+	sess, dialMode, err := p.authorizeSidecarCapRequest(r, port, capToken)
+	if sess == nil && err == nil {
 		return r, false
 	}
-	found := sidecarCapAuth{port: port, token: capToken, sess: sess, dialMode: dialMode}
+	// A valid capability whose sidecar list is unavailable is passed on too,
+	// so the handler answers 503 rather than the login check answering 403.
+	found := sidecarCapAuth{port: port, token: capToken, sess: sess, dialMode: dialMode, err: err}
 	return r.WithContext(context.WithValue(r.Context(), sidecarCapAuthKey{}, found)), true
 }
 
@@ -756,44 +784,48 @@ type sidecarCapAuth struct {
 	token    string
 	sess     *sidecarCapSession
 	dialMode string
+	err      error
 }
 
 // authorizedSidecarCap returns what ValidateSidecarCapability found for r, or
 // checks the capability now when r did not pass through it.
-func (p *Proxy) authorizedSidecarCap(r *http.Request, port int, capToken string) (*sidecarCapSession, string) {
+func (p *Proxy) authorizedSidecarCap(r *http.Request, port int, capToken string) (*sidecarCapSession, string, error) {
 	if found, ok := r.Context().Value(sidecarCapAuthKey{}).(sidecarCapAuth); ok && found.port == port && found.token == capToken {
-		return found.sess, found.dialMode
+		return found.sess, found.dialMode, found.err
 	}
 	return p.authorizeSidecarCapRequest(r, port, capToken)
 }
 
-func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) (*sidecarCapSession, string) {
+func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) (*sidecarCapSession, string, error) {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if isWebSocketUpgrade(r) {
 		if origin != "null" && !p.sameOriginUpgrade(r) {
-			return nil, ""
+			return nil, "", nil
 		}
 	} else {
 		if origin != "" && origin != "null" && !p.sameOriginRequest(r) {
-			return nil, ""
+			return nil, "", nil
 		}
 	}
 
 	capSess := p.lookupSidecarCap(capToken, port)
 	if capSess == nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	if p.opts.ValidateSession != nil {
 		if capSess.parentSession == "" || !p.opts.ValidateSession(capSess.parentSession) {
 			p.deleteSidecarCap(capToken)
-			return nil, ""
+			return nil, "", nil
 		}
 	}
 	dialMode, ok := p.allowedSidecarDialMode(r.Context(), port)
 	if !ok {
-		return nil, ""
+		if p.sidecarListFailed() {
+			return nil, "", errSidecarListUnavailable
+		}
+		return nil, "", nil
 	}
-	return capSess, dialMode
+	return capSess, dialMode, nil
 }
 
 // enterSidecar handles a navigation to the entry URL /__agy/sidecar/<port>/...
@@ -822,6 +854,10 @@ func (p *Proxy) enterSidecar(w http.ResponseWriter, r *http.Request, port int, r
 		return
 	}
 	if _, allowed := p.allowedSidecarDialMode(r.Context(), port); !allowed {
+		if p.sidecarListFailed() {
+			writeSidecarListUnavailable(w)
+			return
+		}
 		http.Error(w, "sidecar port is not active", http.StatusForbidden)
 		return
 	}
@@ -863,8 +899,12 @@ func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTP
 		return
 	}
 
-	capSess, dialMode := p.authorizedSidecarCap(r, port, capToken)
+	capSess, dialMode, authErr := p.authorizedSidecarCap(r, port, capToken)
 	if capSess == nil {
+		if errors.Is(authErr, errSidecarListUnavailable) {
+			writeSidecarListUnavailable(w)
+			return
+		}
 		http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
 		return
 	}
@@ -998,12 +1038,38 @@ func prepareSidecarUpstreamHeaders(h http.Header, upstreamOrigin string, vaultCo
 
 	h.Del("X-Original-Origin")
 	h.Del("X-Client-Host")
-	h.Del("X-Forwarded-For")
-	h.Del("X-Forwarded-Host")
-	h.Del("X-Forwarded-Proto")
-	h.Del("Forwarded")
-	h.Del("X-Real-IP")
 	h.Del("x-codeium-csrf-token")
+	stripFrontProxyHeaders(h)
+}
+
+// A reverse proxy or tunnel in front of agy-server adds headers about the
+// user and the connection, such as Cloudflare Access's signed identity or
+// Tailscale's user. A sidecar, possibly a third-party plugin, is not that
+// proxy's backend and gets none of them.
+var (
+	frontProxyHeaderPrefixes = []string{"X-Forwarded-", "Cf-", "Tailscale-"}
+	frontProxyHeaders        = []string{"Forwarded", "X-Real-Ip", "True-Client-Ip", "Cdn-Loop", "Proxy-Authorization"}
+)
+
+func stripFrontProxyHeaders(h http.Header) {
+	for name := range h {
+		canonical := http.CanonicalHeaderKey(name)
+		for _, prefix := range frontProxyHeaderPrefixes {
+			if strings.HasPrefix(canonical, prefix) {
+				delete(h, name)
+				break
+			}
+		}
+	}
+	for _, name := range frontProxyHeaders {
+		h.Del(name)
+	}
+	// A browser adds Basic credentials for the app's origin by itself, for a
+	// password a reverse proxy asks for. A sidecar's own scripts use other
+	// schemes, which pass.
+	if auth := strings.TrimSpace(h.Get("Authorization")); len(auth) >= 6 && strings.EqualFold(auth[:6], "basic ") {
+		h.Del("Authorization")
+	}
 }
 
 type activityReadCloser struct {
@@ -1039,6 +1105,7 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 
 	applySidecarCORSHeaders(resp.Header, clientReq)
 	shimNonce := p.enforceSidecarSecurityHeaders(resp.Header, clientReq, port, capSess)
+	privateSidecarCaching(resp.Header)
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(ct, "text/event-stream") {
@@ -1105,13 +1172,57 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 		rewritten = append(rewritten, sidecarPreloadSuffixJS...)
 	}
 
+	resp.Header.Del("ETag")
+	resp.Header.Del("Last-Modified")
+	if isHTML {
+		// The page carries this response's script nonce, so it is never
+		// reused.
+		resp.Header.Set("Cache-Control", "no-store")
+	} else {
+		// A stylesheet or the bridge rewrites the same way for the same URL,
+		// so the browser may keep it and revalidate against the rewrite.
+		sum := sha256.Sum256(rewritten)
+		tag := `"agy-` + hex.EncodeToString(sum[:16]) + `"`
+		resp.Header.Set("Cache-Control", "private, no-cache")
+		resp.Header.Set("ETag", "W/"+tag)
+		if etagMatches(clientReq.Header.Get("If-None-Match"), tag) {
+			resp.StatusCode = http.StatusNotModified
+			resp.Status = "304 Not Modified"
+			resp.Body = http.NoBody
+			resp.ContentLength = 0
+			resp.Header.Del("Content-Length")
+			return nil
+		}
+	}
 	resp.Body = io.NopCloser(bytes.NewReader(rewritten))
 	resp.ContentLength = int64(len(rewritten))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
-	resp.Header.Set("Cache-Control", "no-store")
-	resp.Header.Del("ETag")
-	resp.Header.Del("Last-Modified")
 	return nil
+}
+
+// privateSidecarCaching keeps a sidecar response out of shared caches, such
+// as a CDN in front of agy-server. It is served under a capability URL, and
+// a shared copy would outlive the capability.
+func privateSidecarCaching(h http.Header) {
+	var kept []string
+	private := false
+	for _, v := range h.Values("Cache-Control") {
+		for _, d := range strings.Split(v, ",") {
+			d = strings.TrimSpace(d)
+			name, _, _ := strings.Cut(strings.ToLower(d), "=")
+			switch strings.TrimSpace(name) {
+			case "", "public", "s-maxage", "proxy-revalidate":
+				continue
+			case "private", "no-store":
+				private = true
+			}
+			kept = append(kept, d)
+		}
+	}
+	if !private {
+		kept = append([]string{"private"}, kept...)
+	}
+	h.Set("Cache-Control", strings.Join(kept, ", "))
 }
 
 // originWideHeaders act on the app's whole origin, not the sidecar's path,

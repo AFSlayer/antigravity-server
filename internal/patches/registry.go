@@ -4987,6 +4987,10 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
         }
       } catch (e) {}
     }
+    // The full URL goes first. A language server that wants only the code
+    // rejects the URL without using the code, which the retry below then
+    // sends. Sending the code first could spend it with a server that needs
+    // the URL's state as well, and the URL retry would then fail.
     try {
       return await submitFn(trimmed);
     } catch (firstErr) {

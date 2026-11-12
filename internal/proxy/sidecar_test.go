@@ -187,7 +187,8 @@ func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 	}
 
 	// Fail-closed: if GetSidecars fails, IsSidecarReservedPort returns true (blocks loopback preview)
-	// and sidecar allowlist returns 403 once cache expires (no error grace window).
+	// and the sidecar is refused once the cache expires (no error grace window), with a
+	// retryable 503 rather than a 403 that reads as an expired capability.
 	// The free answer for unrelatedPort is remembered for a moment; once it
 	// expires the failure is seen.
 	failGetSidecars.Store(true)
@@ -206,8 +207,8 @@ func TestSidecarPortAllowlistReservedRefreshAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	failResp.Body.Close()
-	if failResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("sidecar proxy must fail closed (403) when GetSidecars is down, got %d", failResp.StatusCode)
+	if failResp.StatusCode != http.StatusServiceUnavailable || failResp.Header.Get("Retry-After") == "" {
+		t.Fatalf("sidecar proxy must fail closed (503) when GetSidecars is down, got %d", failResp.StatusCode)
 	}
 }
 

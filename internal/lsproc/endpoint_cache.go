@@ -21,11 +21,15 @@ type EndpointCache struct {
 	// known port is answered, so it does not wait for a walk either.
 	staleMisses bool
 
-	mu        sync.Mutex
+	mu sync.Mutex
+	// endpoints is the result of the last walk that succeeded, at okAt.
 	endpoints map[int]LoopbackListenMask
-	err       error
-	walkedAt  time.Time
-	inflight  chan struct{}
+	okAt      time.Time
+	// err is the last walk's error, nil if it succeeded, and walkedAt when
+	// it ended.
+	err      error
+	walkedAt time.Time
+	inflight chan struct{}
 }
 
 // NewTreeEndpointCache returns a cache of the listeners of rootPID and its
@@ -95,28 +99,15 @@ func (c *EndpointCache) lookup(ctx context.Context, port int) (LoopbackListenMas
 	}
 
 	c.mu.Lock()
-	if !c.walkedAt.IsZero() {
-		age := c.now().Sub(c.walkedAt)
-		if c.err == nil {
-			// A listener seen within two TTLs is answered at once. Once the
-			// result has expired it is refreshed in the background, so a slow
-			// walk does not stall the requests of a page in use.
-			if mask, ok := c.endpoints[port]; (ok || c.staleMisses) && age < 2*c.ttl {
-				if age >= c.ttl {
-					c.startWalkLocked()
-				}
-				c.mu.Unlock()
-				return mask, ok, nil
-			}
-			if age < c.missRefresh {
-				c.mu.Unlock()
-				return 0, false, nil
-			}
-		} else if age < c.missRefresh {
-			err := c.err
-			c.mu.Unlock()
-			return 0, false, err
-		}
+	if mask, ok, answered := c.answerLocked(port); answered {
+		c.mu.Unlock()
+		return mask, ok, nil
+	}
+	// A walk that just failed is not retried before missRefresh.
+	if c.err != nil && c.now().Sub(c.walkedAt) < c.missRefresh {
+		err := c.err
+		c.mu.Unlock()
+		return 0, false, err
 	}
 	done := c.startWalkLocked()
 	c.mu.Unlock()
@@ -129,11 +120,40 @@ func (c *EndpointCache) lookup(ctx context.Context, port int) (LoopbackListenMas
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if mask, ok, answered := c.answerLocked(port); answered {
+		return mask, ok, nil
+	}
 	if c.err != nil {
 		return 0, false, c.err
 	}
 	mask, ok := c.endpoints[port]
 	return mask, ok, nil
+}
+
+// answerLocked answers from the last result that succeeded without a walk,
+// if it can. A listener in it is answered for two TTLs, even when a walk
+// since has failed, so one slow or failed walk does not drop the listeners a
+// page is using; with staleMisses so is a port missing from it. Once the
+// result has expired, a walk starts in the background, at most once per
+// missRefresh after a failure. A port missing from a fresh result is
+// answered until missRefresh after the walk that produced it.
+func (c *EndpointCache) answerLocked(port int) (LoopbackListenMask, bool, bool) {
+	if c.okAt.IsZero() {
+		return 0, false, false
+	}
+	now := c.now()
+	sinceOK, sinceWalk := now.Sub(c.okAt), now.Sub(c.walkedAt)
+	mask, ok := c.endpoints[port]
+	if (ok || c.staleMisses) && sinceOK < 2*c.ttl {
+		if sinceOK >= c.ttl && sinceWalk >= c.missRefresh {
+			c.startWalkLocked()
+		}
+		return mask, ok, true
+	}
+	if !ok && c.err == nil && sinceWalk < c.missRefresh {
+		return 0, false, true
+	}
+	return 0, false, false
 }
 
 // startWalkLocked starts a walk unless one is running and returns the channel
@@ -151,11 +171,13 @@ func (c *EndpointCache) walk(done chan struct{}) {
 	endpoints, err := c.discover(context.Background(), c.pid)
 
 	c.mu.Lock()
+	now := c.now()
 	if err == nil {
 		c.endpoints = endpoints
+		c.okAt = now
 	}
 	c.err = err
-	c.walkedAt = c.now()
+	c.walkedAt = now
 	c.inflight = nil
 	c.mu.Unlock()
 	close(done)

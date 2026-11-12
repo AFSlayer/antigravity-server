@@ -481,7 +481,15 @@ func listenIPMask(ip net.IP) LoopbackListenMask {
 	return 0
 }
 
-const defaultDiscoveryTimeout = 4 * time.Second
+// defaultDiscoveryTimeout bounds a discovery that has no deadline of its
+// own. Windows discovers through PowerShell, which can take several seconds
+// to start on a cold or busy machine.
+var defaultDiscoveryTimeout = func() time.Duration {
+	if runtime.GOOS == "windows" {
+		return 15 * time.Second
+	}
+	return 4 * time.Second
+}()
 
 func discoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {

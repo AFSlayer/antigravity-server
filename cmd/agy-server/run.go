@@ -344,13 +344,17 @@ func (r *runner) start(runCtx context.Context) error {
 	if localPort > 0 {
 		staticReserved[localPort] = struct{}{}
 	}
+	startupPortsKnown := instance.PID <= 0
 	if instance.PID > 0 {
 		if pts, lerr := lsproc.ListeningPorts(instance.PID); lerr == nil {
+			startupPortsKnown = true
 			for _, pt := range pts {
 				if pt > 0 && pt <= 65535 {
 					staticReserved[pt] = struct{}{}
 				}
 			}
+		} else {
+			warn("could not read the language server's ports (%v); pasted OAuth redirects will not reach listeners the language server itself opens", lerr)
 		}
 	}
 
@@ -426,10 +430,11 @@ func (r *runner) start(runCtx context.Context) error {
 	rulesMgr.Register(publicMux)
 
 	ports := &loopbackPortPolicy{
-		static:      staticReserved,
-		tree:        treeEndpoints,
-		lsOwn:       lsproc.NewProcessPortCache(instance.PID, lsPortsTTL),
-		sidecarPort: p.IsSidecarReservedPort,
+		static:             staticReserved,
+		staticHasStartupLS: startupPortsKnown,
+		tree:               treeEndpoints,
+		lsOwn:              lsproc.NewProcessPortCache(instance.PID, lsPortsTTL),
+		sidecarPort:        p.IsSidecarReservedPort,
 	}
 	loopbackHandler := loopback.New(loopback.Options{
 		Trusted:            trusted,
@@ -1007,6 +1012,9 @@ type loopbackPortPolicy struct {
 	// static holds agy-server's ports, the language server's API port and
 	// the ports it listened on at startup.
 	static map[int]struct{}
+	// staticHasStartupLS is false when the language server's startup ports
+	// could not be read, so static lacks them.
+	staticHasStartupLS bool
 	// tree knows the listeners of the language server and its descendants.
 	tree interface {
 		Lookup(ctx context.Context, port int) (lsproc.LoopbackListenMask, bool)
@@ -1046,12 +1054,17 @@ func (lp *loopbackPortPolicy) fetchTarget(ctx context.Context, port int) (string
 // oauthTarget returns the loopback address to deliver an OAuth callback to.
 // The language server opens callback listeners of its own after startup, so
 // unlike previews these may reach it, but not its startup ports or sidecars.
+// Without the startup ports to tell them apart, none of its own ports is
+// reached.
 func (lp *loopbackPortPolicy) oauthTarget(ctx context.Context, port int, urlHost string) (string, bool) {
 	if _, ok := lp.static[port]; ok {
 		return "", false
 	}
 	mask, ok := lp.tree.Lookup(ctx, port)
 	if !ok || lp.sidecarPort(ctx, port) {
+		return "", false
+	}
+	if !lp.staticHasStartupLS && lp.lsOwn.Holds(ctx, port) {
 		return "", false
 	}
 	return mask.ResolveDialHost(urlHost)

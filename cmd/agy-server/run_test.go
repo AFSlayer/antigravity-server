@@ -646,9 +646,10 @@ func TestLoopbackPortPolicy(t *testing.T) {
 	own := &fakeOwnPorts{ports: map[int]bool{lsAPIPort: true, lsLatePort: true, gatewayPort: true}}
 	var sidecarAsked []int
 	lp := &loopbackPortPolicy{
-		static: map[int]struct{}{agyPort: {}, lsAPIPort: {}},
-		tree:   tree,
-		lsOwn:  own,
+		static:             map[int]struct{}{agyPort: {}, lsAPIPort: {}},
+		staticHasStartupLS: true,
+		tree:               tree,
+		lsOwn:              own,
 		sidecarPort: func(_ context.Context, port int) bool {
 			sidecarAsked = append(sidecarAsked, port)
 			return port == gatewayPort || port == sidecarPort
@@ -701,6 +702,16 @@ func TestLoopbackPortPolicy(t *testing.T) {
 		if host != tc.want || ok != (tc.want != "") {
 			t.Errorf("oauthTarget(%d, %q) = %q %v, want %q", tc.port, tc.urlHost, host, ok, tc.want)
 		}
+	}
+
+	// Without its startup ports, an OAuth callback does not reach any port
+	// the language server itself holds, while its children's still do.
+	lp.staticHasStartupLS = false
+	if host, ok := lp.oauthTarget(ctx, lsLatePort, "localhost"); ok {
+		t.Errorf("oauthTarget(%d) = %q without the startup ports, want refused", lsLatePort, host)
+	}
+	if _, ok := lp.oauthTarget(ctx, devPort, "localhost"); !ok {
+		t.Error("oauthTarget refused a child's listener without the startup ports")
 	}
 
 	// When the language server's own ports cannot be read, every listener of
