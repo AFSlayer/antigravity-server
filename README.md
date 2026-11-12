@@ -294,6 +294,7 @@ All CLI flags can be set via environment variables prefixed with `AGY_` (e.g. `A
 - **Brute-Force Protection**: 5 failed login attempts trigger an IP lockout (5 to 30 minutes).
 - **Upload Isolation**: File uploads are restricted to the configured project directory; path traversal attempts (`../`) are rejected.
 - **Trusted Proxies**: Set `--trusted-proxies` when running behind Nginx, Caddy, or Cloudflare to prevent header spoofing.
+- **Sidecar UIs and localhost relays**: Sidecar UIs such as the Swarm board are served under `/__agy/sidecar/` in an opaque-origin sandbox, and `/__agy/api/loopback-fetch` and `/__agy/api/oauth-callback` relay localhost previews and OAuth redirects. All three require login. See [SECURITY.md](SECURITY.md) for their boundaries.
 
 ---
 

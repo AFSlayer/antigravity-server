@@ -164,6 +164,7 @@ func New(opts Options) (*Proxy, error) {
 // Handler returns the HTTP handler to mount, tracking in-flight streams and activity for idle detection.
 func (p *Proxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		settleProtocolSwitch(r)
 		isWS := isWebSocketUpgrade(r)
 		isSidecar := strings.HasPrefix(r.URL.Path, SidecarPrefix)
 		isRelayWS := isWS && r.URL.Path == relayPath && !p.opts.DisableWSRelay
@@ -566,8 +567,47 @@ func etagMatches(header, tag string) bool {
 	return false
 }
 
+// isWebSocketUpgrade reports whether r asks to switch to WebSocket. Upgrade is
+// a token list and may repeat, so a request naming websocket among other
+// protocols counts too and gets the WebSocket checks.
 func isWebSocketUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	return headerContainsToken(r.Header, "Upgrade", "websocket")
+}
+
+// settleProtocolSwitch leaves a WebSocket upgrade asking for websocket alone
+// and strips any other protocol switch from the request. ReverseProxy passes on
+// an Upgrade that Connection lists and hands the socket over on a 101, which
+// would let a request that is not classed as WebSocket skip the origin checks
+// and the connection tracking that WebSocket requests get.
+func settleProtocolSwitch(r *http.Request) {
+	if isWebSocketUpgrade(r) {
+		r.Header.Set("Upgrade", "websocket")
+		return
+	}
+	dropProtocolSwitch(r.Header)
+}
+
+// dropProtocolSwitch removes Upgrade and the upgrade token from Connection,
+// keeping any other headers Connection names.
+func dropProtocolSwitch(h http.Header) {
+	h.Del("Upgrade")
+	lines := h.Values("Connection")
+	if len(lines) == 0 {
+		return
+	}
+	var kept []string
+	for _, line := range lines {
+		for _, tok := range strings.Split(line, ",") {
+			tok = strings.TrimSpace(tok)
+			if tok != "" && !strings.EqualFold(tok, "upgrade") {
+				kept = append(kept, tok)
+			}
+		}
+	}
+	h.Del("Connection")
+	if len(kept) > 0 {
+		h.Set("Connection", strings.Join(kept, ", "))
+	}
 }
 
 func (p *Proxy) sameOriginRequest(r *http.Request) bool {

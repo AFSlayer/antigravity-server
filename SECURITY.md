@@ -20,6 +20,19 @@ equivalent to shell access.
 | Admin surface | The control panel (QR code, password, shutdown) listens on a **separate loopback-only port** and is never routed through the public listener. |
 | Login QR | The QR code carries a single-use enrollment token valid for 10 minutes, so you never type the password on a phone. Reuse is rejected. |
 
+## Sidecar UIs, localhost previews and OAuth callbacks
+
+Antigravity opens some things on `localhost`: sidecar UIs such as the Swarm
+board, the dev servers an agent starts, and the OAuth redirects of plugins and
+MCP servers. A browser on another device cannot reach the host's `localhost`,
+so `agy-server` relays these three, each behind the login.
+
+| Path | What it does | Boundaries |
+| --- | --- | --- |
+| `/__agy/sidecar/<port>/` | Serves a sidecar's web UI in the app's side panel. | Only ports the language server reports as running sidecars. Opening one needs a valid login session and a same-origin request, and gives the frame a path capability tied to that session: 2 hours idle, 12 hours at most, and gone when the session ends. The frame is an opaque-origin sandbox without `allow-same-origin`, so the sidecar cannot read the app's cookies or call the app. Browser cookies are never sent to the sidecar; its own cookies are kept on the server per capability. Its Content Security Policy is kept and only gains its own path prefix and the injected helper script; a sidecar's `sandbox` can only be tightened. |
+| `/__agy/api/loopback-fetch` | Fetches `http://127.0.0.1:<port><path>` for a localhost preview. | POST from the same origin with a valid session. Ports used by `agy-server`, the language server and sidecars are refused, as are the ports browsers block. Bodies are capped at 16 MiB and at most 12 fetches run at once. |
+| `/__agy/api/oauth-callback` | Delivers a pasted `http://localhost:<port>/...?code=...` redirect as a GET. | POST from the same origin with a valid session. The port must be a listener of the language server or a process it started, and the request goes to the loopback address family it listens on. Redirects from the listener are not followed, so the one-time code is used once. |
+
 ## Running behind a reverse proxy
 
 If a proxy terminates TLS in front of `agy-server`, tell it which peers to trust:

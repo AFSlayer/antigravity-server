@@ -326,6 +326,15 @@ func (r *runner) start(runCtx context.Context) error {
 	if localPort > 0 {
 		forbiddenPorts = append(forbiddenPorts, localPort)
 	}
+	// Sidecar and OAuth requests ask which loopback family a port in the
+	// language server's process tree listens on. A walk is slow and on macOS
+	// and Windows starts subprocesses, so one result serves a few seconds.
+	treeEndpointsTTL := 2 * time.Second
+	if runtime.GOOS != "linux" {
+		treeEndpointsTTL = 5 * time.Second
+	}
+	treeEndpoints := lsproc.NewTreeEndpointCache(instance.PID, treeEndpointsTTL, time.Second)
+
 	initialLSPorts := make(map[int]struct{})
 	if instance.PID > 0 {
 		if pts, lerr := lsproc.ListeningPorts(instance.PID); lerr == nil {
@@ -347,14 +356,7 @@ func (r *runner) start(runCtx context.Context) error {
 		DisableWSRelay:  r.cfg.DisableWSRelay,
 		ValidateSession: r.authState.sessions.Validate,
 		ResolveSidecarHost: func(ctx context.Context, port int, urlHost string) (string, bool) {
-			if instance.PID <= 0 {
-				return "", false
-			}
-			endpoints, perr := lsproc.ProcessTreeListeningEndpoints(ctx, instance.PID)
-			if perr != nil {
-				return "", false
-			}
-			mask, ok := endpoints[port]
+			mask, ok := treeEndpoints.Lookup(ctx, port)
 			if !ok {
 				return "", false
 			}
@@ -504,14 +506,10 @@ func (r *runner) start(runCtx context.Context) error {
 			return isCoreReservedPort(ctx, port) || hasLanguageServerOwnPort(ctx, port)
 		},
 		ResolveOAuthTarget: func(ctx context.Context, port int, urlHost string) (string, bool) {
-			if isCoreReservedPort(ctx, port) || instance.PID <= 0 {
+			if isCoreReservedPort(ctx, port) {
 				return "", false
 			}
-			endpoints, perr := lsproc.ProcessTreeListeningEndpoints(ctx, instance.PID)
-			if perr != nil {
-				return "", false
-			}
-			mask, ok := endpoints[port]
+			mask, ok := treeEndpoints.Lookup(ctx, port)
 			if !ok {
 				return "", false
 			}

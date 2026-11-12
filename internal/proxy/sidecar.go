@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -925,6 +926,10 @@ func prepareSidecarUpstreamHeaders(h http.Header, upstreamOrigin string, vaultCo
 		h.Set("Cookie", vaultCookie)
 	}
 
+	// This path is plain HTTP. A protocol switch is only ever proxied by
+	// proxySidecarWebSocket, so none may reach ReverseProxy.
+	dropProtocolSwitch(h)
+
 	h.Set("Origin", upstreamOrigin)
 	h.Set("Sec-Fetch-Site", "same-origin")
 	h.Del("Referer")
@@ -1022,7 +1027,8 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 	var rewritten []byte
 	switch {
 	case isHTML:
-		rewritten = rewriteSidecarHTML(buf, port, capPrefix, baseDir, shimNonce)
+		httpPfx, wsPfx := p.externalSidecarPrefixURL(clientReq, port, capSess)
+		rewritten = rewriteSidecarHTML(buf, port, capPrefix, baseDir, sidecarPageCSP{httpPrefix: httpPfx, wsPrefix: wsPfx, shimNonce: shimNonce})
 	case isCSS:
 		rewritten = rewriteSidecarCSS(buf, port, capPrefix, baseDir)
 	case isPreloadJS:
@@ -1219,34 +1225,65 @@ func effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx int) int
 	return defaultIdx
 }
 
-func cspTokensRequireNonce(tokens []string, httpPrefix string) (hasNone bool, needsNonce bool) {
-	hasSelf := false
-	hasWildcard := false
-	hasCrypto := false
+// shimAccess says what a policy's effective script directive needs so the
+// injected shim script can load.
+type shimAccess int
+
+const (
+	// shimAllowed means the directive already lets the shim through: a
+	// wildcard or scheme source, or 'self', which gets the sidecar's prefix.
+	shimAllowed shimAccess = iota
+	// shimByPrefix means the sidecar's URL prefix is added as a host source.
+	shimByPrefix
+	// shimByNonce means a nonce is added, because host sources would not do.
+	shimByNonce
+)
+
+// shimAccessFor decides how the shim gets past a script directive. A nonce is
+// added only where it changes nothing else: next to 'none', 'strict-dynamic'
+// (which ignores host sources), or an existing nonce or hash (beside which
+// 'unsafe-inline' is already ignored). Anywhere else a nonce would switch off
+// the page's own 'unsafe-inline' scripts, so the prefix is added instead.
+func shimAccessFor(tokens []string, httpPrefix string) (hasNone bool, access shimAccess) {
+	var self, wildcard, strictDynamic, nonceOrHash, unsafeInline bool
 	for _, tok := range tokens {
 		low := strings.ToLower(tok)
 		switch {
 		case low == "'none'":
 			hasNone = true
 		case low == "'self'":
-			hasSelf = true
-		case low == "*" || low == "http:" || low == "https:":
-			hasWildcard = true
+			self = true
+		case low == "*" || low == "http:":
+			wildcard = true
+		case low == "https:":
+			// Matches the shim only when the sidecar is served over HTTPS.
+			wildcard = wildcard || strings.HasPrefix(httpPrefix, "https://")
 		case low == "'strict-dynamic'":
-			hasCrypto = true
+			strictDynamic = true
+		case low == "'unsafe-inline'":
+			unsafeInline = true
 		case strings.HasPrefix(low, "'nonce-") && strings.HasSuffix(tok, "'") && len(tok) > 8:
-			hasCrypto = true
+			nonceOrHash = true
 		case strings.HasPrefix(low, "'sha256-") || strings.HasPrefix(low, "'sha384-") || strings.HasPrefix(low, "'sha512-"):
-			hasCrypto = true
+			nonceOrHash = true
 		}
 	}
-	if hasNone || hasCrypto {
-		return hasNone, true
+	switch {
+	case hasNone:
+		return true, shimByNonce
+	case strictDynamic || nonceOrHash:
+		return false, shimByNonce
+	case wildcard || (self && httpPrefix != ""):
+		return false, shimAllowed
+	case httpPrefix != "":
+		return false, shimByPrefix
+	case unsafeInline:
+		// Without a prefix the shim cannot be allowed without breaking the
+		// page's inline scripts. The page matters more.
+		return false, shimAllowed
+	default:
+		return false, shimByNonce
 	}
-	if !hasWildcard && (!hasSelf || httpPrefix == "") {
-		return false, true
-	}
-	return false, false
 }
 
 func cspPolicyNeedsShimNonce(csp, httpPrefix string) bool {
@@ -1255,11 +1292,33 @@ func cspPolicyNeedsShimNonce(csp, httpPrefix string) bool {
 	if effIdx < 0 {
 		return false
 	}
-	_, needs := cspTokensRequireNonce(dirs[effIdx].tokens, httpPrefix)
-	return needs
+	_, access := shimAccessFor(dirs[effIdx].tokens, httpPrefix)
+	return access == shimByNonce
 }
 
+// rewriteSingleSidecarCSP rewrites one CSP header policy for the sidecar frame:
+// the directives as rewriteSidecarCSPDirectives leaves them, then the sandbox
+// and frame-ancestors the proxy requires.
 func rewriteSingleSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) (rewritten string, usedNonce bool) {
+	dirs, usedNonce := rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce)
+	out := cspDirectiveStrings(dirs)
+	out = append(out, sidecarSandboxFor(csp), sidecarFrameAncestors)
+	return strings.Join(out, "; "), usedNonce
+}
+
+// rewriteMetaSidecarCSP rewrites a policy declared in a <meta> tag the same way
+// as a header one. A meta policy cannot carry sandbox or frame-ancestors, so
+// none are added.
+func rewriteMetaSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) string {
+	dirs, _ := rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce)
+	return strings.Join(cspDirectiveStrings(dirs), "; ")
+}
+
+// rewriteSidecarCSPDirectives adds the sidecar's URL prefix wherever 'self'
+// appears, since 'self' does not match inside the opaque-origin frame, and
+// lets the injected shim through the effective script directive. It drops
+// sandbox and frame-ancestors, which the caller decides.
+func rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce string) (dirs []parsedCSPDirective, usedNonce bool) {
 	dirs, scriptElemIdx, scriptIdx, defaultIdx := parseCSPDirectives(csp)
 
 	for i := range dirs {
@@ -1279,49 +1338,61 @@ func rewriteSingleSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) (rewri
 	}
 
 	effIdx := effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx)
-	if effIdx >= 0 {
-		toks := dirs[effIdx].tokens
-		hasNone, needsNonce := cspTokensRequireNonce(toks, httpPrefix)
-		if hasNone {
-			if dirs[effIdx].name == "default-src" {
-				// Preserve default-src 'none' for non-script directives while permitting
-				// only the injected capability shim via an explicit script-src nonce.
-				if shimNonce != "" {
-					dirs = append(dirs, parsedCSPDirective{
-						name:   "script-src",
-						tokens: []string{"'nonce-" + shimNonce + "'"},
-					})
-					usedNonce = true
-				} else if httpPrefix != "" {
-					dirs = append(dirs, parsedCSPDirective{
-						name:   "script-src",
-						tokens: []string{httpPrefix},
-					})
-				}
-			} else {
-				filtered := make([]string, 0, len(toks)+1)
-				for _, tok := range toks {
-					if !strings.EqualFold(tok, "'none'") {
-						filtered = append(filtered, tok)
-					}
-				}
-				if shimNonce != "" {
-					filtered = appendUniqueCSPToken(filtered, "'nonce-"+shimNonce+"'")
-					usedNonce = true
-				} else if httpPrefix != "" {
-					filtered = appendUniqueCSPToken(filtered, httpPrefix)
-				}
-				dirs[effIdx].tokens = filtered
-			}
-		} else {
-			if needsNonce && shimNonce != "" {
-				toks = appendUniqueCSPToken(toks, "'nonce-"+shimNonce+"'")
+	if effIdx < 0 {
+		return dirs, false
+	}
+	toks := dirs[effIdx].tokens
+	hasNone, access := shimAccessFor(toks, httpPrefix)
+	if hasNone {
+		if dirs[effIdx].name == "default-src" {
+			// Keep default-src 'none' for every other kind of resource and let
+			// only the shim through with an explicit script-src.
+			if shimNonce != "" {
+				dirs = append(dirs, parsedCSPDirective{
+					name:   "script-src",
+					tokens: []string{"'nonce-" + shimNonce + "'"},
+				})
 				usedNonce = true
+			} else if httpPrefix != "" {
+				dirs = append(dirs, parsedCSPDirective{
+					name:   "script-src",
+					tokens: []string{httpPrefix},
+				})
 			}
-			dirs[effIdx].tokens = toks
+			return dirs, usedNonce
 		}
+		filtered := make([]string, 0, len(toks)+1)
+		for _, tok := range toks {
+			if !strings.EqualFold(tok, "'none'") {
+				filtered = append(filtered, tok)
+			}
+		}
+		if shimNonce != "" {
+			filtered = appendUniqueCSPToken(filtered, "'nonce-"+shimNonce+"'")
+			usedNonce = true
+		} else if httpPrefix != "" {
+			filtered = appendUniqueCSPToken(filtered, httpPrefix)
+		}
+		dirs[effIdx].tokens = filtered
+		return dirs, usedNonce
 	}
 
+	switch access {
+	case shimByNonce:
+		if shimNonce != "" {
+			toks = appendUniqueCSPToken(toks, "'nonce-"+shimNonce+"'")
+			usedNonce = true
+		} else if httpPrefix != "" {
+			toks = appendUniqueCSPToken(toks, httpPrefix)
+		}
+	case shimByPrefix:
+		toks = appendUniqueCSPToken(toks, httpPrefix)
+	}
+	dirs[effIdx].tokens = toks
+	return dirs, usedNonce
+}
+
+func cspDirectiveStrings(dirs []parsedCSPDirective) []string {
 	out := make([]string, 0, len(dirs)+2)
 	for _, d := range dirs {
 		if len(d.tokens) == 0 {
@@ -1330,8 +1401,40 @@ func rewriteSingleSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) (rewri
 			out = append(out, d.name+" "+strings.Join(d.tokens, " "))
 		}
 	}
-	out = append(out, sidecarSandboxDirective, sidecarFrameAncestors)
-	return strings.Join(out, "; "), usedNonce
+	return out
+}
+
+// sidecarSandboxFor returns the sandbox directive for a rewritten policy. The
+// frame must never get allow-same-origin, which would expose the app's session,
+// so the proxy's own list is the most a sidecar gets. A sidecar that sandboxes
+// itself more tightly, for example without allow-scripts to show untrusted
+// output, keeps that: the result is the tokens both lists share. Only the first
+// sandbox directive in a policy counts, as in a browser.
+func sidecarSandboxFor(csp string) string {
+	var upstream []string
+	found := false
+	for _, raw := range strings.Split(csp, ";") {
+		fields := strings.Fields(strings.TrimSpace(raw))
+		if len(fields) > 0 && strings.EqualFold(fields[0], "sandbox") {
+			upstream = fields[1:]
+			found = true
+			break
+		}
+	}
+	if !found {
+		return sidecarSandboxDirective
+	}
+	granted := make(map[string]bool, len(upstream))
+	for _, tok := range upstream {
+		granted[strings.ToLower(tok)] = true
+	}
+	kept := []string{"sandbox"}
+	for _, tok := range strings.Fields(sidecarSandboxDirective)[1:] {
+		if granted[tok] {
+			kept = append(kept, tok)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 func appendUniqueCSPToken(tokens []string, candidate string) []string {
@@ -1409,11 +1512,16 @@ func sidecarBaseDir(reqPath string) string {
 // rewriteSidecarHTML injects the external capability-scoped shim script and
 // rewrites relative and root-relative URL attributes while leaving raw text
 // elements (<script>, <title>, <textarea>, etc.) and comments untouched.
-func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string, shimNonce string) []byte {
+//
+// The first <base href> moves the directory later relative URLs resolve
+// against, as it does in a browser, and a <meta> CSP is rewritten like a
+// header one.
+func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string, page sidecarPageCSP) []byte {
 	shimTag := fmt.Sprintf(`<script src="%s/%s"></script>`, capPrefix, sidecarShimName)
-	if shimNonce != "" {
-		shimTag = fmt.Sprintf(`<script nonce="%s" src="%s/%s"></script>`, shimNonce, capPrefix, sidecarShimName)
+	if page.shimNonce != "" {
+		shimTag = fmt.Sprintf(`<script nonce="%s" src="%s/%s"></script>`, page.shimNonce, capPrefix, sidecarShimName)
 	}
+	baseSet := false
 
 	var out bytes.Buffer
 	out.Grow(len(body) + len(shimTag) + 256)
@@ -1455,7 +1563,13 @@ func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string,
 		tagName, isClosing := parseHTMLTagName(tagBytes)
 
 		if !isClosing && tagName != "" && !strings.HasPrefix(tagName, "!") && !strings.HasPrefix(tagName, "?") {
-			out.Write(rewriteHTMLOpenTag(tagBytes, port, capPrefix, baseDir))
+			out.Write(rewriteHTMLOpenTag(tagBytes, port, capPrefix, baseDir, page))
+			if tagName == "base" && !baseSet {
+				if href, ok := htmlTagAttrValue(tagBytes, "href"); ok {
+					baseSet = true
+					baseDir = sidecarBaseFromHref(href, port, capPrefix, baseDir)
+				}
+			}
 		} else {
 			out.Write(tagBytes)
 		}
@@ -1596,19 +1710,33 @@ type htmlAttrToken struct {
 	quote    byte
 	value    string
 	closedQ  bool
+	// valued is false when the tag ends right after '=', leaving no value
+	// to rewrite.
+	valued bool
 }
 
-func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) []byte {
+// sidecarPageCSP carries what a <meta> policy needs to be rewritten like a
+// header one.
+type sidecarPageCSP struct {
+	httpPrefix string
+	wsPrefix   string
+	shimNonce  string
+}
+
+// sidecarExternalBase is the base directory once a <base href> points away
+// from the sidecar. The browser then resolves relative and root-relative URLs
+// against that other origin, so they are left as written.
+const sidecarExternalBase = "\x00external-base"
+
+// parseHTMLOpenTag splits an opening tag into its name part, its attributes
+// with their raw values, and whatever closes it.
+func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []byte) {
 	n := len(tag)
 	i := 1
 	for i < n && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\r' && tag[i] != '\n' && tag[i] != '>' && tag[i] != '/' {
 		i++
 	}
-	header := tag[:i]
-
-	var attrs []htmlAttrToken
-	var tail []byte
-	rewroteURL := false
+	header = tag[:i]
 
 	for i < n {
 		wsStart := i
@@ -1662,24 +1790,18 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) 
 			break
 		}
 
-		var quote byte
-		closedQ := false
-		valStart := i
 		if tag[i] == '"' || tag[i] == '\'' {
-			quote = tag[i]
+			quote := tag[i]
 			i++
-			valStart = i
+			valStart := i
 			for i < n && tag[i] != quote {
 				i++
 			}
 			rawVal := string(tag[valStart:i])
+			closedQ := false
 			if i < n && tag[i] == quote {
 				closedQ = true
 				i++
-			}
-			newVal := rewriteTagAttrValue(nameLow, rawVal, port, capPrefix, baseDir)
-			if newVal != rawVal || strings.HasPrefix(strings.TrimSpace(newVal), capPrefix+"/") {
-				rewroteURL = true
 			}
 			attrs = append(attrs, htmlAttrToken{
 				leadWS:   leadWS,
@@ -1688,17 +1810,14 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) 
 				hasValue: true,
 				eqAndWS:  eqAndWS,
 				quote:    quote,
-				value:    newVal,
+				value:    rawVal,
 				closedQ:  closedQ,
+				valued:   true,
 			})
 		} else {
+			valStart := i
 			for i < n && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\r' && tag[i] != '\n' && tag[i] != '>' {
 				i++
-			}
-			rawVal := string(tag[valStart:i])
-			newVal := rewriteTagAttrValue(nameLow, rawVal, port, capPrefix, baseDir)
-			if newVal != rawVal || strings.HasPrefix(strings.TrimSpace(newVal), capPrefix+"/") {
-				rewroteURL = true
 			}
 			attrs = append(attrs, htmlAttrToken{
 				leadWS:   leadWS,
@@ -1706,9 +1825,57 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) 
 				nameLow:  nameLow,
 				hasValue: true,
 				eqAndWS:  eqAndWS,
-				value:    newVal,
+				value:    string(tag[valStart:i]),
+				valued:   true,
 			})
 		}
+	}
+	return header, attrs, tail
+}
+
+// htmlTagAttrValue returns the decoded value of the first attribute called
+// name in an opening tag.
+func htmlTagAttrValue(tag []byte, name string) (string, bool) {
+	_, attrs, _ := parseHTMLOpenTag(tag)
+	for _, a := range attrs {
+		if a.nameLow == name && a.valued {
+			return html.UnescapeString(a.value), true
+		}
+	}
+	return "", false
+}
+
+func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string, page sidecarPageCSP) []byte {
+	header, attrs, tail := parseHTMLOpenTag(tag)
+
+	cspMeta := false
+	if strings.EqualFold(string(header[1:]), "meta") {
+		for _, a := range attrs {
+			if a.nameLow == "http-equiv" && a.valued && strings.EqualFold(strings.TrimSpace(html.UnescapeString(a.value)), "content-security-policy") {
+				cspMeta = true
+				break
+			}
+		}
+	}
+
+	rewroteURL := false
+	for i := range attrs {
+		a := &attrs[i]
+		if !a.valued {
+			continue
+		}
+		if cspMeta && a.nameLow == "content" {
+			// An unquoted value cannot hold the spaces a policy has.
+			if a.quote != 0 {
+				a.value = html.EscapeString(rewriteMetaSidecarCSP(html.UnescapeString(a.value), page.httpPrefix, page.wsPrefix, page.shimNonce))
+			}
+			continue
+		}
+		newVal := rewriteTagAttrValue(a.nameLow, a.value, port, capPrefix, baseDir)
+		if newVal != a.value || strings.HasPrefix(strings.TrimSpace(newVal), capPrefix+"/") {
+			rewroteURL = true
+		}
+		a.value = newVal
 	}
 
 	var out bytes.Buffer
@@ -1736,6 +1903,74 @@ func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string) 
 	}
 	out.Write(tail)
 	return out.Bytes()
+}
+
+// sidecarBaseFromHref returns the base directory that relative URLs resolve
+// against after a <base href>. href resolves against the document's own
+// directory, cur. An href leaving the sidecar gives sidecarExternalBase.
+func sidecarBaseFromHref(href string, port int, capPrefix string, cur string) string {
+	t := strings.TrimSpace(href)
+	if t == "" {
+		return cur
+	}
+	if strings.HasPrefix(t, "//") {
+		return sidecarExternalBase
+	}
+	if hasURIScheme(t) {
+		if p, ok := loopbackPortFromURL(t); ok && p == port {
+			if u, err := url.Parse(t); err == nil {
+				if u.Path == "" {
+					return "/"
+				}
+				return sidecarBaseDir(u.Path)
+			}
+		}
+		return sidecarExternalBase
+	}
+
+	pathPart := t
+	if cut := strings.IndexAny(t, "?#"); cut >= 0 {
+		pathPart = t[:cut]
+	}
+	if pathPart == "" {
+		return cur
+	}
+	if !strings.HasPrefix(pathPart, "/") {
+		joined := path.Join(cur, pathPart)
+		if isDirectoryRef(pathPart) && joined != "/" {
+			joined += "/"
+		}
+		return sidecarBaseDir(joined)
+	}
+
+	basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
+	switch {
+	case pathPart == capPrefix || strings.HasPrefix(pathPart, capPrefix+"/"):
+		pathPart = strings.TrimPrefix(pathPart, capPrefix)
+	case pathPart == basePrefix || strings.HasPrefix(pathPart, basePrefix+"/"):
+		pathPart = strings.TrimPrefix(pathPart, basePrefix)
+		if strings.HasPrefix(pathPart, "/"+sidecarCapSegment+"/") {
+			// Another capability's path; the browser would leave this one.
+			return sidecarExternalBase
+		}
+	case strings.HasPrefix(pathPart, "/__agy/"):
+		// The app's own paths are outside the sidecar.
+		return sidecarExternalBase
+	}
+	if pathPart == "" {
+		return "/"
+	}
+	clean := path.Clean(pathPart)
+	if isDirectoryRef(pathPart) && clean != "/" {
+		clean += "/"
+	}
+	return sidecarBaseDir(clean)
+}
+
+// isDirectoryRef reports whether a URL path names a directory: it ends in a
+// slash, or in a "." or ".." segment, which resolve to directories.
+func isDirectoryRef(p string) bool {
+	return strings.HasSuffix(p, "/") || p == "." || p == ".." || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..")
 }
 
 func rewriteTagAttrValue(attrName, rawVal string, port int, capPrefix string, baseDir string) string {
@@ -1805,6 +2040,9 @@ func rewriteSidecarRelativeOrLoopbackURL(val string, port int, capPrefix string,
 		}
 		return val
 	}
+	if baseDir == sidecarExternalBase {
+		return val
+	}
 
 	basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
 	if strings.HasPrefix(trimmed, "/") {
@@ -1840,7 +2078,7 @@ func rewriteSidecarRelativeOrLoopbackURL(val string, port int, capPrefix string,
 		pathPart = trimmed[:cut]
 		suffix = trimmed[cut:]
 	}
-	trailingSlash := strings.HasSuffix(pathPart, "/")
+	trailingSlash := isDirectoryRef(pathPart)
 	joined := path.Clean(path.Join(baseDir, pathPart))
 	if !strings.HasPrefix(joined, "/") {
 		joined = "/" + joined

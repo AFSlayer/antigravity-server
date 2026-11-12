@@ -270,6 +270,7 @@ agy-server config [flags]       管理 config.json 配置项
 - **防暴力破解**：连续登录失败 5 次将触发临时 IP 封禁（5 至 30 分钟）。
 - **上传目录隔离**：文件上传严格限制在配置的项目目录内；路径遍历攻击（`../`）将被立即拦截。
 - **受信任代理**：在 Nginx、Caddy 或 Cloudflare 之后部署时，请配置 `--trusted-proxies` 防止 Header 伪造。
+- **Sidecar UI 与 localhost 中继**：Swarm 看板等 sidecar UI 在 `/__agy/sidecar/` 下以 opaque origin 沙箱打开，`/__agy/api/loopback-fetch` 和 `/__agy/api/oauth-callback` 负责中继 localhost 预览和 OAuth 重定向。三者都需要登录，边界说明见 [SECURITY.md](SECURITY.md)。
 
 ---
 

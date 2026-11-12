@@ -254,6 +254,7 @@ agy-server config [flags]       Gestiona la configuración en config.json
 - **Protección contra fuerza bruta**: 5 intentos fallidos de inicio de sesión provocan el bloqueo temporal de la IP (de 5 a 30 minutos).
 - **Aislamiento de subidas**: La subida de archivos se limita estrictamente al directorio de proyecto configurado; los intentos de path traversal (`../`) son rechazados.
 - **Proxies de confianza**: Configure `--trusted-proxies` al operar tras Nginx, Caddy o Cloudflare para evitar la falsificación de cabeceras.
+- **UIs de sidecars y relés de localhost**: Las UIs de sidecars, como el tablero de Swarm, se sirven en `/__agy/sidecar/` dentro de un sandbox de origen opaco, y `/__agy/api/loopback-fetch` y `/__agy/api/oauth-callback` retransmiten vistas previas de localhost y redirecciones OAuth. Las tres rutas requieren iniciar sesión. Sus límites están en [SECURITY.md](SECURITY.md).
 
 ---
 
