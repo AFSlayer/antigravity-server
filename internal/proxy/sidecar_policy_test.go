@@ -660,7 +660,9 @@ func TestSidecarWebSocketCloseGraceIsNotExtended(t *testing.T) {
 					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
 					return
 				}
-				_, _ = fmt.Fprintf(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key")))
+				_, _ = fmt.Fprintf(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n"+
+					"Strict-Transport-Security: max-age=31536000\r\nClear-Site-Data: \"cookies\"\r\nNEL: {}\r\nReport-To: {}\r\n\r\n",
+					computeWebSocketAcceptKey(req.Header.Get("Sec-WebSocket-Key")))
 				// The sidecar finishes its half, then waits for the proxy to
 				// close the connection.
 				_ = c.(*net.TCPConn).CloseWrite()
@@ -703,6 +705,11 @@ func TestSidecarWebSocketCloseGraceIsNotExtended(t *testing.T) {
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("handshake: %v %v", resp, err)
+	}
+	for _, name := range originWideHeaders {
+		if v := resp.Header.Get(name); v != "" {
+			t.Errorf("101 response passed on %s: %q", name, v)
+		}
 	}
 
 	// The page keeps sending after the sidecar has finished. That must not

@@ -7,33 +7,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/AFSlayer/antigravity-server/internal/httpenc"
 )
 
 // Sidecar servers on loopback rarely compress, and the proxy reads their
 // bodies uncompressed to rewrite them, so the proxy compresses what it sends
 // on to a browser that may be on a slow link.
 const sidecarGzipMinBytes = 1024
-
-// acceptsGzip reports whether an Accept-Encoding value allows gzip.
-func acceptsGzip(acceptEncoding string) bool {
-	for _, part := range strings.Split(acceptEncoding, ",") {
-		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name != "gzip" && name != "x-gzip" {
-			continue
-		}
-		for _, p := range strings.Split(params, ";") {
-			k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
-			if ok && strings.EqualFold(strings.TrimSpace(k), "q") {
-				if q, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && q <= 0 {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return false
-}
 
 // compressibleSidecarType reports whether a Content-Type is text that gzip
 // shrinks. Event streams are excluded: they are read as they arrive.
@@ -56,18 +37,6 @@ func compressibleSidecarType(contentType string) bool {
 		return true
 	}
 	return false
-}
-
-func addVaryAcceptEncoding(h http.Header) {
-	for _, v := range h.Values("Vary") {
-		for _, tok := range strings.Split(v, ",") {
-			tok = strings.TrimSpace(tok)
-			if tok == "*" || strings.EqualFold(tok, "Accept-Encoding") {
-				return
-			}
-		}
-	}
-	h.Add("Vary", "Accept-Encoding")
 }
 
 // compressSidecarResponse gzips resp for clientReq when the browser accepts
@@ -94,8 +63,8 @@ func compressSidecarResponse(resp *http.Response, clientReq *http.Request) {
 	if !compressibleSidecarType(resp.Header.Get("Content-Type")) {
 		return
 	}
-	addVaryAcceptEncoding(resp.Header)
-	if !acceptsGzip(clientReq.Header.Get("Accept-Encoding")) {
+	httpenc.AddVary(resp.Header)
+	if !httpenc.AcceptsGzip(clientReq.Header.Get("Accept-Encoding")) {
 		return
 	}
 	if resp.ContentLength >= 0 && resp.ContentLength < sidecarGzipMinBytes {
@@ -108,6 +77,9 @@ func compressSidecarResponse(resp *http.Response, clientReq *http.Request) {
 	}
 	resp.Header.Set("Content-Encoding", "gzip")
 	resp.Header.Del("Content-Length")
+	// Byte ranges of the gzipped body are not the sidecar's, so a resumed
+	// download must not ask for them.
+	resp.Header.Del("Accept-Ranges")
 	resp.ContentLength = -1
 	resp.Body = newGzipStreamBody(resp.Body)
 }
@@ -165,8 +137,8 @@ func (b *gzipStreamBody) Close() error {
 // browser accepts it. Headers other than the encoding and length are set by
 // the caller.
 func writeSidecarGenerated(w http.ResponseWriter, r *http.Request, body []byte) {
-	addVaryAcceptEncoding(w.Header())
-	if len(body) < sidecarGzipMinBytes || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+	httpenc.AddVary(w.Header())
+	if len(body) < sidecarGzipMinBytes || !httpenc.AcceptsGzip(r.Header.Get("Accept-Encoding")) {
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(body)

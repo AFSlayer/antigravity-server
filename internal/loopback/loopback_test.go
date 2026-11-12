@@ -651,3 +651,54 @@ func TestLoopbackFetchFullQueue(t *testing.T) {
 		t.Fatalf("status %d with every slot taken, want 503", r.StatusCode)
 	}
 }
+
+// The JSON is gzipped for a browser that accepts it, and plain otherwise.
+func TestLoopbackFetchGzip(t *testing.T) {
+	page := strings.Repeat("<p>module text</p>\n", 4000)
+	devSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, page)
+	}))
+	t.Cleanup(devSrv.Close)
+	devPort := serverPort(t, devSrv.URL)
+	h := New(Options{ResolveFetchTarget: func(_ context.Context, port int) (string, bool) { return "127.0.0.1", port == devPort }})
+	t.Cleanup(h.Close)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+
+	raw := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	for _, acceptEncoding := range []string{"gzip, deflate, br", "identity"} {
+		body, _ := json.Marshal(fetchRequest{Port: devPort, Path: "/"})
+		req, _ := http.NewRequest(http.MethodPost, front.URL+FetchAPIPath, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", front.URL)
+		req.Header.Set("Accept-Encoding", acceptEncoding)
+		resp, err := raw.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rd io.Reader = resp.Body
+		gzipped := resp.Header.Get("Content-Encoding") == "gzip"
+		if gzipped != (acceptEncoding != "identity") {
+			t.Fatalf("Accept-Encoding %q: Content-Encoding %q", acceptEncoding, resp.Header.Get("Content-Encoding"))
+		}
+		if gzipped {
+			zr, err := gzip.NewReader(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rd = zr
+		}
+		var out fetchResponse
+		err = json.NewDecoder(rd).Decode(&out)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatalf("Accept-Encoding %q: %v", acceptEncoding, err)
+		}
+		got, _ := base64.StdEncoding.DecodeString(out.BodyBase64)
+		if string(got) != page {
+			t.Fatalf("Accept-Encoding %q: body changed", acceptEncoding)
+		}
+	}
+}

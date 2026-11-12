@@ -1098,9 +1098,11 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 		rewritten = rewriteSidecarCSS(buf, port, capPrefix, baseDir)
 	case isPreloadJS:
 		shim := sidecarShimJS(port, capPrefix) + "\n"
-		rewritten = make([]byte, 0, len(shim)+len(buf))
+		rewritten = make([]byte, 0, len(shim)+len(buf)+len(sidecarPreloadSuffixJS)+1)
 		rewritten = append(rewritten, shim...)
 		rewritten = append(rewritten, buf...)
+		rewritten = append(rewritten, '\n')
+		rewritten = append(rewritten, sidecarPreloadSuffixJS...)
 	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(rewritten))
@@ -1112,16 +1114,32 @@ func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Reque
 	return nil
 }
 
+// originWideHeaders act on the app's whole origin, not the sidecar's path,
+// and outlast the response: one sidecar response could clear the app's
+// cookies and storage, pin HSTS or another transport for the app's host,
+// have the browser report every URL of the app to a collector, or change the
+// client hints sent to the app.
+var originWideHeaders = []string{
+	"Clear-Site-Data",
+	"Strict-Transport-Security",
+	"Alt-Svc",
+	"NEL",
+	"Report-To",
+	"Accept-CH",
+	"Critical-CH",
+}
+
+func stripOriginWideHeaders(h http.Header) {
+	for _, name := range originWideHeaders {
+		h.Del(name)
+	}
+}
+
 func (p *Proxy) enforceSidecarSecurityHeaders(h http.Header, clientReq *http.Request, port int, capSess *sidecarCapSession) (shimNonce string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Del("Content-Security-Policy-Report-Only")
-	// These act on the app's whole origin, not the sidecar's path: one
-	// sidecar response could clear the app's cookies and storage, or pin
-	// HSTS or another transport for the app's host.
-	h.Del("Clear-Site-Data")
-	h.Del("Strict-Transport-Security")
-	h.Del("Alt-Svc")
+	stripOriginWideHeaders(h)
 
 	policies := splitCSPPolicies(h.Values("Content-Security-Policy"))
 	h.Del("Content-Security-Policy")
@@ -2524,6 +2542,7 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 		capSess.storeSetCookies(rawCookies)
 		resp.Header.Del("Set-Cookie")
 	}
+	stripOriginWideHeaders(resp.Header)
 
 	clientConn, clientBuf, err := hj.Hijack()
 	if err != nil {
@@ -2627,6 +2646,38 @@ func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, po
 	go pipeConn(clientConn, upConn)
 	wg.Wait()
 }
+
+// sidecarPreloadSuffixJS runs after the sidecar bridge, preload.js. The app
+// takes an add-artifact-comment message only from the frame's own origin, and
+// a sandboxed frame has none, so the message carries the gateway token from
+// the frame's URL instead: the app's window.__agySidecarMessageOK compares it
+// with the token in the iframe's src. A page the frame navigated to does not
+// know the token. window.parent is replaced only while the bridge's
+// addArtifactComment runs, so the bridge's own message format is kept.
+const sidecarPreloadSuffixJS = `;(function () {
+  var s = window.sidecar, ui = s && s.ui, add = ui && ui.addArtifactComment;
+  var token = new URLSearchParams(location.search).get("token");
+  var desc = Object.getOwnPropertyDescriptor(window, "parent");
+  if (typeof add !== "function" || !token || !desc || !desc.configurable || window.parent === window) return;
+  var realParent = window.parent;
+  var relay = {
+    postMessage: function (msg, targetOrigin, transfer) {
+      if (msg && typeof msg === "object" && msg.type === "add-artifact-comment") {
+        msg = Object.assign({}, msg, { agySidecarToken: token });
+      }
+      return realParent.postMessage(msg, targetOrigin, transfer);
+    }
+  };
+  ui.addArtifactComment = function () {
+    Object.defineProperty(window, "parent", { value: relay, configurable: true, writable: true });
+    try {
+      return add.apply(this, arguments);
+    } finally {
+      Object.defineProperty(window, "parent", desc);
+    }
+  };
+})();
+`
 
 func sidecarShimJS(port int, capPrefix string) string {
 	return `(function(){

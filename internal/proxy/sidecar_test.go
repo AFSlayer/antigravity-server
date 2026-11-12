@@ -231,6 +231,10 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 			w.Header().Set("Clear-Site-Data", `"cookies", "storage"`)
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 			w.Header().Set("Alt-Svc", `h3=":443"`)
+			w.Header().Set("NEL", `{"report_to":"x","max_age":86400,"success_fraction":1.0}`)
+			w.Header().Set("Report-To", `{"group":"x","max_age":86400,"endpoints":[{"url":"https://collector.example/r"}]}`)
+			w.Header().Set("Accept-CH", "Sec-CH-UA-Full-Version-List")
+			w.Header().Set("Critical-CH", "Sec-CH-UA-Full-Version-List")
 			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'sha256-xyz123='; frame-ancestors 'none'")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(`<!doctype html><html><head>` +
@@ -410,7 +414,7 @@ func TestSidecarOpaqueOriginSandboxAndCookieVault(t *testing.T) {
 	if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
 		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
 	}
-	for _, name := range []string{"Clear-Site-Data", "Strict-Transport-Security", "Alt-Svc"} {
+	for _, name := range []string{"Clear-Site-Data", "Strict-Transport-Security", "Alt-Svc", "NEL", "Report-To", "Accept-CH", "Critical-CH"} {
 		if v := resp.Header.Get(name); v != "" {
 			t.Errorf("origin-wide header %s: %q reached the browser", name, v)
 		}

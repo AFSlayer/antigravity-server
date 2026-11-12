@@ -1,7 +1,9 @@
 package patches
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -367,5 +369,74 @@ const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
 `
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
 		t.Fatalf("2.31.2 remote patches harness failed: %v\n%s", err, out)
+	}
+}
+
+// The sign-in patch ends the hook's var statement and reassigns the flag. If
+// the minifier ever continues that declaration, a later name would become an
+// undeclared assignment, which throws in strict mode, so the patch must
+// report itself missing instead of applying.
+func TestPluginMentionSignInNeedsEndOfDeclaration(t *testing.T) {
+	body := `function nCc(a){var b=gj(),{startPluginAuthSignIn:c}=Qt(),d=St(),f=!!b.get("pluginAuth"),g=f&&CT(b.runtimeEnvironment)===1,b2=(0,B.useCallback)((k,l)=>{if(f)return mCc(l??a,k)},[a,f]),h=(0,B.useCallback)(k=>{g&&c&&c({plugin:k.plugin,provider:k.provider,accountId:k.accountId,mode:1}).then(l=>{dm(window,l.authUrl,"_blank","noopener,noreferrer")})},[g,d,c]);return{canSignIn:g,authViewFor:b2,startSignIn:h}}`
+	out, report := Apply(MainJS, []byte(body), Options{})
+	var status Status = -1
+	for _, r := range report {
+		if r.ID == "plugin-mention-remote-signin" {
+			status = r.Status
+		}
+	}
+	if status != StatusMissing || string(out) != body {
+		t.Fatalf("plugin-mention-remote-signin on a continued declaration: status %v, changed %v", status, string(out) != body)
+	}
+}
+
+// A sandboxed sidecar frame posts with origin "null". The panel takes its
+// add-artifact-comment only with the gateway token of the iframe's src, and
+// still takes a message from the frame's real origin as before.
+func TestSidecarArtifactCommentOrigin(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	bridgeJS := strings.TrimPrefix(remoteRuntimeBridgeScript, `<script id="agy-remote-runtime-bridge">`)
+	bridgeJS = strings.TrimSuffix(bridgeJS, `</script>`)
+	handlerJS := applyOnly(t, "sidecar-artifact-comment-origin",
+		`function quc(a){var b=nk(),c=FE();(0,B.useEffect)(()=>{var d=f=>{var g=a.current,h;if(h=g?.contentWindow!=null&&f.source===g.contentWindow){h=f.origin;a:{try{var {origin:k}=new URL(g.src);var l=k==="null"?void 0:k;break a}catch{}l=void 0}h=h===l}if(h&&f.data?.type==="add-artifact-comment"){b(f.data.payload)}};window.addEventListener("message",d);return()=>{window.removeEventListener("message",d)}},[b,c,a])}`,
+		Options{},
+	)
+	harness := `"use strict";
+const assert = require("assert");
+global.location = { origin: "https://agy.example.com", protocol: "https:", host: "agy.example.com", href: "https://agy.example.com/c/1" };
+const listeners = [];
+global.window = global;
+window.addEventListener = (type, fn) => { if (type === "message") listeners.push(fn); };
+window.removeEventListener = () => {};
+global.document = { addEventListener() {}, createElement() { return {}; }, head: { appendChild() {} } };
+` + bridgeJS + `
+const added = [];
+global.nk = () => (p) => added.push(p);
+global.FE = () => ({});
+global.B = { useEffect: (fn) => fn() };
+` + handlerJS + `
+const frameWin = {};
+const frame = { contentWindow: frameWin, src: "https://agy.example.com/__agy/sidecar/38489/?token=gw123" };
+quc({ current: frame });
+const send = (origin, data, source) => listeners.forEach((fn) => fn({ origin, data, source: source || frameWin }));
+send("null", { type: "add-artifact-comment", payload: "ok-token", agySidecarToken: "gw123" });
+send("null", { type: "add-artifact-comment", payload: "no-token" });
+send("null", { type: "add-artifact-comment", payload: "wrong-token", agySidecarToken: "other" });
+send("null", { type: "add-artifact-comment", payload: "other-window", agySidecarToken: "gw123" }, {});
+send("https://agy.example.com", { type: "add-artifact-comment", payload: "same-origin" });
+frame.src = "https://agy.example.com/__agy/sidecar/38489/";
+send("null", { type: "add-artifact-comment", payload: "src-without-token", agySidecarToken: "" });
+assert.deepStrictEqual(added, ["ok-token", "same-origin"]);
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, path).CombinedOutput(); err != nil {
+		t.Fatalf("node harness failed: %v\n%s", err, out)
 	}
 }

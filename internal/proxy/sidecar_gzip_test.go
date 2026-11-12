@@ -24,22 +24,6 @@ func gunzip(t *testing.T, body string) string {
 	return string(out)
 }
 
-func TestAcceptsGzip(t *testing.T) {
-	for in, want := range map[string]bool{
-		"gzip, deflate, br": true,
-		"br, GZIP;q=0.5":    true,
-		"gzip;q=0":          false,
-		"gzip; q=0.0":       false,
-		"br, deflate":       false,
-		"":                  false,
-		"x-gzip":            true,
-	} {
-		if got := acceptsGzip(in); got != want {
-			t.Errorf("acceptsGzip(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
 // Sidecar servers rarely compress, so the proxy gzips text for a browser
 // that accepts it, and leaves everything else as the sidecar sent it.
 func TestSidecarResponsesAreGzipped(t *testing.T) {
@@ -56,6 +40,7 @@ func TestSidecarResponsesAreGzipped(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/javascript")
 			w.Header().Set("ETag", `"v1"`)
+			w.Header().Set("Accept-Ranges", "bytes")
 			_, _ = io.WriteString(w, js)
 		case "/small.js":
 			w.Header().Set("Content-Type", "application/javascript")
@@ -84,6 +69,9 @@ func TestSidecarResponsesAreGzipped(t *testing.T) {
 	}
 	if got := resp.Header.Get("ETag"); got != `W/"v1"` {
 		t.Errorf("ETag of a gzipped body = %q, want it weakened", got)
+	}
+	if got := resp.Header.Get("Accept-Ranges"); got != "" {
+		t.Errorf("a gzipped body offers byte ranges: %q", got)
 	}
 
 	// The browser revalidates with the weak validator and the sidecar's
@@ -178,3 +166,24 @@ func TestGzipStreamBodyCloseStopsCopy(t *testing.T) {
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
+
+// The sidecar bridge, preload.js, gets the helper script before it and the
+// comment relay after it, once the bridge has defined window.sidecar.
+func TestSidecarPreloadGetsShimAndCommentRelay(t *testing.T) {
+	const bridge = `window.sidecar={ui:{addArtifactComment(){window.parent.postMessage({type:"add-artifact-comment"},"*")}}};`
+	f := newSidecarPolicyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/preload.js" {
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = io.WriteString(w, bridge)
+			return
+		}
+		htmlPage(w, "", "<html><head></head><body></body></html>")
+	})
+	_, body := f.get(t, "/preload.js", nil)
+	shimAt := strings.Index(body, "__agySidecarShimPrefix")
+	bridgeAt := strings.Index(body, bridge)
+	relayAt := strings.Index(body, "agySidecarToken")
+	if shimAt < 0 || bridgeAt < 0 || relayAt < 0 || !(shimAt < bridgeAt && bridgeAt < relayAt) {
+		t.Fatalf("preload.js order: shim %d, bridge %d, relay %d", shimAt, bridgeAt, relayAt)
+	}
+}

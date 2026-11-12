@@ -220,11 +220,7 @@ func parseProcHexAddrMask(hexAddr string, ipv6 bool) LoopbackListenMask {
 		}
 		var b [4]byte
 		binary.NativeEndian.PutUint32(b[:], uint32(v))
-		ip := net.IPv4(b[0], b[1], b[2], b[3])
-		if ip.IsUnspecified() || ip.IsLoopback() {
-			return ListenIPv4
-		}
-		return 0
+		return listenIPMask(net.IPv4(b[0], b[1], b[2], b[3]))
 	}
 
 	if len(hexAddr) != 32 {
@@ -238,20 +234,7 @@ func parseProcHexAddrMask(hexAddr string, ipv6 bool) LoopbackListenMask {
 		}
 		binary.NativeEndian.PutUint32(b[i*4:(i+1)*4], uint32(w))
 	}
-	ip := net.IP(b[:])
-	if ip4 := ip.To4(); ip4 != nil {
-		if ip4.IsUnspecified() || ip4.IsLoopback() {
-			return ListenIPv4
-		}
-		return 0
-	}
-	if ip.IsUnspecified() {
-		return ListenIPv6Wildcard
-	}
-	if ip.IsLoopback() {
-		return ListenIPv6
-	}
-	return 0
+	return listenIPMask(net.IP(b[:]))
 }
 
 func descendantPIDs(ctx context.Context, rootPID int) []int {

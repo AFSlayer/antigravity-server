@@ -122,8 +122,13 @@ func TestLoopbackListenMaskAndEndpoints(t *testing.T) {
 		}
 	}
 
-	if got := parseListenHostMask("127.0.0.5", false); got != ListenIPv4 {
-		t.Errorf("parseListenHostMask(127.0.0.5, false) = %v, want ListenIPv4", got)
+	// Only 127.0.0.1 is dialed, so a listener on another 127.x address
+	// cannot be reached through it.
+	if got := parseListenHostMask("127.0.0.5", false); got != 0 {
+		t.Errorf("parseListenHostMask(127.0.0.5, false) = %v, want 0", got)
+	}
+	if got := parseListenHostMask("::ffff:127.0.0.1", true); got != ListenIPv4 {
+		t.Errorf("parseListenHostMask(::ffff:127.0.0.1, true) = %v, want ListenIPv4", got)
 	}
 	if got := parseListenHostMask("[::1]", true); got != ListenIPv6 {
 		t.Errorf("parseListenHostMask([::1], true) = %v, want ListenIPv6", got)
@@ -158,6 +163,19 @@ func TestLoopbackListenMaskAndEndpoints(t *testing.T) {
 	if port6 > 0 {
 		if endpoints[port6]&ListenIPv6 == 0 || endpoints[port6]&ListenIPv4 != 0 {
 			t.Fatalf("port6 (%d) mask = %v, want ListenIPv6 only", port6, endpoints[port6])
+		}
+	}
+
+	// macOS has only 127.0.0.1 unless an alias is added.
+	if alias, err := net.Listen("tcp4", "127.0.0.2:0"); err == nil {
+		defer alias.Close()
+		aliasPort := alias.Addr().(*net.TCPAddr).Port
+		endpoints, err := ProcessTreeListeningEndpoints(context.Background(), os.Getpid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mask := endpoints[aliasPort]; mask != 0 {
+			t.Fatalf("a listener on 127.0.0.2 has mask %v, want none", mask)
 		}
 	}
 }

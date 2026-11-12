@@ -6,6 +6,7 @@ package loopback
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/auth"
+	"github.com/AFSlayer/antigravity-server/internal/httpenc"
 )
 
 const (
@@ -37,6 +39,7 @@ const (
 	maxResponseBodyBytes = 16 << 20
 	maxOAuthRequestBytes = 16 << 10
 	maxConcurrentFetches = 12
+	gzipMinBytes         = 1024
 
 	dialTimeout  = 5 * time.Second
 	oauthTimeout = 15 * time.Second
@@ -357,13 +360,15 @@ func (h *Handler) handleFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeFetchResponse(w, resp.StatusCode, collectResponseHeaders(resp.Header), respBody)
+	writeFetchResponse(w, r, resp.StatusCode, collectResponseHeaders(resp.Header), respBody)
 }
 
 // writeFetchResponse writes a fetchResponse with the body base64-encoded
 // straight into w, so a body of up to 16 MiB is not held again as a base64
-// string and as encoded JSON.
-func writeFetchResponse(w http.ResponseWriter, statusCode int, headers []headerEntry, body []byte) {
+// string and as encoded JSON. The JSON is gzipped for a browser that accepts
+// it: base64 makes it a third larger than the body, and a dev server's
+// modules are mostly text.
+func writeFetchResponse(w http.ResponseWriter, r *http.Request, statusCode int, headers []headerEntry, body []byte) {
 	if len(body) == 0 {
 		writeJSON(w, http.StatusOK, fetchResponse{StatusCode: statusCode, Headers: headers})
 		return
@@ -375,8 +380,16 @@ func writeFetchResponse(w http.ResponseWriter, statusCode int, headers []headerE
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	httpenc.AddVary(w.Header())
+	var out io.Writer = w
+	if len(body) >= gzipMinBytes && httpenc.AcceptsGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		out = gz
+	}
 	w.WriteHeader(http.StatusOK)
-	bw := bufio.NewWriterSize(w, 32<<10)
+	bw := bufio.NewWriterSize(out, 32<<10)
 	// head is a JSON object; reopen it to add the body. Base64 needs no
 	// escaping inside a JSON string.
 	_, _ = bw.Write(head[:len(head)-1])

@@ -459,8 +459,15 @@ func parseListenHostMask(rawHost string, ipv6Hint bool) LoopbackListenMask {
 	if ip == nil {
 		return 0
 	}
+	return listenIPMask(ip)
+}
+
+// listenIPMask reports the loopback families a listener bound to ip accepts
+// when dialed at 127.0.0.1 or ::1. A listener on another 127.x address is not
+// counted: dialing 127.0.0.1 would reach whatever listens there instead.
+func listenIPMask(ip net.IP) LoopbackListenMask {
 	if ip4 := ip.To4(); ip4 != nil {
-		if ip4.IsUnspecified() || ip4.IsLoopback() {
+		if ip4.IsUnspecified() || ip4.Equal(net.IPv4(127, 0, 0, 1)) {
 			return ListenIPv4
 		}
 		return 0
@@ -468,7 +475,7 @@ func parseListenHostMask(rawHost string, ipv6Hint bool) LoopbackListenMask {
 	if ip.IsUnspecified() {
 		return ListenIPv6Wildcard
 	}
-	if ip.IsLoopback() {
+	if ip.Equal(net.IPv6loopback) {
 		return ListenIPv6
 	}
 	return 0

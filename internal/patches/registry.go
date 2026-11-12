@@ -120,6 +120,13 @@ var (
 			`\s*:\s*)` +
 			`(` + "`\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" + `)`,
 	)
+	// sidecarCommentOriginRe finds the sidecar panel's check that an
+	// add-artifact-comment message comes from the iframe's origin.
+	sidecarCommentOriginRe = regexp.MustCompile(
+		`(new URL\(\s*([a-zA-Z0-9_$]+)\.src\s*\)[^{}]{0,120}\}\s*catch(?:\s*\([a-zA-Z0-9_$]+\))?\s*\{\s*\}\s*[a-zA-Z0-9_$]+\s*=\s*void 0\s*\}\s*)` +
+			`([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\s*===\s*([a-zA-Z0-9_$]+)` +
+			`(\s*\}\s*if\s*\(\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\.data\?\.type\s*===\s*"add-artifact-comment")`,
+	)
 	// sidecarIframeSandboxRe finds where the sidecar panel creates its iframe,
 	// before it sets the frame's src.
 	sidecarIframeSandboxRe = regexp.MustCompile(
@@ -150,7 +157,10 @@ var (
 	pluginMentionRemoteSignInRe = regexp.MustCompile(
 		`(function\s+[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\s*\{\s*var\s+([a-zA-Z0-9_$]+)\s*=\s*[a-zA-Z0-9_$]+\(\)\s*,\s*\{\s*startPluginAuthSignIn:\s*([a-zA-Z0-9_$]+)\s*\}[\s\S]{1,120}?,\s*([a-zA-Z0-9_$]+)\s*=\s*)` +
 			`([a-zA-Z0-9_$]+)\s*&&\s*([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.runtimeEnvironment\)\s*===\s*1)` +
-			`([\s\S]{1,180}?useCallback\)?\(\s*([a-zA-Z0-9_$]+)\s*=>\s*\{\s*)` +
+			// The replacement ends the var statement before reassigning the
+			// flag, so the declaration must end here too. Otherwise a later
+			// name in it would become an undeclared assignment.
+			`(\s*;[\s\S]{1,180}?useCallback\)?\(\s*([a-zA-Z0-9_$]+)\s*=>\s*\{\s*)` +
 			`[a-zA-Z0-9_$]+\s*&&\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+\(\s*\{\s*plugin:\s*[a-zA-Z0-9_$]+\.plugin\s*,\s*provider:\s*[a-zA-Z0-9_$]+\.provider)`,
 	)
 	mcpOAuthRemoteCallbackRe = regexp.MustCompile(
@@ -1068,6 +1078,16 @@ func All() []Patch {
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`dataset.testid="sidecar-iframe"`)) },
 			FindRe:       sidecarIframeSandboxRe,
 			Replace:      `${1}${2}.setAttribute("sandbox",` + strconv.Quote(SidecarFrameSandbox) + `);${3}`,
+		},
+		{
+			ID:           "sidecar-artifact-comment-origin",
+			Desc:         "Accept add-artifact-comment from the sandboxed sidecar frame when it carries the gateway token of the frame's URL",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`"add-artifact-comment"`)) },
+			FindRe:       sidecarCommentOriginRe,
+			Replace:      `${1}${3}=${4}===${5}||${4}==="null"&&!!window.__agySidecarMessageOK&&window.__agySidecarMessageOK(${2}.src,${7}.data)${6}`,
 		},
 		{
 			ID:       "sidecar-modal-endpoint-url",
@@ -4791,6 +4811,22 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
     var low = String(h || "").toLowerCase();
     return low === "localhost" || low === "127.0.0.1" || low === "[::1]" || low === "::1";
   }
+
+  // A sidecar frame has an opaque origin, so the app cannot match an
+  // add-artifact-comment message's origin to the frame's URL. The proxy has
+  // the sidecar's bridge send the gateway token from that URL with the
+  // comment, and a page the frame navigated to does not know it.
+  window.__agySidecarMessageOK = function (src, data) {
+    if (!data || typeof data !== "object" || data.type !== "add-artifact-comment") return false;
+    try {
+      var u = new URL(src, location.href);
+      var token = u.searchParams.get("token");
+      return u.origin === location.origin && u.pathname.indexOf("/__agy/sidecar/") === 0 &&
+        !!token && data.agySidecarToken === token;
+    } catch (e) {
+      return false;
+    }
+  };
 
   window.__agyResolveSidecarUrl = function (rawUrl) {
     if (typeof rawUrl !== "string" || !rawUrl) return rawUrl;

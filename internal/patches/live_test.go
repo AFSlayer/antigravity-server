@@ -156,6 +156,9 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if bytes.Contains(mainJS, []byte(".webPort")) && bytes.Contains(mainJS, []byte("http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
 		t.Error("sidecar-modal-endpoint-url: sidecar modal endpoint exists in bundle but patch regexp did not match")
 	}
+	if bytes.Contains(mainJS, []byte(`"add-artifact-comment"`)) && !regexpMatch(sidecarCommentOriginRe, mainJS) {
+		t.Error("sidecar-artifact-comment-origin: the sidecar panel's comment handler exists in bundle but patch regexp did not match")
+	}
 	if bytes.Contains(mainJS, []byte(`dataset.testid="sidecar-iframe"`)) && !regexpMatch(sidecarIframeSandboxRe, mainJS) {
 		t.Error("sidecar-iframe-sandbox: the sidecar panel's iframe exists in bundle but patch regexp did not match")
 	}

@@ -320,3 +320,41 @@ func TestTreeEndpointCacheNoRoot(t *testing.T) {
 		t.Fatal("a nil cache reported a port")
 	}
 }
+
+// The language server's own ports are asked about for every preview request,
+// almost always for a port it does not hold. Those answers come from an
+// expired result too, so a request does not wait for lsof or PowerShell.
+func TestProcessPortCacheAnswersExpiredMissesInBackground(t *testing.T) {
+	f := &fakeTree{clock: time.Unix(1000, 0)}
+	f.set(map[int]LoopbackListenMask{4000: 0}, nil)
+	c := newFakeCache(f, 2*time.Second, 2*time.Second)
+	c.staleMisses = true
+	if c.Holds(context.Background(), 5173) {
+		t.Fatal("a port the process does not hold is held")
+	}
+
+	f.gate = make(chan struct{})
+	f.advance(2500 * time.Millisecond)
+	answered := make(chan bool, 1)
+	go func() { answered <- c.Holds(context.Background(), 5173) }()
+	select {
+	case held := <-answered:
+		if held {
+			t.Fatal("an expired miss was answered as held")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("an expired miss waited for the walk")
+	}
+	waitWalks(t, f, 2)
+
+	// Past two TTLs the old result is not used.
+	f.advance(2 * time.Second)
+	go func() { answered <- c.Holds(context.Background(), 5173) }()
+	select {
+	case <-answered:
+		t.Fatal("a result two TTLs old was used without waiting for the walk")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(f.gate)
+	<-answered
+}

@@ -17,6 +17,9 @@ type EndpointCache struct {
 	missRefresh time.Duration
 	discover    func(ctx context.Context, pid int) (map[int]LoopbackListenMask, error)
 	now         func() time.Time
+	// staleMisses answers a port missing from an expired result the way a
+	// known port is answered, so it does not wait for a walk either.
+	staleMisses bool
 
 	mu        sync.Mutex
 	endpoints map[int]LoopbackListenMask
@@ -35,10 +38,12 @@ func NewTreeEndpointCache(rootPID int, ttl, missRefresh time.Duration) *Endpoint
 }
 
 // NewProcessPortCache returns a cache of the ports pid itself listens on.
-// It records no address families, so Lookup reports a zero mask. A port
-// missing from a result is not looked up again until the result is ttl old.
+// It records no address families, so Lookup reports a zero mask. Most
+// lookups are for ports the process does not hold, so those too are answered
+// from a result up to two TTLs old while a newer one is fetched: a port the
+// process opened since may go unnoticed for that long.
 func NewProcessPortCache(pid int, ttl time.Duration) *EndpointCache {
-	return newEndpointCache(pid, ttl, ttl, func(ctx context.Context, pid int) (map[int]LoopbackListenMask, error) {
+	c := newEndpointCache(pid, ttl, ttl, func(ctx context.Context, pid int) (map[int]LoopbackListenMask, error) {
 		ports, err := ListeningPortsContext(ctx, pid)
 		if err != nil {
 			return nil, err
@@ -49,6 +54,8 @@ func NewProcessPortCache(pid int, ttl time.Duration) *EndpointCache {
 		}
 		return out, nil
 	})
+	c.staleMisses = true
+	return c
 }
 
 func newEndpointCache(pid int, ttl, missRefresh time.Duration, discover func(context.Context, int) (map[int]LoopbackListenMask, error)) *EndpointCache {
@@ -94,12 +101,12 @@ func (c *EndpointCache) lookup(ctx context.Context, port int) (LoopbackListenMas
 			// A listener seen within two TTLs is answered at once. Once the
 			// result has expired it is refreshed in the background, so a slow
 			// walk does not stall the requests of a page in use.
-			if mask, ok := c.endpoints[port]; ok && age < 2*c.ttl {
+			if mask, ok := c.endpoints[port]; (ok || c.staleMisses) && age < 2*c.ttl {
 				if age >= c.ttl {
 					c.startWalkLocked()
 				}
 				c.mu.Unlock()
-				return mask, true, nil
+				return mask, ok, nil
 			}
 			if age < c.missRefresh {
 				c.mu.Unlock()
