@@ -294,6 +294,7 @@ agy-server config [flags]       config.json 설정값 관리
 - **무차별 대입 방어**: 5회 이상 로그인 실패 시 IP 임시 잠금 (5분~30분).
 - **업로드 격리**: 파일 업로드는 지정된 프로젝트 디렉토리 내부로 엄격히 제한되며 경로 조작(`../`) 시도는 즉시 차단됩니다.
 - **신뢰할 수 있는 프록시**: Nginx, Caddy, Cloudflare 뒤에서 구동할 경우 `--trusted-proxies`를 지정하여 헤더 위조를 방어합니다.
+- **사이드카 UI와 localhost 중계**: Swarm 보드 같은 사이드카 UI는 `/__agy/sidecar/`에서 opaque origin 샌드박스로 열리고, `/__agy/api/loopback-fetch`와 `/__agy/api/oauth-callback`은 localhost 미리보기와 OAuth 리다이렉트를 중계합니다. 세 경로 모두 로그인이 필요하며, 경계는 [SECURITY.md](SECURITY.md)에 정리되어 있습니다.
 
 ---
 

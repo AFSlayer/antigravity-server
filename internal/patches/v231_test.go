@@ -1,7 +1,9 @@
 package patches
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,5 +148,295 @@ assert.strictEqual(window.__agyNewRowOnTop, undefined);
 `
 	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
 		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+}
+
+func TestRemoteSidecarPreviewAndOAuthPatches2312(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+
+	bridgeJS := strings.TrimPrefix(remoteRuntimeBridgeScript, `<script id="agy-remote-runtime-bridge">`)
+	bridgeJS = strings.TrimSuffix(bridgeJS, `</script>`)
+
+	sidecarJS := applyOnly(t, "sidecar-resolve-url",
+		`const u={};const sidecarHelper={resolveSidecarUrl:(C,F)=>{a:{var G=u;F=F.startsWith("/")?F:`+"`/${F}`"+`;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?`+"`plugin://${M}${J.pathname}${J.search}`"+`:J.toString();break a}catch(J){H=(H=G[C])?`+"`plugin://${H}${F}`"+`:`+"`${C}${F}`"+`;break a}H=void 0}return H}};`,
+		Options{},
+	)
+	sidecarCatchlessJS := applyOnly(t, "sidecar-resolve-url",
+		`const u2={};const sidecarCatchless={resolveSidecarUrl:(C,F)=>{a:{var G=u2;F=F.startsWith("/")?F:`+"`/${F}`"+`;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?`+"`plugin://${M}${J.pathname}${J.search}`"+`:J.toString();break a}catch{H=(H=G[C])?`+"`plugin://${H}${F}`"+`:`+"`${C}${F}`"+`;break a}H=void 0}return H}};`,
+		Options{},
+	)
+	frameJS := applyOnly(t, "sidecar-iframe-sandbox",
+		`let m=document.createElement("iframe");m.setAttribute("allow","clipboard-read; clipboard-write");try{asa(m,2,b)}catch(n){}m.dataset.testid="sidecar-iframe";`,
+		Options{},
+	)
+	if want := `let m=document.createElement("iframe");m.setAttribute("sandbox","` + SidecarFrameSandbox + `");m.setAttribute("allow"`; !strings.Contains(frameJS, want) {
+		t.Fatalf("sidecar-iframe-sandbox: the sandbox is not set before the frame loads:\n%s", frameJS)
+	}
+	modalJS := applyOnly(t, "sidecar-modal-endpoint-url",
+		`function endpointFor(c){var A=c.baseUrl||(c.webPort?`+"`http://127.0.0.1:${c.webPort}`"+`:"\u2014");return A}`,
+		Options{},
+	)
+	gateJS := applyOnly(t, "loopback-preview-feature-gate",
+		`const ti={Web:{Desktop:1,Mobile:2},Electron:3},qBb={name:"basic"},rBb={name:"loopback",openLoopbackInPreviewByDefault:!0},sBb={name:"webview"};const featureDefs={browserAuxPane:{feature:!1,applyFirst:[{runtimeGating:{host:[ti.Web.Desktop,ti.Web.Mobile],userCohort:["google"]},feature:qBb}],applyAll:[{runtimeGating:{host:[ti.Electron],customFlag:"enable-hub-builtin-browser"},feature:sBb}]},remoteConversationBrowserPane:{feature:!1,applyAll:[{runtimeGating:{host:[ti.Web.Desktop],userCohort:["google"],customFlag:"enable-remote-conversation-preview"},feature:rBb}]}};`,
+		Options{},
+	)
+	fetchFallbackJS := applyOnly(t, "loopback-preview-fetch-fallback",
+		`const f=fn=>fn(upstreamClient);const lsSvc={streamTerminalOutput:(...u)=>f(v=>v.streamTerminalOutput(...u)),fetchSandboxPort:(...u)=>f(async v=>v.fetchSandboxPort(...u)),listBackgroundTasks:(...u)=>f(async v=>v.listBackgroundTasks(...u))};`,
+		Options{},
+	)
+	routerJS := applyOnly(t, "router-navigate-bridge",
+		`function RD(){var a=SC();return B.useCallback(b=>a.navigate({...b,from:b.from??void 0}),[void 0,a])}`,
+		Options{},
+	)
+	mentionJS := applyOnly(t, "plugin-mention-remote-signin",
+		`function nCc(a){var b=gj(),{startPluginAuthSignIn:c}=Qt(),d=St(),f=!!b.get("pluginAuth"),g=f&&CT(b.runtimeEnvironment)===1;b=(0,B.useCallback)((k,l)=>{if(f)return mCc(l??a,k)},[a,f]);var h=(0,B.useCallback)(k=>{g&&c&&c({plugin:k.plugin,provider:k.provider,accountId:k.accountId,mode:1}).then(l=>{dm(window,l.authUrl,"_blank","noopener,noreferrer")})},[g,d,c]);return{canSignIn:g,authViewFor:b,startSignIn:h}}`,
+		Options{},
+	)
+	mcpOAuthJS := applyOnly(t, "mcp-oauth-remote-callback",
+		`const e=x=>typeof x==="undefined"?void 0:x;const mcpSvc={completeMcpOAuth:async(u,v)=>f(async w=>{var x=e,y=e;try{y(await x(w.completeMcpOAuth(Wb(Dia,{serverName:u,authorizationCode:v}))))}finally{x()}})};`,
+		Options{},
+	)
+	pluginOAuthJS := applyOnly(t, "plugin-oauth-remote-callback",
+		`const plugSvc={signInPluginAuthProvider:async u=>f(v=>v.signInPluginAuthProvider(Wb(Eja,u)))};`,
+		Options{},
+	)
+
+	harness := `"use strict";
+const assert = require("assert");
+global.location = { origin: "https://agy.example.com", protocol: "https:", host: "agy.example.com" };
+global.window = { location: global.location };
+
+let mockFetchHandler = async () => { throw new Error("unexpected fetch"); };
+global.fetch = (url, opts) => mockFetchHandler(url, opts);
+
+` + bridgeJS + "\n" + sidecarJS + "\n" + sidecarCatchlessJS + "\n" + modalJS + "\n" + gateJS + `
+
+let upstreamClient = {};
+` + fetchFallbackJS + `
+
+const navCalls = [];
+const popupCalls = [];
+const desktopSignInCalls = [];
+let runtimeMode = 2; // 2 = web, 1 = desktop
+const SC = () => ({ navigate(arg) { navCalls.push(arg); } });
+const B = { useCallback: fn => fn };
+const gj = () => ({ get: k => k === "pluginAuth", runtimeEnvironment: { marker: "valid-env" } });
+const CT = env => {
+  assert.strictEqual(env && env.marker, "valid-env", "CT must receive original runtimeEnvironment, not reassigned authViewFor callback");
+  return runtimeMode;
+};
+const Qt = () => ({
+  startPluginAuthSignIn: req => {
+    if (runtimeMode !== 1) {
+      return Promise.reject(new Error("should not call desktop mode=1 in web runtime"));
+    }
+    desktopSignInCalls.push(req);
+    return Promise.resolve({ authUrl: "https://auth.example.com/desktop-start" });
+  }
+});
+const St = () => () => {};
+const mCc = () => null;
+const dm = (_win, url, target, features) => { popupCalls.push({ url, target, features }); };
+const Wb = (_s, msg) => msg;
+const Dia = "CompleteMcpOAuth", Eja = "SignInPluginAuth";
+
+` + routerJS + "\n" + mentionJS + "\n" + mcpOAuthJS + "\n" + pluginOAuthJS + `
+
+(async () => {
+  // 1. Sidecar URL resolution (both catch(e) and catch{} minifier forms) + modal endpoint
+  assert.strictEqual(
+    sidecarHelper.resolveSidecarUrl("http://localhost:39715", "/board?token=t1"),
+    "https://agy.example.com/__agy/sidecar/39715/board?token=t1"
+  );
+  assert.strictEqual(
+    sidecarCatchless.resolveSidecarUrl("http://127.0.0.1:39716", "sub"),
+    "https://agy.example.com/__agy/sidecar/39716/sub"
+  );
+  assert.strictEqual(
+    endpointFor({ baseUrl: "http://127.0.0.1:41234" }),
+    "https://agy.example.com/__agy/sidecar/41234/"
+  );
+  assert.strictEqual(endpointFor({}), "\u2014");
+
+  // 2. Loopback preview feature gate removes google cohort restriction and binds rBb
+  const webRule = featureDefs.browserAuxPane.applyFirst[0];
+  assert.strictEqual(webRule.runtimeGating.userCohort, undefined);
+  assert.strictEqual(webRule.feature.openLoopbackInPreviewByDefault, true);
+
+  // 3. fetchSandboxPort falls back on Unimplemented (code 12) and translates noListener -> ConnectError code 5
+  upstreamClient.fetchSandboxPort = async () => {
+    const err = new Error("Unimplemented");
+    err.code = 12;
+    throw err;
+  };
+  mockFetchHandler = async (url, opts) => {
+    assert.strictEqual(url, "/__agy/api/loopback-fetch");
+    const body = JSON.parse(opts.body);
+    if (body.port === 9999) {
+      return { ok: true, status: 200, json: async () => ({ noListener: true }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        statusCode: 200,
+        headers: [{ name: "content-type", value: "text/html" }],
+        bodyBase64: Buffer.from("<h1>ok</h1>").toString("base64")
+      })
+    };
+  };
+  const okRes = await lsSvc.fetchSandboxPort({ conversationId: "c1", port: 3000, method: "GET", path: "/" });
+  assert.strictEqual(okRes.statusCode, 200);
+  assert.strictEqual(Buffer.from(okRes.body).toString("utf8"), "<h1>ok</h1>");
+
+  let caughtNoListener = null;
+  try {
+    await lsSvc.fetchSandboxPort({ conversationId: "c1", port: 9999, method: "GET", path: "/" });
+  } catch (e) {
+    caughtNoListener = e;
+  }
+  assert.ok(caughtNoListener && caughtNoListener.name === "ConnectError" && caughtNoListener.code === 5);
+
+  // 4a. Plugin @-mention sign-in on web routes to plugin Accounts tab via captured router
+  RD();
+  const mention = nCc([]);
+  assert.strictEqual(mention.canSignIn, true);
+  mention.startSignIn({ plugin: "/home/ubuntu/.gemini/config/plugins/figma", provider: "oauth", accountId: "" });
+  mention.startSignIn({ plugin: "C:\\Users\\alice\\.gemini\\config\\plugins\\figma\\", provider: "oauth", accountId: "" });
+  mention.startSignIn({ plugin: "file:///C:/Users/alice/.gemini/config/plugins/linear?rev=1#frag", provider: "oauth", accountId: "" });
+  assert.strictEqual(navCalls.length, 3);
+  assert.deepStrictEqual(navCalls[0], {
+    to: "/customizations/plugins/$pluginId",
+    params: { pluginId: "figma" },
+    search: { pluginTab: "accounts" }
+  });
+  assert.deepStrictEqual(navCalls[1], {
+    to: "/customizations/plugins/$pluginId",
+    params: { pluginId: "figma" },
+    search: { pluginTab: "accounts" }
+  });
+  assert.deepStrictEqual(navCalls[2], {
+    to: "/customizations/plugins/$pluginId",
+    params: { pluginId: "linear" },
+    search: { pluginTab: "accounts" }
+  });
+
+  // 4b. Desktop mode (CT === 1) preserves native mode=1 popup flow even after b was reassigned to authViewFor
+  runtimeMode = 1;
+  const deskMention = nCc([]);
+  assert.strictEqual(deskMention.canSignIn, true);
+  deskMention.startSignIn({ plugin: "/plugins/figma", provider: "oauth", accountId: "acc1" });
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(navCalls.length, 3, "desktop mode must not trigger remote web router navigation");
+  assert.strictEqual(desktopSignInCalls.length, 1);
+  assert.strictEqual(desktopSignInCalls[0].mode, 1);
+  assert.strictEqual(popupCalls.length, 1);
+  assert.strictEqual(popupCalls[0].url, "https://auth.example.com/desktop-start");
+
+  // 5. Remote OAuth: loopback callback delivered short-circuits single-use auth code; full HTTPS callback URL falls back to extracted code
+  let mcpSubmitted = [];
+  upstreamClient.completeMcpOAuth = async (msg) => { mcpSubmitted.push(msg); return {}; };
+  mockFetchHandler = async (url, opts) => {
+    assert.strictEqual(url, "/__agy/api/oauth-callback");
+    const b = JSON.parse(opts.body);
+    assert.strictEqual(b.url, "http://127.0.0.1:45111/callback?code=once_tok&state=s1");
+    return { ok: true, status: 200, json: async () => ({ delivered: true, statusCode: 200 }) };
+  };
+  await mcpSvc.completeMcpOAuth("my-mcp", "http://127.0.0.1:45111/callback?code=once_tok&state=s1");
+  assert.strictEqual(mcpSubmitted.length, 0, "delivered loopback callback must not double-submit single-use code");
+
+  let pluginAttempts = [];
+  upstreamClient.signInPluginAuthProvider = async (msg) => {
+    pluginAttempts.push(msg.secret);
+    if (msg.secret.startsWith("https://")) {
+      throw new Error("raw URL rejected by provider");
+    }
+    return {};
+  };
+  await plugSvc.signInPluginAuthProvider({
+    plugin: "/plugins/figma",
+    provider: "figma",
+    secret: "https://antigravity.google/oauth-callback?code=extracted_777&state=abc"
+  });
+  assert.deepStrictEqual(pluginAttempts, [
+    "https://antigravity.google/oauth-callback?code=extracted_777&state=abc",
+    "extracted_777"
+  ]);
+})().catch(err => { console.error(err); process.exit(1); });
+`
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("2.31.2 remote patches harness failed: %v\n%s", err, out)
+	}
+}
+
+// The sign-in patch ends the hook's var statement and reassigns the flag. If
+// the minifier ever continues that declaration, a later name would become an
+// undeclared assignment, which throws in strict mode, so the patch must
+// report itself missing instead of applying.
+func TestPluginMentionSignInNeedsEndOfDeclaration(t *testing.T) {
+	body := `function nCc(a){var b=gj(),{startPluginAuthSignIn:c}=Qt(),d=St(),f=!!b.get("pluginAuth"),g=f&&CT(b.runtimeEnvironment)===1,b2=(0,B.useCallback)((k,l)=>{if(f)return mCc(l??a,k)},[a,f]),h=(0,B.useCallback)(k=>{g&&c&&c({plugin:k.plugin,provider:k.provider,accountId:k.accountId,mode:1}).then(l=>{dm(window,l.authUrl,"_blank","noopener,noreferrer")})},[g,d,c]);return{canSignIn:g,authViewFor:b2,startSignIn:h}}`
+	out, report := Apply(MainJS, []byte(body), Options{})
+	var status Status = -1
+	for _, r := range report {
+		if r.ID == "plugin-mention-remote-signin" {
+			status = r.Status
+		}
+	}
+	if status != StatusMissing || string(out) != body {
+		t.Fatalf("plugin-mention-remote-signin on a continued declaration: status %v, changed %v", status, string(out) != body)
+	}
+}
+
+// A sandboxed sidecar frame posts with origin "null". The panel takes its
+// add-artifact-comment only with the gateway token of the iframe's src, and
+// still takes a message from the frame's real origin as before.
+func TestSidecarArtifactCommentOrigin(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	bridgeJS := strings.TrimPrefix(remoteRuntimeBridgeScript, `<script id="agy-remote-runtime-bridge">`)
+	bridgeJS = strings.TrimSuffix(bridgeJS, `</script>`)
+	handlerJS := applyOnly(t, "sidecar-artifact-comment-origin",
+		`function quc(a){var b=nk(),c=FE();(0,B.useEffect)(()=>{var d=f=>{var g=a.current,h;if(h=g?.contentWindow!=null&&f.source===g.contentWindow){h=f.origin;a:{try{var {origin:k}=new URL(g.src);var l=k==="null"?void 0:k;break a}catch{}l=void 0}h=h===l}if(h&&f.data?.type==="add-artifact-comment"){b(f.data.payload)}};window.addEventListener("message",d);return()=>{window.removeEventListener("message",d)}},[b,c,a])}`,
+		Options{},
+	)
+	harness := `"use strict";
+const assert = require("assert");
+global.location = { origin: "https://agy.example.com", protocol: "https:", host: "agy.example.com", href: "https://agy.example.com/c/1" };
+const listeners = [];
+global.window = global;
+window.addEventListener = (type, fn) => { if (type === "message") listeners.push(fn); };
+window.removeEventListener = () => {};
+global.document = { addEventListener() {}, createElement() { return {}; }, head: { appendChild() {} } };
+` + bridgeJS + `
+const added = [];
+global.nk = () => (p) => added.push(p);
+global.FE = () => ({});
+global.B = { useEffect: (fn) => fn() };
+` + handlerJS + `
+const frameWin = {};
+const frame = { contentWindow: frameWin, src: "https://agy.example.com/__agy/sidecar/38489/?token=gw123" };
+quc({ current: frame });
+const send = (origin, data, source) => listeners.forEach((fn) => fn({ origin, data, source: source || frameWin }));
+send("null", { type: "add-artifact-comment", payload: "ok-token", agySidecarToken: "gw123" });
+send("null", { type: "add-artifact-comment", payload: "no-token" });
+send("null", { type: "add-artifact-comment", payload: "wrong-token", agySidecarToken: "other" });
+send("null", { type: "add-artifact-comment", payload: "other-window", agySidecarToken: "gw123" }, {});
+send("https://agy.example.com", { type: "add-artifact-comment", payload: "same-origin" });
+frame.src = "https://agy.example.com/__agy/sidecar/38489/";
+send("null", { type: "add-artifact-comment", payload: "src-without-token", agySidecarToken: "" });
+assert.deepStrictEqual(added, ["ok-token", "same-origin"]);
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, path).CombinedOutput(); err != nil {
+		t.Fatalf("node harness failed: %v\n%s", err, out)
 	}
 }

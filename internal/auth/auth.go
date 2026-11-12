@@ -57,20 +57,26 @@ type Options struct {
 	LoginPage LoginPageFunc
 	// IsPublic marks paths served without authentication, such as icons.
 	IsPublic func(path string) bool
+	// AllowSidecar authorizes capability-scoped sidecar subresource requests
+	// issued from opaque-origin sandboxed sidecar frames, where browsers omit
+	// session cookies and send Origin: null. It returns the request to serve,
+	// which may carry what it found so the handler need not look again.
+	AllowSidecar func(r *http.Request) (*http.Request, bool)
 }
 
 // Authenticator wraps a handler with password authentication.
 type Authenticator struct {
-	creds       *Credentials
-	sessions    *SessionStore
-	trusted     []*net.IPNet
-	publicURL   string
-	perIP       *Limiter
-	enrollPerIP *Limiter
-	verifyGate  *TokenBucket
-	enrollGate  *TokenBucket
-	login       LoginPageFunc
-	isPublic    func(string) bool
+	creds        *Credentials
+	sessions     *SessionStore
+	trusted      []*net.IPNet
+	publicURL    string
+	perIP        *Limiter
+	enrollPerIP  *Limiter
+	verifyGate   *TokenBucket
+	enrollGate   *TokenBucket
+	login        LoginPageFunc
+	isPublic     func(string) bool
+	allowSidecar func(*http.Request) (*http.Request, bool)
 
 	mu     sync.Mutex
 	enroll map[string]time.Time
@@ -79,17 +85,18 @@ type Authenticator struct {
 // New builds an Authenticator from opts.
 func New(opts Options) *Authenticator {
 	return &Authenticator{
-		creds:       opts.Credentials,
-		sessions:    opts.Sessions,
-		trusted:     opts.Trusted,
-		publicURL:   opts.PublicURL,
-		perIP:       NewLimiter(loginMaxFailures, loginWindow),
-		enrollPerIP: NewLimiter(enrollMaxFailures, loginWindow),
-		verifyGate:  NewTokenBucket(globalVerifyRate, globalVerifyBurst),
-		enrollGate:  NewTokenBucket(globalEnrollRate, globalEnrollBurst),
-		login:       opts.LoginPage,
-		isPublic:    opts.IsPublic,
-		enroll:      map[string]time.Time{},
+		creds:        opts.Credentials,
+		sessions:     opts.Sessions,
+		trusted:      opts.Trusted,
+		publicURL:    opts.PublicURL,
+		perIP:        NewLimiter(loginMaxFailures, loginWindow),
+		enrollPerIP:  NewLimiter(enrollMaxFailures, loginWindow),
+		verifyGate:   NewTokenBucket(globalVerifyRate, globalVerifyBurst),
+		enrollGate:   NewTokenBucket(globalEnrollRate, globalEnrollBurst),
+		login:        opts.LoginPage,
+		isPublic:     opts.IsPublic,
+		allowSidecar: opts.AllowSidecar,
+		enroll:       map[string]time.Time{},
 	}
 }
 
@@ -191,6 +198,16 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		if a.isPublic != nil && a.isPublic(path) {
 			next.ServeHTTP(w, r)
 			return
+		}
+
+		if strings.HasPrefix(path, "/__agy/sidecar/") && a.allowSidecar != nil {
+			if allowed, ok := a.allowSidecar(r); ok {
+				if allowed == nil {
+					allowed = r
+				}
+				next.ServeHTTP(w, allowed)
+				return
+			}
 		}
 
 		if isStateChangingMethod(r.Method) && !a.sameOriginRequest(r) {
@@ -467,6 +484,13 @@ func (a *Authenticator) tooMany(w http.ResponseWriter, retry time.Duration) {
 // reject answers an unauthenticated request in the shape its caller expects: a
 // redirect for page loads, a bare status for API and websocket calls.
 func (a *Authenticator) reject(w http.ResponseWriter, r *http.Request) {
+	// A sidecar frame cannot sign in: the login page would open inside the
+	// side panel, outside the sidecar's sandbox. Its user reopens the sidecar
+	// from the app instead.
+	if strings.HasPrefix(r.URL.Path, "/__agy/sidecar/") {
+		http.Error(w, "sidecar access expired; reopen it from the app", http.StatusForbidden)
+		return
+	}
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

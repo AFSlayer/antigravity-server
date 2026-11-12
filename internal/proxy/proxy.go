@@ -37,19 +37,31 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
-	PublicURL       string
-	TrustedProxies  []*net.IPNet
+	// ForbiddenPorts lists local listener ports (such as the public HTTP port
+	// and loopback control panel port) that sidecar routing must never dial.
+	ForbiddenPorts []int
+	PublicURL      string
+	TrustedProxies []*net.IPNet
 	// DisableWSRelay passes the RPC WebSocket through untouched instead of
 	// terminating and compressing it in the proxy.
 	DisableWSRelay bool
-	Patch          patches.Options
-	OnReport       ReportFunc
+	// ValidateSession reports whether an agy_session cookie value is still active.
+	// When set, revoking or expiring a parent session immediately invalidates any
+	// sandboxed sidecar capabilities minted from it.
+	ValidateSession func(token string) bool
+	// ResolveSidecarHost optionally resolves the exact loopback IP literal
+	// ("127.0.0.1" or "::1") owned by the language server process tree for port
+	// when a sidecar entry specifies an ambiguous "localhost" host.
+	ResolveSidecarHost func(ctx context.Context, port int, urlHost string) (dialHost string, ok bool)
+	Patch              patches.Options
+	OnReport           ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
 	handler             *httputil.ReverseProxy
 	transport           *http.Transport
+	sidecarTransport    *http.Transport
 	target              *url.URL
 	opts                Options
 	reported            sync.Map
@@ -65,6 +77,28 @@ type Proxy struct {
 	cachedHTML          []byte
 	cachedHTMLMissingWS bool
 
+	closed    chan struct{}
+	closeOnce sync.Once
+
+	sidecarMu        sync.Mutex
+	sidecarAllowed   map[int]string
+	sidecarReserved  map[int]struct{}
+	sidecarFreePorts map[int]time.Time
+	sidecarCachedAt  time.Time
+	sidecarLastProbe time.Time
+	sidecarLastErr   error
+	sidecarInflight  chan struct{}
+	// sidecarBackgroundRefresh is set while a GetSidecars call started for
+	// an expired list runs.
+	sidecarBackgroundRefresh bool
+	// sidecarRPCTimeout bounds a GetSidecars call; a field so a test can
+	// shorten it for its own proxy.
+	sidecarRPCTimeout      time.Duration
+	sidecarInflightStarted time.Time
+
+	sidecarCapMu sync.Mutex
+	sidecarCaps  map[string]*sidecarCapSession
+
 	// wsTransportMissing remembers the last main.js outcome for the HTML patches.
 	wsTransportMissing atomic.Bool
 }
@@ -76,7 +110,12 @@ func New(opts Options) (*Proxy, error) {
 		return nil, err
 	}
 
-	p := &Proxy{opts: opts, target: target}
+	p := &Proxy{
+		opts:        opts,
+		target:      target,
+		closed:      make(chan struct{}),
+		sidecarCaps: make(map[string]*sidecarCapSession),
+	}
 	p.touchActivity()
 
 	rp := httputil.NewSingleHostReverseProxy(target)
@@ -89,6 +128,8 @@ func New(opts Options) (*Proxy, error) {
 		IdleConnTimeout:     90 * time.Second,
 	}
 	rp.Transport = p.transport
+	p.sidecarTransport = newSidecarTransport()
+	p.sidecarRPCTimeout = defaultSidecarRPCTimeout
 
 	host := target.Host
 	base := rp.Director
@@ -131,10 +172,20 @@ func New(opts Options) (*Proxy, error) {
 // Handler returns the HTTP handler to mount, tracking in-flight streams and activity for idle detection.
 func (p *Proxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		settleProtocolSwitch(r)
 		isWS := isWebSocketUpgrade(r)
+		isSidecar := strings.HasPrefix(r.URL.Path, SidecarPrefix)
 		isRelayWS := isWS && r.URL.Path == relayPath && !p.opts.DisableWSRelay
-		isPassthroughWS := isWS && !isRelayWS
+		isPassthroughWS := isWS && !isRelayWS && !isSidecar
 		p.activeConns.Add(1)
+		var releaseHTTPOnce sync.Once
+		releaseHTTPReq := func() {
+			if !isWS {
+				releaseHTTPOnce.Do(func() {
+					p.activeHTTPReqs.Add(-1)
+				})
+			}
+		}
 		if !isWS {
 			p.activeHTTPReqs.Add(1)
 		} else if isPassthroughWS {
@@ -143,7 +194,7 @@ func (p *Proxy) Handler() http.Handler {
 		p.touchActivity()
 		defer func() {
 			if !isWS {
-				p.activeHTTPReqs.Add(-1)
+				releaseHTTPReq()
 				p.touchActivity()
 			} else if isPassthroughWS {
 				p.activePassthroughWS.Add(-1)
@@ -151,6 +202,11 @@ func (p *Proxy) Handler() http.Handler {
 			}
 			p.activeConns.Add(-1)
 		}()
+
+		if isSidecar {
+			p.serveSidecar(w, r, releaseHTTPReq)
+			return
+		}
 
 		if isWS && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
@@ -400,10 +456,22 @@ func (p *Proxy) PrewarmContext(parent context.Context) error {
 	return p.modifyResponse(resp)
 }
 
-// Close releases idle upstream transport connections when a proxy instance is retired.
+// Close releases idle upstream transport connections and active sidecar sockets
+// when a proxy instance is retired.
 func (p *Proxy) Close() {
-	if p != nil && p.transport != nil {
+	if p == nil {
+		return
+	}
+	p.closeOnce.Do(func() {
+		if p.closed != nil {
+			close(p.closed)
+		}
+	})
+	if p.transport != nil {
 		p.transport.CloseIdleConnections()
+	}
+	if p.sidecarTransport != nil {
+		p.sidecarTransport.CloseIdleConnections()
 	}
 }
 
@@ -507,8 +575,47 @@ func etagMatches(header, tag string) bool {
 	return false
 }
 
+// isWebSocketUpgrade reports whether r asks to switch to WebSocket. Upgrade is
+// a token list and may repeat, so a request naming websocket among other
+// protocols counts too and gets the WebSocket checks.
 func isWebSocketUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	return headerContainsToken(r.Header, "Upgrade", "websocket")
+}
+
+// settleProtocolSwitch leaves a WebSocket upgrade asking for websocket alone
+// and strips any other protocol switch from the request. ReverseProxy passes on
+// an Upgrade that Connection lists and hands the socket over on a 101, which
+// would let a request that is not classed as WebSocket skip the origin checks
+// and the connection tracking that WebSocket requests get.
+func settleProtocolSwitch(r *http.Request) {
+	if isWebSocketUpgrade(r) {
+		r.Header.Set("Upgrade", "websocket")
+		return
+	}
+	dropProtocolSwitch(r.Header)
+}
+
+// dropProtocolSwitch removes Upgrade and the upgrade token from Connection,
+// keeping any other headers Connection names.
+func dropProtocolSwitch(h http.Header) {
+	h.Del("Upgrade")
+	lines := h.Values("Connection")
+	if len(lines) == 0 {
+		return
+	}
+	var kept []string
+	for _, line := range lines {
+		for _, tok := range strings.Split(line, ",") {
+			tok = strings.TrimSpace(tok)
+			if tok != "" && !strings.EqualFold(tok, "upgrade") {
+				kept = append(kept, tok)
+			}
+		}
+	}
+	h.Del("Connection")
+	if len(kept) > 0 {
+		h.Set("Connection", strings.Join(kept, ", "))
+	}
 }
 
 func (p *Proxy) sameOriginRequest(r *http.Request) bool {

@@ -1,0 +1,3328 @@
+package proxy
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"path"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/AFSlayer/antigravity-server/internal/auth"
+	"github.com/AFSlayer/antigravity-server/internal/netutil"
+	"github.com/AFSlayer/antigravity-server/internal/patches"
+)
+
+// Variables so tests can shorten them.
+var (
+	// sidecarWSIdleTimeout closes a sidecar WebSocket when neither direction
+	// has carried anything for this long.
+	sidecarWSIdleTimeout = 10 * time.Minute
+	// sidecarWSCloseGrace is how long the other direction may finish once one
+	// side has closed its half.
+	sidecarWSCloseGrace = 5 * time.Second
+)
+
+const (
+	// SidecarPrefix is the same-origin path prefix under which active sidecar
+	// HTTP/WebSocket gateways are reverse-proxied.
+	SidecarPrefix = "/__agy/sidecar/"
+
+	sidecarShimName             = "__agy_sidecar_shim.js"
+	sidecarCapSegment           = "~s"
+	sidecarCapHexLen            = 32
+	sidecarCapIdleTTL           = 2 * time.Hour
+	sidecarCapMaxLifetime       = 12 * time.Hour
+	sidecarCapReuseMinRemaining = 30 * time.Minute
+	sidecarCapMaxEntries        = 256
+	sidecarVaultMaxCookies      = 64
+	sidecarVaultMaxCookieBytes  = 8192
+
+	sidecarCacheTTL       = 2 * time.Second
+	sidecarMissRefreshMin = 200 * time.Millisecond
+	sidecarFreePortTTL    = time.Second
+	sidecarFreePortsMax   = 1024
+	// defaultSidecarRPCTimeout bounds a GetSidecars call.
+	defaultSidecarRPCTimeout = 3 * time.Second
+	// sidecarFailBackoff spaces GetSidecars calls while it fails, so each
+	// sidecar request does not send one.
+	sidecarFailBackoff     = time.Second
+	sidecarMaxRewriteBytes = 16 << 20
+	sidecarMaxWSRejectBody = 4 << 20
+	sidecarDialTimeout     = 5 * time.Second
+	sidecarHeaderTimeout   = 30 * time.Second
+	sidecarWSWriteTimeout  = 30 * time.Second
+
+	sidecarSandboxDirective = "sandbox " + patches.SidecarFrameSandbox
+	sidecarFrameAncestors   = "frame-ancestors 'self'"
+	sidecarDefaultCSP       = sidecarSandboxDirective + "; " + sidecarFrameAncestors
+)
+
+type sidecarCapSession struct {
+	token         string
+	port          int
+	parentSession string
+	createdAt     time.Time
+	lastUsedAt    time.Time
+
+	cookieMu      sync.Mutex
+	cookies       map[string]string
+	extHTTPPrefix string
+	extWSPrefix   string
+}
+
+func (s *sidecarCapSession) setExternalPrefixes(httpPrefix, wsPrefix string) {
+	if s == nil {
+		return
+	}
+	s.cookieMu.Lock()
+	s.extHTTPPrefix = httpPrefix
+	s.extWSPrefix = wsPrefix
+	s.cookieMu.Unlock()
+}
+
+func (s *sidecarCapSession) externalPrefixes() (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	return s.extHTTPPrefix, s.extWSPrefix
+}
+
+func (s *sidecarCapSession) cookieHeader() string {
+	if s == nil {
+		return ""
+	}
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	if len(s.cookies) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(s.cookies))
+	for name := range s.cookies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		if isProtectedCookieName(name) {
+			continue
+		}
+		parts = append(parts, name+"="+s.cookies[name])
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (s *sidecarCapSession) snapshotCookies() map[string]string {
+	if s == nil {
+		return make(map[string]string)
+	}
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	out := make(map[string]string, len(s.cookies))
+	for k, v := range s.cookies {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *sidecarCapSession) storeSetCookies(rawHeaders []string) {
+	if s == nil || len(rawHeaders) == 0 {
+		return
+	}
+	now := time.Now()
+	s.cookieMu.Lock()
+	defer s.cookieMu.Unlock()
+	if s.cookies == nil {
+		s.cookies = make(map[string]string)
+	}
+
+	for _, raw := range rawHeaders {
+		parts := strings.Split(raw, ";")
+		if len(parts) == 0 {
+			continue
+		}
+		first := strings.TrimSpace(parts[0])
+		eq := strings.IndexByte(first, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(first[:eq])
+		val := strings.TrimSpace(first[eq+1:])
+		if name == "" || !isValidCookieToken(name) || isProtectedCookieName(name) {
+			continue
+		}
+		if len(name)+len(val) > sidecarVaultMaxCookieBytes || hasCookieControlByte(val) {
+			continue
+		}
+
+		expired := false
+		for _, attr := range parts[1:] {
+			attr = strings.TrimSpace(attr)
+			if attr == "" {
+				continue
+			}
+			k := attr
+			v := ""
+			if idx := strings.IndexByte(attr, '='); idx >= 0 {
+				k = strings.TrimSpace(attr[:idx])
+				v = strings.TrimSpace(attr[idx+1:])
+			}
+			switch strings.ToLower(k) {
+			case "max-age":
+				if maxAge, err := strconv.Atoi(v); err == nil && maxAge <= 0 {
+					expired = true
+				}
+			case "expires":
+				if exp, err := http.ParseTime(v); err == nil && !exp.After(now) {
+					expired = true
+				}
+			}
+		}
+
+		if expired {
+			delete(s.cookies, name)
+			continue
+		}
+		if _, exists := s.cookies[name]; !exists && len(s.cookies) >= sidecarVaultMaxCookies {
+			continue
+		}
+		s.cookies[name] = val
+	}
+}
+
+func isProtectedCookieName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == strings.ToLower(auth.CookieName) || strings.Contains(lower, "agy_session")
+}
+
+func isValidCookieToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if !isAlphaNum && !strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func hasCookieControlByte(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f || s[i] == ';' {
+			return true
+		}
+	}
+	return false
+}
+
+func newSidecarTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:          64,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       60 * time.Second,
+		ResponseHeaderTimeout: sidecarHeaderTimeout,
+		DialContext:           dialSidecarAddress,
+	}
+}
+
+// dialSidecarAddress dials a loopback sidecar endpoint while honoring explicit
+// address families ("127.0.0.1" or "::1") without cross-family fallback so an
+// unrelated process bound to the other loopback family on the same port cannot
+// be reached. Only ambiguous "localhost" targets fall back from IPv4 to IPv6 on
+// ECONNREFUSED.
+func dialSidecarAddress(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid loopback port %q", portStr)
+	}
+
+	dialer := &net.Dialer{Timeout: sidecarDialTimeout}
+	cleanHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	switch cleanHost {
+	case "127.0.0.1":
+		return dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	case "::1":
+		return dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port)))
+	default:
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			return conn, nil
+		}
+		if netutil.IsConnRefused(err) {
+			if conn6, err6 := dialer.DialContext(ctx, network, net.JoinHostPort("::1", strconv.Itoa(port))); err6 == nil {
+				return conn6, nil
+			}
+		}
+		return nil, err
+	}
+}
+
+func (p *Proxy) resolveSidecarDialAddr(ctx context.Context, dialMode string, port int) string {
+	switch dialMode {
+	case "127.0.0.1":
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	case "::1":
+		return net.JoinHostPort("::1", strconv.Itoa(port))
+	default:
+		if p.opts.ResolveSidecarHost != nil {
+			if exact, ok := p.opts.ResolveSidecarHost(ctx, port, "localhost"); ok && (exact == "127.0.0.1" || exact == "::1") {
+				return net.JoinHostPort(exact, strconv.Itoa(port))
+			}
+		}
+		return net.JoinHostPort("localhost", strconv.Itoa(port))
+	}
+}
+
+// IsSidecarReservedPort reports whether port is forbidden or currently owned by
+// any sidecar (raw webPort or auth gateway). Uncached ports trigger a
+// singleflight-coalesced live GetSidecars check, and RPC errors fail closed so
+// a newly spawned or transiently unreachable sidecar port can never be exposed
+// through generic loopback preview fetches.
+func (p *Proxy) IsSidecarReservedPort(ctx context.Context, port int) bool {
+	if p.isForbiddenPort(port) {
+		return true
+	}
+	callStart := time.Now()
+	p.sidecarMu.Lock()
+	_, cachedReserved := p.sidecarReserved[port]
+	freshCache := !p.sidecarCachedAt.IsZero() && callStart.Sub(p.sidecarCachedAt) < sidecarCacheTTL && p.sidecarLastErr == nil
+	freeAt, knownFree := p.sidecarFreePorts[port]
+	p.sidecarMu.Unlock()
+	if freshCache {
+		if cachedReserved {
+			return true
+		}
+		// A port a live answer found free stays free for a moment, so a
+		// preview loading many assets from one dev server does not ask the
+		// language server once per asset. Any other port gets a live answer,
+		// which catches a sidecar started within the cache TTL.
+		if knownFree && callStart.Sub(freeAt) < sidecarFreePortTTL {
+			return false
+		}
+	}
+
+	_, reserved, err := p.refreshSidecarPorts(ctx, callStart)
+	if err != nil {
+		return true
+	}
+	if _, isReserved := reserved[port]; isReserved {
+		return true
+	}
+	p.sidecarMu.Lock()
+	if len(p.sidecarFreePorts) >= sidecarFreePortsMax {
+		for fp, at := range p.sidecarFreePorts {
+			if callStart.Sub(at) >= sidecarFreePortTTL {
+				delete(p.sidecarFreePorts, fp)
+			}
+		}
+	}
+	if p.sidecarFreePorts == nil || len(p.sidecarFreePorts) >= sidecarFreePortsMax {
+		p.sidecarFreePorts = make(map[int]time.Time)
+	}
+	p.sidecarFreePorts[port] = callStart
+	p.sidecarMu.Unlock()
+	return false
+}
+
+// errSidecarListUnavailable means a capability is valid but GetSidecars
+// failed, so whether its sidecar still runs is unknown.
+var errSidecarListUnavailable = errors.New("the language server did not list its sidecars")
+
+func (p *Proxy) sidecarListFailed() bool {
+	p.sidecarMu.Lock()
+	defer p.sidecarMu.Unlock()
+	return p.sidecarLastErr != nil
+}
+
+// writeSidecarListUnavailable answers a sidecar request that failed only
+// because GetSidecars did, so the frame shows a retryable error rather than
+// an expired one.
+func writeSidecarListUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "the language server did not list its sidecars; try again shortly", http.StatusServiceUnavailable)
+}
+
+func (p *Proxy) isForbiddenPort(port int) bool {
+	if port <= 0 || port > 65535 || port == p.opts.TargetPort {
+		return true
+	}
+	for _, fp := range p.opts.ForbiddenPorts {
+		if fp > 0 && port == fp {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Proxy) allowedSidecarDialMode(ctx context.Context, port int) (string, bool) {
+	if p.isForbiddenPort(port) {
+		return "", false
+	}
+	now := time.Now()
+	p.sidecarMu.Lock()
+	if !p.sidecarCachedAt.IsZero() {
+		age := now.Sub(p.sidecarCachedAt)
+		// A sidecar in the last list that succeeded is allowed at once for
+		// two cache TTLs, also while GetSidecars fails or hangs. An expired
+		// list is refreshed in the background, so a slow call does not
+		// stall a page in use.
+		if mode, ok := p.sidecarAllowed[port]; ok && age < 2*sidecarCacheTTL {
+			if age >= sidecarCacheTTL {
+				p.refreshSidecarPortsInBackgroundLocked()
+			}
+			p.sidecarMu.Unlock()
+			return mode, true
+		}
+		if age < sidecarCacheTTL && p.sidecarLastErr == nil &&
+			!p.sidecarLastProbe.IsZero() && now.Sub(p.sidecarLastProbe) < sidecarMissRefreshMin {
+			p.sidecarMu.Unlock()
+			return "", false
+		}
+	}
+	p.sidecarMu.Unlock()
+
+	allowed, _, err := p.refreshSidecarPorts(ctx, now)
+	if err != nil {
+		return "", false
+	}
+	mode, ok := allowed[port]
+	return mode, ok
+}
+
+// refreshSidecarPortsInBackgroundLocked starts a GetSidecars call unless one
+// is in flight or the last one failed within the backoff. The caller holds
+// sidecarMu.
+func (p *Proxy) refreshSidecarPortsInBackgroundLocked() {
+	if p.sidecarInflight != nil || p.sidecarBackgroundRefresh {
+		return
+	}
+	if p.sidecarLastErr != nil && time.Since(p.sidecarLastProbe) < sidecarFailBackoff {
+		return
+	}
+	p.sidecarBackgroundRefresh = true
+	go func() {
+		_, _, _ = p.refreshSidecarPorts(context.Background(), time.Now())
+		p.sidecarMu.Lock()
+		p.sidecarBackgroundRefresh = false
+		p.sidecarMu.Unlock()
+	}()
+}
+
+// refreshSidecarPorts returns a GetSidecars result from a call that started
+// at or after minStart, sharing a call in flight.
+func (p *Proxy) refreshSidecarPorts(ctx context.Context, minStart time.Time) (allowed map[int]string, reserved map[int]struct{}, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		p.sidecarMu.Lock()
+		if lastErr := p.sidecarLastErr; lastErr != nil && p.sidecarInflight == nil && time.Since(p.sidecarLastProbe) < sidecarFailBackoff {
+			p.sidecarMu.Unlock()
+			return nil, nil, lastErr
+		}
+		if p.sidecarInflight != nil {
+			waitCh := p.sidecarInflight
+			started := p.sidecarInflightStarted
+			p.sidecarMu.Unlock()
+
+			select {
+			case <-waitCh:
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+
+			p.sidecarMu.Lock()
+			a, r, lastErr := p.sidecarAllowed, p.sidecarReserved, p.sidecarLastErr
+			p.sidecarMu.Unlock()
+			if !started.Before(minStart) || attempt == 1 {
+				if lastErr != nil {
+					return nil, nil, lastErr
+				}
+				return a, r, nil
+			}
+			continue
+		}
+
+		ch := make(chan struct{})
+		now := time.Now()
+		p.sidecarInflight = ch
+		p.sidecarInflightStarted = now
+		p.sidecarLastProbe = now
+		p.sidecarMu.Unlock()
+
+		freshAllowed, freshReserved, fetchErr := p.fetchSidecarPorts(context.Background())
+
+		p.sidecarMu.Lock()
+		if fetchErr == nil {
+			p.sidecarAllowed = freshAllowed
+			p.sidecarReserved = freshReserved
+			p.sidecarCachedAt = time.Now()
+			p.sidecarLastErr = nil
+		} else {
+			p.sidecarLastErr = fetchErr
+		}
+		p.sidecarInflight = nil
+		close(ch)
+		p.sidecarMu.Unlock()
+
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if fetchErr != nil {
+			return nil, nil, fetchErr
+		}
+		return freshAllowed, freshReserved, nil
+	}
+	return nil, nil, errors.New("sidecar port refresh aborted")
+}
+
+func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed map[int]string, reserved map[int]struct{}, err error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, p.sidecarRPCTimeout)
+	defer cancel()
+
+	rpcURL := p.target.String() + "/exa.language_server_pb.LanguageServerService/GetSidecars"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connect-Protocol-Version", "1")
+	if p.opts.TargetCSRFToken != "" {
+		req.Header.Set("x-codeium-csrf-token", p.opts.TargetCSRFToken)
+	}
+
+	resp, err := p.transport.RoundTrip(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// A language server without the GetSidecars RPC has no sidecars.
+		// Failing here would reserve every port and block previews.
+		return map[int]string{}, map[int]struct{}{}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("GetSidecars returned %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var payload struct {
+		Sidecars []struct {
+			BaseURL string          `json:"baseUrl"`
+			WebPort json.RawMessage `json:"webPort"`
+			Status  json.RawMessage `json:"status"`
+		} `json:"sidecars"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, nil, err
+	}
+
+	allowed = make(map[int]string)
+	reserved = make(map[int]struct{})
+
+	for _, sc := range payload.Sidecars {
+		webPort := parseJSONPort(sc.WebPort)
+		if webPort > 0 && webPort <= 65535 {
+			reserved[webPort] = struct{}{}
+		}
+		if gwHost, gwPort, ok := loopbackEndpointFromURL(sc.BaseURL); ok && !p.isForbiddenPort(gwPort) {
+			reserved[gwPort] = struct{}{}
+			allowed[gwPort] = gwHost
+			continue
+		}
+		if sc.BaseURL == "" && !p.isForbiddenPort(webPort) && sidecarStatusRunning(sc.Status) {
+			allowed[webPort] = "localhost"
+		}
+	}
+	return allowed, reserved, nil
+}
+
+func parseJSONPort(raw json.RawMessage) int {
+	s := strings.Trim(strings.TrimSpace(string(raw)), `"`)
+	if s == "" || s == "null" {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+func sidecarStatusRunning(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s == `"SIDECAR_STATUS_RUNNING"` || s == "2"
+}
+
+func loopbackEndpointFromURL(raw string) (hostMode string, port int, ok bool) {
+	if raw == "" {
+		return "", 0, false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") {
+		return "", 0, false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return "", 0, false
+	}
+	port, err = strconv.Atoi(u.Port())
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, false
+	}
+	return host, port, true
+}
+
+func loopbackPortFromURL(raw string) (int, bool) {
+	_, port, ok := loopbackEndpointFromURL(raw)
+	return port, ok
+}
+
+func isValidSidecarCapHex(s string) bool {
+	if len(s) != sidecarCapHexLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseSidecarRoute(escapedPath string) (port int, capToken string, restEscaped string, needsSlash bool, invalidCap bool, ok bool) {
+	if !strings.HasPrefix(escapedPath, SidecarPrefix) {
+		return 0, "", "", false, false, false
+	}
+	tail := strings.TrimPrefix(escapedPath, SidecarPrefix)
+	if tail == "" {
+		return 0, "", "", false, false, false
+	}
+	slash := strings.IndexByte(tail, '/')
+	var portPart string
+	if slash < 0 {
+		portPart = tail
+		needsSlash = true
+	} else {
+		portPart = tail[:slash]
+		restEscaped = tail[slash:]
+	}
+	p, err := strconv.Atoi(portPart)
+	if err != nil || p <= 0 || p > 65535 {
+		return 0, "", "", false, false, false
+	}
+	if needsSlash {
+		return p, "", "", true, false, true
+	}
+
+	capPrefix := "/" + sidecarCapSegment
+	if restEscaped == capPrefix || strings.HasPrefix(restEscaped, capPrefix+"/") {
+		if restEscaped == capPrefix || restEscaped == capPrefix+"/" {
+			return p, "", "", false, true, true
+		}
+		after := strings.TrimPrefix(restEscaped, capPrefix+"/")
+		nextSlash := strings.IndexByte(after, '/')
+		var tok string
+		if nextSlash < 0 {
+			tok = after
+			if !isValidSidecarCapHex(tok) {
+				return p, "", "", false, true, true
+			}
+			return p, tok, "", true, false, true
+		}
+		tok = after[:nextSlash]
+		if !isValidSidecarCapHex(tok) {
+			return p, "", "", false, true, true
+		}
+		return p, tok, after[nextSlash:], false, false, true
+	}
+
+	return p, "", restEscaped, false, false, true
+}
+
+func sidecarCapPrefix(port int, capToken string) string {
+	return fmt.Sprintf("%s%d/%s/%s", SidecarPrefix, port, sidecarCapSegment, capToken)
+}
+
+func (p *Proxy) issueOrReuseSidecarCap(parentSession string, port int) (*sidecarCapSession, error) {
+	now := time.Now()
+
+	p.sidecarCapMu.Lock()
+	defer p.sidecarCapMu.Unlock()
+	if p.sidecarCaps == nil {
+		p.sidecarCaps = make(map[string]*sidecarCapSession)
+	}
+
+	p.pruneExpiredSidecarCapsLocked(now)
+
+	var inheritedCookies map[string]string
+	for _, existing := range p.sidecarCaps {
+		if existing.port == port && existing.parentSession == parentSession {
+			if sidecarCapMaxLifetime-now.Sub(existing.createdAt) >= sidecarCapReuseMinRemaining {
+				existing.lastUsedAt = now
+				return existing, nil
+			}
+			inheritedCookies = existing.snapshotCookies()
+		}
+	}
+
+	for len(p.sidecarCaps) >= sidecarCapMaxEntries {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, sess := range p.sidecarCaps {
+			if oldestKey == "" || sess.lastUsedAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = sess.lastUsedAt
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(p.sidecarCaps, oldestKey)
+	}
+
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, err
+	}
+	tok := hex.EncodeToString(raw[:])
+	if inheritedCookies == nil {
+		inheritedCookies = make(map[string]string)
+	}
+	sess := &sidecarCapSession{
+		token:         tok,
+		port:          port,
+		parentSession: parentSession,
+		createdAt:     now,
+		lastUsedAt:    now,
+		cookies:       inheritedCookies,
+	}
+	p.sidecarCaps[tok] = sess
+	return sess, nil
+}
+
+func (p *Proxy) lookupSidecarCap(capToken string, port int) *sidecarCapSession {
+	if !isValidSidecarCapHex(capToken) {
+		return nil
+	}
+	now := time.Now()
+
+	p.sidecarCapMu.Lock()
+	defer p.sidecarCapMu.Unlock()
+	sess, ok := p.sidecarCaps[capToken]
+	if !ok {
+		return nil
+	}
+	if now.Sub(sess.lastUsedAt) > sidecarCapIdleTTL || now.Sub(sess.createdAt) > sidecarCapMaxLifetime {
+		delete(p.sidecarCaps, capToken)
+		return nil
+	}
+	if sess.port != port {
+		return nil
+	}
+	sess.lastUsedAt = now
+	return sess
+}
+
+func (p *Proxy) deleteSidecarCap(capToken string) {
+	p.sidecarCapMu.Lock()
+	delete(p.sidecarCaps, capToken)
+	p.sidecarCapMu.Unlock()
+}
+
+func (p *Proxy) pruneExpiredSidecarCapsLocked(now time.Time) {
+	for k, sess := range p.sidecarCaps {
+		if now.Sub(sess.lastUsedAt) > sidecarCapIdleTTL || now.Sub(sess.createdAt) > sidecarCapMaxLifetime {
+			delete(p.sidecarCaps, k)
+		}
+	}
+}
+
+// ValidateSidecarCapability authorizes capability-scoped sidecar requests
+// (/.../~s/<cap>/...) sent from opaque-origin (Origin: null) sandboxed frames
+// without relying on ambient browser cookies.
+func (p *Proxy) ValidateSidecarCapability(r *http.Request) (*http.Request, bool) {
+	if p == nil || r == nil || r.URL == nil {
+		return r, false
+	}
+	port, capToken, _, _, invalidCap, ok := parseSidecarRoute(r.URL.EscapedPath())
+	if !ok || invalidCap || capToken == "" {
+		return r, false
+	}
+	sess, dialMode, err := p.authorizeSidecarCapRequest(r, port, capToken)
+	if sess == nil && err == nil {
+		return r, false
+	}
+	// A valid capability whose sidecar list is unavailable is passed on too,
+	// so the handler answers 503 rather than the login check answering 403.
+	found := sidecarCapAuth{port: port, token: capToken, sess: sess, dialMode: dialMode, err: err}
+	return r.WithContext(context.WithValue(r.Context(), sidecarCapAuthKey{}, found)), true
+}
+
+type sidecarCapAuthKey struct{}
+
+// sidecarCapAuth is what ValidateSidecarCapability found for a request, kept
+// so serveSidecar does not check the session and the sidecar list again.
+type sidecarCapAuth struct {
+	port     int
+	token    string
+	sess     *sidecarCapSession
+	dialMode string
+	err      error
+}
+
+// authorizedSidecarCap returns what ValidateSidecarCapability found for r, or
+// checks the capability now when r did not pass through it.
+func (p *Proxy) authorizedSidecarCap(r *http.Request, port int, capToken string) (*sidecarCapSession, string, error) {
+	if found, ok := r.Context().Value(sidecarCapAuthKey{}).(sidecarCapAuth); ok && found.port == port && found.token == capToken {
+		return found.sess, found.dialMode, found.err
+	}
+	return p.authorizeSidecarCapRequest(r, port, capToken)
+}
+
+func (p *Proxy) authorizeSidecarCapRequest(r *http.Request, port int, capToken string) (*sidecarCapSession, string, error) {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if isWebSocketUpgrade(r) {
+		if origin != "null" && !p.sameOriginUpgrade(r) {
+			return nil, "", nil
+		}
+	} else {
+		if origin != "" && origin != "null" && !p.sameOriginRequest(r) {
+			return nil, "", nil
+		}
+	}
+
+	capSess := p.lookupSidecarCap(capToken, port)
+	if capSess == nil {
+		return nil, "", nil
+	}
+	if p.opts.ValidateSession != nil {
+		if capSess.parentSession == "" || !p.opts.ValidateSession(capSess.parentSession) {
+			p.deleteSidecarCap(capToken)
+			return nil, "", nil
+		}
+	}
+	dialMode, ok := p.allowedSidecarDialMode(r.Context(), port)
+	if !ok {
+		if p.sidecarListFailed() {
+			return nil, "", errSidecarListUnavailable
+		}
+		return nil, "", nil
+	}
+	return capSess, dialMode, nil
+}
+
+// enterSidecar handles a navigation to the entry URL /__agy/sidecar/<port>/...
+// from the parent page. It checks the parent's session, issues or reuses the
+// capability for this port and redirects to the same path under it. The
+// document is served only from the capability URL: from the opaque-origin
+// frame a request back to the entry URL (a reload, a form without an action,
+// fetch("")) is cross-site and refused, while one to the capability URL is
+// not.
+func (p *Proxy) enterSidecar(w http.ResponseWriter, r *http.Request, port int, restEscaped string) {
+	if isWebSocketUpgrade(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		http.Error(w, "sidecar capability required", http.StatusForbidden)
+		return
+	}
+	if !p.sameOriginRequest(r) {
+		http.Error(w, "cross-origin sidecar request rejected", http.StatusForbidden)
+		return
+	}
+
+	parentSession := ""
+	if c, err := r.Cookie(auth.CookieName); err == nil {
+		parentSession = c.Value
+	}
+	if p.opts.ValidateSession != nil && (parentSession == "" || !p.opts.ValidateSession(parentSession)) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if _, allowed := p.allowedSidecarDialMode(r.Context(), port); !allowed {
+		if p.sidecarListFailed() {
+			writeSidecarListUnavailable(w)
+			return
+		}
+		http.Error(w, "sidecar port is not active", http.StatusForbidden)
+		return
+	}
+
+	capSess, err := p.issueOrReuseSidecarCap(parentSession, port)
+	if err != nil {
+		http.Error(w, "could not initialize sidecar sandbox", http.StatusInternalServerError)
+		return
+	}
+	httpPfx, wsPfx := p.externalSidecarPrefixURL(r, port, nil)
+	capSess.setExternalPrefixes(httpPfx, wsPfx)
+
+	if restEscaped == "" {
+		restEscaped = "/"
+	}
+	target := sidecarCapPrefix(port, capSess.token) + restEscaped
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+}
+
+func (p *Proxy) serveSidecar(w http.ResponseWriter, r *http.Request, releaseHTTPReq func()) {
+	escaped := r.URL.EscapedPath()
+	port, capToken, restEscaped, needsSlash, invalidCap, ok := parseSidecarRoute(escaped)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if invalidCap {
+		http.Error(w, "invalid sidecar capability", http.StatusForbidden)
+		return
+	}
+
+	if capToken == "" {
+		p.enterSidecar(w, r, port, restEscaped)
+		return
+	}
+
+	capSess, dialMode, authErr := p.authorizedSidecarCap(r, port, capToken)
+	if capSess == nil {
+		if errors.Is(authErr, errSidecarListUnavailable) {
+			writeSidecarListUnavailable(w)
+			return
+		}
+		http.Error(w, "invalid or expired sidecar capability", http.StatusForbidden)
+		return
+	}
+	if needsSlash {
+		target := sidecarCapPrefix(port, capToken) + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		applySidecarCORSHeaders(w.Header(), r)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		return
+	}
+	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+		applySidecarCORSHeaders(w.Header(), r)
+		w.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	capPrefix := sidecarCapPrefix(port, capSess.token)
+	dialAddr := p.resolveSidecarDialAddr(r.Context(), dialMode, port)
+
+	decodedRest, err := url.PathUnescape(restEscaped)
+	if err != nil {
+		decodedRest = restEscaped
+	}
+	if decodedRest == "/"+sidecarShimName {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		shim := []byte(sidecarShimJS(port, capPrefix))
+		applySidecarCORSHeaders(w.Header(), r)
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		writeSidecarGenerated(w, r, shim)
+		return
+	}
+
+	if isWebSocketUpgrade(r) {
+		p.proxySidecarWebSocket(w, r, port, dialAddr, capPrefix, capSess, decodedRest, restEscaped)
+		return
+	}
+
+	upstreamHost := fmt.Sprintf("localhost:%d", port)
+	upstreamOrigin := "http://" + upstreamHost
+	vaultCookie := capSess.cookieHeader()
+
+	rp := &httputil.ReverseProxy{
+		Transport:     p.sidecarTransport,
+		FlushInterval: -1,
+		Director: func(req *http.Request) {
+			req.URL.Scheme = "http"
+			req.URL.Host = dialAddr
+			req.URL.Path = decodedRest
+			req.URL.RawPath = restEscaped
+			req.Host = upstreamHost
+
+			prepareSidecarUpstreamHeaders(req.Header, upstreamOrigin, vaultCookie)
+			req.Header["X-Forwarded-For"] = nil
+			// The transport asks the sidecar for gzip itself and hands back
+			// the body decoded, so it can be rewritten. What reaches the
+			// browser is compressed again below. Validators are passed on:
+			// a rewritten response carries none and is not stored, so the
+			// browser only revalidates bodies passed through unchanged.
+			req.Header.Del("Accept-Encoding")
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			if err := p.modifySidecarResponse(resp, r, port, capPrefix, capSess, releaseHTTPReq); err != nil {
+				return err
+			}
+			compressSidecarResponse(resp, r)
+			return nil
+		},
+		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+			if req.Context().Err() != nil {
+				return
+			}
+			applySidecarCORSHeaders(rw.Header(), r)
+			rw.Header().Set("Content-Security-Policy", sidecarDefaultCSP)
+			rw.Header().Set("Referrer-Policy", "no-referrer")
+			rw.WriteHeader(http.StatusBadGateway)
+			_, _ = rw.Write([]byte("Sidecar UI is not reachable."))
+		},
+	}
+	rp.ServeHTTP(w, r)
+}
+
+func applySidecarCORSHeaders(h http.Header, r *http.Request) {
+	if r == nil {
+		return
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return
+	}
+	h.Set("Access-Control-Allow-Origin", origin)
+	h.Set("Access-Control-Allow-Credentials", "true")
+	h.Add("Vary", "Origin")
+	if reqMethod := strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")); reqMethod != "" {
+		h.Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+		if reqHeaders := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers")); reqHeaders != "" {
+			h.Set("Access-Control-Allow-Headers", reqHeaders)
+			h.Add("Vary", "Access-Control-Request-Headers")
+		}
+		h.Set("Access-Control-Max-Age", "600")
+	}
+}
+
+func prepareSidecarUpstreamHeaders(h http.Header, upstreamOrigin string, vaultCookie string) {
+	// Never forward browser cookies to sidecar servers; inject only cookies
+	// stored in the server-side capability vault for this sidecar session.
+	h.Del("Cookie")
+	if vaultCookie != "" {
+		h.Set("Cookie", vaultCookie)
+	}
+
+	// This path is plain HTTP. A protocol switch is only ever proxied by
+	// proxySidecarWebSocket, so none may reach ReverseProxy.
+	dropProtocolSwitch(h)
+
+	h.Set("Origin", upstreamOrigin)
+	h.Set("Sec-Fetch-Site", "same-origin")
+	h.Del("Referer")
+
+	h.Del("X-Original-Origin")
+	h.Del("X-Client-Host")
+	h.Del("x-codeium-csrf-token")
+	stripFrontProxyHeaders(h)
+}
+
+// A reverse proxy or tunnel in front of agy-server adds headers about the
+// user and the connection, such as Cloudflare Access's signed identity or
+// Tailscale's user. A sidecar, possibly a third-party plugin, is not that
+// proxy's backend and gets none of them.
+var (
+	frontProxyHeaderPrefixes = []string{"X-Forwarded-", "Cf-", "Tailscale-"}
+	frontProxyHeaders        = []string{"Forwarded", "X-Real-Ip", "True-Client-Ip", "Cdn-Loop", "Proxy-Authorization"}
+)
+
+func stripFrontProxyHeaders(h http.Header) {
+	for name := range h {
+		canonical := http.CanonicalHeaderKey(name)
+		for _, prefix := range frontProxyHeaderPrefixes {
+			if strings.HasPrefix(canonical, prefix) {
+				delete(h, name)
+				break
+			}
+		}
+	}
+	for _, name := range frontProxyHeaders {
+		h.Del(name)
+	}
+	// A browser adds Basic credentials for the app's origin by itself, for a
+	// password a reverse proxy asks for. A sidecar's own scripts use other
+	// schemes, which pass.
+	if auth := strings.TrimSpace(h.Get("Authorization")); len(auth) >= 6 && strings.EqualFold(auth[:6], "basic ") {
+		h.Del("Authorization")
+	}
+}
+
+type activityReadCloser struct {
+	rc    io.ReadCloser
+	touch func()
+}
+
+func (a *activityReadCloser) Read(p []byte) (int, error) {
+	n, err := a.rc.Read(p)
+	if n > 0 && a.touch != nil {
+		a.touch()
+	}
+	return n, err
+}
+
+func (a *activityReadCloser) Close() error {
+	return a.rc.Close()
+}
+
+func (p *Proxy) modifySidecarResponse(resp *http.Response, clientReq *http.Request, port int, capPrefix string, capSess *sidecarCapSession, releaseHTTPReq func()) error {
+	if rawCookies := resp.Header.Values("Set-Cookie"); len(rawCookies) > 0 {
+		capSess.storeSetCookies(rawCookies)
+		resp.Header.Del("Set-Cookie")
+	}
+
+	reqPath := "/"
+	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path != "" {
+		reqPath = resp.Request.URL.Path
+	}
+	if loc := resp.Header.Get("Location"); loc != "" {
+		resp.Header.Set("Location", rewriteSidecarLocation(loc, port, capPrefix, sidecarBaseDir(reqPath)))
+	}
+
+	applySidecarCORSHeaders(resp.Header, clientReq)
+	shimNonce := p.enforceSidecarSecurityHeaders(resp.Header, clientReq, port, capSess)
+	privateSidecarCaching(resp.Header)
+
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "text/event-stream") {
+		if releaseHTTPReq != nil {
+			releaseHTTPReq()
+		}
+		if resp.Body != nil {
+			resp.Body = &activityReadCloser{rc: resp.Body, touch: p.touchActivity}
+		}
+		return nil
+	}
+
+	if resp.Request != nil && resp.Request.Method == http.MethodHead {
+		resp.Header.Del("Content-Length")
+		return nil
+	}
+	// A partial body cannot be rewritten: its Content-Range counts the
+	// sidecar's bytes.
+	if resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusPartialContent ||
+		resp.StatusCode == http.StatusNotModified || resp.Header.Get("Content-Encoding") != "" {
+		return nil
+	}
+
+	isHTML := strings.Contains(ct, "text/html")
+	isCSS := strings.Contains(ct, "text/css")
+	isPreloadJS := reqPath == "/preload.js" && (strings.Contains(ct, "javascript") || strings.Contains(ct, "ecmascript") || ct == "")
+	if !isHTML && !isCSS && !isPreloadJS {
+		return nil
+	}
+
+	limited := io.LimitReader(resp.Body, sidecarMaxRewriteBytes+1)
+	buf, err := io.ReadAll(limited)
+	if err != nil {
+		_ = resp.Body.Close()
+		return err
+	}
+	if int64(len(buf)) > sidecarMaxRewriteBytes {
+		origBody := resp.Body
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.MultiReader(bytes.NewReader(buf), origBody),
+			Closer: origBody,
+		}
+		return nil
+	}
+	_ = resp.Body.Close()
+
+	baseDir := sidecarBaseDir(reqPath)
+	var rewritten []byte
+	switch {
+	case isHTML:
+		httpPfx, wsPfx := p.externalSidecarPrefixURL(clientReq, port, capSess)
+		rewritten = rewriteSidecarHTML(buf, port, capPrefix, baseDir, sidecarPageCSP{httpPrefix: httpPfx, wsPrefix: wsPfx, shimNonce: shimNonce})
+	case isCSS:
+		rewritten = rewriteSidecarCSS(buf, port, capPrefix, baseDir)
+	case isPreloadJS:
+		shim := sidecarShimJS(port, capPrefix) + "\n"
+		rewritten = make([]byte, 0, len(shim)+len(buf)+len(sidecarPreloadSuffixJS)+1)
+		rewritten = append(rewritten, shim...)
+		rewritten = append(rewritten, buf...)
+		rewritten = append(rewritten, '\n')
+		rewritten = append(rewritten, sidecarPreloadSuffixJS...)
+	}
+
+	resp.Header.Del("ETag")
+	resp.Header.Del("Last-Modified")
+	if isHTML {
+		// The page carries this response's script nonce, so it is never
+		// reused.
+		resp.Header.Set("Cache-Control", "no-store")
+	} else {
+		// A stylesheet or the bridge rewrites the same way for the same URL,
+		// so the browser may keep it and revalidate against the rewrite.
+		sum := sha256.Sum256(rewritten)
+		tag := `"agy-` + hex.EncodeToString(sum[:16]) + `"`
+		resp.Header.Set("Cache-Control", "private, no-cache")
+		resp.Header.Set("ETag", "W/"+tag)
+		if etagMatches(clientReq.Header.Get("If-None-Match"), tag) {
+			resp.StatusCode = http.StatusNotModified
+			resp.Status = "304 Not Modified"
+			resp.Body = http.NoBody
+			resp.ContentLength = 0
+			resp.Header.Del("Content-Length")
+			return nil
+		}
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+	resp.ContentLength = int64(len(rewritten))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+	return nil
+}
+
+// privateSidecarCaching keeps a sidecar response out of shared caches, such
+// as a CDN in front of agy-server. It is served under a capability URL, and
+// a shared copy would outlive the capability.
+func privateSidecarCaching(h http.Header) {
+	var kept []string
+	private := false
+	for _, v := range h.Values("Cache-Control") {
+		for _, d := range strings.Split(v, ",") {
+			d = strings.TrimSpace(d)
+			name, _, _ := strings.Cut(strings.ToLower(d), "=")
+			switch strings.TrimSpace(name) {
+			case "", "public", "s-maxage", "proxy-revalidate":
+				continue
+			case "private", "no-store":
+				private = true
+			}
+			kept = append(kept, d)
+		}
+	}
+	if !private {
+		kept = append([]string{"private"}, kept...)
+	}
+	h.Set("Cache-Control", strings.Join(kept, ", "))
+}
+
+// originWideHeaders act on the app's whole origin, not the sidecar's path,
+// and outlast the response: one sidecar response could clear the app's
+// cookies and storage, pin HSTS or another transport for the app's host,
+// have the browser report every URL of the app to a collector, or change the
+// client hints sent to the app.
+var originWideHeaders = []string{
+	"Clear-Site-Data",
+	"Strict-Transport-Security",
+	"Alt-Svc",
+	"NEL",
+	"Report-To",
+	"Accept-CH",
+	"Critical-CH",
+}
+
+func stripOriginWideHeaders(h http.Header) {
+	for _, name := range originWideHeaders {
+		h.Del(name)
+	}
+}
+
+func (p *Proxy) enforceSidecarSecurityHeaders(h http.Header, clientReq *http.Request, port int, capSess *sidecarCapSession) (shimNonce string) {
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Frame-Options", "SAMEORIGIN")
+	h.Del("Content-Security-Policy-Report-Only")
+	stripOriginWideHeaders(h)
+
+	policies := splitCSPPolicies(h.Values("Content-Security-Policy"))
+	h.Del("Content-Security-Policy")
+	if len(policies) == 0 {
+		h.Set("Content-Security-Policy", sidecarDefaultCSP)
+		return ""
+	}
+
+	httpPrefix, wsPrefix := p.externalSidecarPrefixURL(clientReq, port, capSess)
+
+	var candidateNonce string
+	var nonceUsed bool
+	rewrittenPolicies := make([]string, 0, len(policies))
+	for _, pol := range policies {
+		if candidateNonce == "" && cspPolicyNeedsShimNonce(pol, httpPrefix) {
+			var nb [12]byte
+			if _, err := rand.Read(nb[:]); err == nil {
+				candidateNonce = hex.EncodeToString(nb[:])
+			}
+		}
+		rewritten, used := rewriteSingleSidecarCSP(pol, httpPrefix, wsPrefix, candidateNonce)
+		if used {
+			nonceUsed = true
+		}
+		rewrittenPolicies = append(rewrittenPolicies, rewritten)
+	}
+
+	for _, pol := range rewrittenPolicies {
+		h.Add("Content-Security-Policy", pol)
+	}
+	if nonceUsed {
+		return candidateNonce
+	}
+	return ""
+}
+
+func splitCSPPolicies(headerValues []string) []string {
+	var out []string
+	for _, hv := range headerValues {
+		for _, part := range strings.Split(hv, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
+func (p *Proxy) externalSidecarPrefixURL(r *http.Request, port int, capSess *sidecarCapSession) (httpPrefix, wsPrefix string) {
+	if capSess != nil {
+		if savedHTTP, savedWS := capSess.externalPrefixes(); savedHTTP != "" {
+			return savedHTTP, savedWS
+		}
+	}
+
+	var (
+		pubHostPort string
+		pubHost     string
+		pubIsHTTPS  bool
+	)
+	if p.opts.PublicURL != "" {
+		if pub, err := url.Parse(p.opts.PublicURL); err == nil && pub.Host != "" {
+			pubHostPort = auth.SanitizeHostPort(pub.Host)
+			pubHost, _ = auth.SplitHostOptionalPort(pubHostPort)
+			pubIsHTTPS = strings.EqualFold(pub.Scheme, "https")
+		}
+	}
+
+	var (
+		reqHostPort string
+		reqHost     string
+		reqIsHTTPS  bool
+		sourceHost  string
+	)
+	if r != nil {
+		reqIsHTTPS = auth.RequestIsSecure(r, p.opts.TrustedProxies)
+		if fwd := p.trustedForwardedHost(r); fwd != "" {
+			reqHostPort = fwd
+		} else if safe := auth.SanitizeHostPort(r.Host); safe != "" {
+			reqHostPort = safe
+		}
+		reqHost, _ = auth.SplitHostOptionalPort(reqHostPort)
+
+		src := strings.TrimSpace(r.Header.Get("Origin"))
+		if src == "" || src == "null" {
+			src = strings.TrimSpace(r.Header.Get("Referer"))
+		}
+		if src != "" && src != "null" {
+			if su, err := url.Parse(src); err == nil {
+				sourceHost = su.Hostname()
+			}
+		}
+	}
+
+	directLoopback := sourceHost != "" && auth.IsLoopbackHost(sourceHost) && strings.EqualFold(sourceHost, reqHost)
+
+	var (
+		host  string
+		https bool
+	)
+	switch {
+	case directLoopback && reqHostPort != "":
+		host = reqHostPort
+		https = reqIsHTTPS
+	case reqHostPort == "" || (auth.IsLoopbackHost(reqHost) && pubHost != "" && !auth.IsLoopbackHost(pubHost)):
+		host = pubHostPort
+		https = pubIsHTTPS
+	default:
+		host = reqHostPort
+		https = reqIsHTTPS || (pubHost != "" && strings.EqualFold(reqHost, pubHost) && pubIsHTTPS)
+	}
+	if host == "" {
+		return "", ""
+	}
+
+	proto := "http"
+	wsProto := "ws"
+	if https {
+		proto = "https"
+		wsProto = "wss"
+	}
+	suffix := fmt.Sprintf("%s%d/", SidecarPrefix, port)
+	return proto + "://" + host + suffix, wsProto + "://" + host + suffix
+}
+
+type parsedCSPDirective struct {
+	name   string
+	tokens []string
+}
+
+func parseCSPDirectives(csp string) (dirs []parsedCSPDirective, scriptElemIdx, scriptIdx, defaultIdx int) {
+	scriptElemIdx = -1
+	scriptIdx = -1
+	defaultIdx = -1
+	for _, raw := range strings.Split(csp, ";") {
+		fields := strings.Fields(strings.TrimSpace(raw))
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.ToLower(fields[0])
+		if name == "sandbox" || name == "frame-ancestors" {
+			continue
+		}
+		idx := len(dirs)
+		switch name {
+		case "script-src-elem":
+			if scriptElemIdx < 0 {
+				scriptElemIdx = idx
+			}
+		case "script-src":
+			if scriptIdx < 0 {
+				scriptIdx = idx
+			}
+		case "default-src":
+			if defaultIdx < 0 {
+				defaultIdx = idx
+			}
+		}
+		dirs = append(dirs, parsedCSPDirective{name: name, tokens: fields[1:]})
+	}
+	return dirs, scriptElemIdx, scriptIdx, defaultIdx
+}
+
+func effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx int) int {
+	if scriptElemIdx >= 0 {
+		return scriptElemIdx
+	}
+	if scriptIdx >= 0 {
+		return scriptIdx
+	}
+	return defaultIdx
+}
+
+// shimAccess says what a policy's effective script directive needs so the
+// injected shim script can load.
+type shimAccess int
+
+const (
+	// shimAllowed means the directive already lets the shim through: a
+	// wildcard or scheme source, or 'self', which gets the sidecar's prefix.
+	shimAllowed shimAccess = iota
+	// shimByPrefix means the sidecar's URL prefix is added as a host source.
+	shimByPrefix
+	// shimByNonce means a nonce is added, because host sources would not do.
+	shimByNonce
+)
+
+// shimAccessFor decides how the shim gets past a script directive. A nonce is
+// added only where it changes nothing else: next to 'none', 'strict-dynamic'
+// (which ignores host sources), or an existing nonce or hash (beside which
+// 'unsafe-inline' is already ignored). Anywhere else a nonce would switch off
+// the page's own 'unsafe-inline' scripts, so the prefix is added instead.
+func shimAccessFor(tokens []string, httpPrefix string) (hasNone bool, access shimAccess) {
+	var self, wildcard, strictDynamic, nonceOrHash, unsafeInline bool
+	for _, tok := range tokens {
+		low := strings.ToLower(tok)
+		switch {
+		case low == "'none'":
+			hasNone = true
+		case low == "'self'":
+			self = true
+		case low == "*" || low == "http:":
+			wildcard = true
+		case low == "https:":
+			// Matches the shim only when the sidecar is served over HTTPS.
+			wildcard = wildcard || strings.HasPrefix(httpPrefix, "https://")
+		case low == "'strict-dynamic'":
+			strictDynamic = true
+		case low == "'unsafe-inline'":
+			unsafeInline = true
+		case strings.HasPrefix(low, "'nonce-") && strings.HasSuffix(tok, "'") && len(tok) > 8:
+			nonceOrHash = true
+		case strings.HasPrefix(low, "'sha256-") || strings.HasPrefix(low, "'sha384-") || strings.HasPrefix(low, "'sha512-"):
+			nonceOrHash = true
+		}
+	}
+	switch {
+	case hasNone:
+		return true, shimByNonce
+	case strictDynamic || nonceOrHash:
+		return false, shimByNonce
+	case wildcard || (self && httpPrefix != ""):
+		return false, shimAllowed
+	case httpPrefix != "":
+		return false, shimByPrefix
+	case unsafeInline:
+		// Without a prefix the shim cannot be allowed without breaking the
+		// page's inline scripts. The page matters more.
+		return false, shimAllowed
+	default:
+		return false, shimByNonce
+	}
+}
+
+func cspPolicyNeedsShimNonce(csp, httpPrefix string) bool {
+	dirs, scriptElemIdx, scriptIdx, defaultIdx := parseCSPDirectives(csp)
+	effIdx := effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx)
+	if effIdx < 0 {
+		return false
+	}
+	_, access := shimAccessFor(dirs[effIdx].tokens, httpPrefix)
+	return access == shimByNonce
+}
+
+// rewriteSingleSidecarCSP rewrites one CSP header policy for the sidecar frame:
+// the directives as rewriteSidecarCSPDirectives leaves them, then the sandbox
+// and frame-ancestors the proxy requires.
+func rewriteSingleSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) (rewritten string, usedNonce bool) {
+	dirs, usedNonce := rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce)
+	out := cspDirectiveStrings(dirs)
+	out = append(out, sidecarSandboxFor(csp), sidecarFrameAncestors)
+	return strings.Join(out, "; "), usedNonce
+}
+
+// rewriteMetaSidecarCSP rewrites a policy declared in a <meta> tag the same way
+// as a header one. A meta policy cannot carry sandbox or frame-ancestors, so
+// none are added.
+func rewriteMetaSidecarCSP(csp, httpPrefix, wsPrefix, shimNonce string) string {
+	dirs, _ := rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce)
+	return strings.Join(cspDirectiveStrings(dirs), "; ")
+}
+
+// rewriteSidecarCSPDirectives adds the sidecar's URL prefix wherever 'self'
+// appears, since 'self' does not match inside the opaque-origin frame, and
+// lets the injected shim through the effective script directive. It drops
+// sandbox and frame-ancestors, which the caller decides.
+func rewriteSidecarCSPDirectives(csp, httpPrefix, wsPrefix, shimNonce string) (dirs []parsedCSPDirective, usedNonce bool) {
+	dirs, scriptElemIdx, scriptIdx, defaultIdx := parseCSPDirectives(csp)
+
+	for i := range dirs {
+		hasSelf := false
+		for _, tok := range dirs[i].tokens {
+			if strings.EqualFold(tok, "'self'") {
+				hasSelf = true
+				break
+			}
+		}
+		if hasSelf && httpPrefix != "" {
+			dirs[i].tokens = appendUniqueCSPToken(dirs[i].tokens, httpPrefix)
+			if (dirs[i].name == "default-src" || dirs[i].name == "connect-src") && wsPrefix != "" {
+				dirs[i].tokens = appendUniqueCSPToken(dirs[i].tokens, wsPrefix)
+			}
+		}
+	}
+
+	effIdx := effectiveScriptDirectiveIndex(scriptElemIdx, scriptIdx, defaultIdx)
+	if effIdx < 0 {
+		return dirs, false
+	}
+	toks := dirs[effIdx].tokens
+	hasNone, access := shimAccessFor(toks, httpPrefix)
+	if hasNone {
+		if dirs[effIdx].name == "default-src" {
+			// Keep default-src 'none' for every other kind of resource and let
+			// only the shim through with an explicit script-src.
+			if shimNonce != "" {
+				dirs = append(dirs, parsedCSPDirective{
+					name:   "script-src",
+					tokens: []string{"'nonce-" + shimNonce + "'"},
+				})
+				usedNonce = true
+			} else if httpPrefix != "" {
+				dirs = append(dirs, parsedCSPDirective{
+					name:   "script-src",
+					tokens: []string{httpPrefix},
+				})
+			}
+			return dirs, usedNonce
+		}
+		filtered := make([]string, 0, len(toks)+1)
+		for _, tok := range toks {
+			if !strings.EqualFold(tok, "'none'") {
+				filtered = append(filtered, tok)
+			}
+		}
+		if shimNonce != "" {
+			filtered = appendUniqueCSPToken(filtered, "'nonce-"+shimNonce+"'")
+			usedNonce = true
+		} else if httpPrefix != "" {
+			filtered = appendUniqueCSPToken(filtered, httpPrefix)
+		}
+		dirs[effIdx].tokens = filtered
+		return dirs, usedNonce
+	}
+
+	switch access {
+	case shimByNonce:
+		if shimNonce != "" {
+			toks = appendUniqueCSPToken(toks, "'nonce-"+shimNonce+"'")
+			usedNonce = true
+		} else if httpPrefix != "" {
+			toks = appendUniqueCSPToken(toks, httpPrefix)
+		}
+	case shimByPrefix:
+		toks = appendUniqueCSPToken(toks, httpPrefix)
+	}
+	dirs[effIdx].tokens = toks
+	return dirs, usedNonce
+}
+
+func cspDirectiveStrings(dirs []parsedCSPDirective) []string {
+	out := make([]string, 0, len(dirs)+2)
+	for _, d := range dirs {
+		if len(d.tokens) == 0 {
+			out = append(out, d.name)
+		} else {
+			out = append(out, d.name+" "+strings.Join(d.tokens, " "))
+		}
+	}
+	return out
+}
+
+// sidecarSandboxFor returns the sandbox directive for a rewritten policy. The
+// frame must never get allow-same-origin, which would expose the app's session,
+// so the proxy's own list is the most a sidecar gets. A sidecar that sandboxes
+// itself more tightly, for example without allow-scripts to show untrusted
+// output, keeps that: the result is the tokens both lists share. Only the first
+// sandbox directive in a policy counts, as in a browser.
+func sidecarSandboxFor(csp string) string {
+	var upstream []string
+	found := false
+	for _, raw := range strings.Split(csp, ";") {
+		fields := strings.Fields(strings.TrimSpace(raw))
+		if len(fields) > 0 && strings.EqualFold(fields[0], "sandbox") {
+			upstream = fields[1:]
+			found = true
+			break
+		}
+	}
+	if !found {
+		return sidecarSandboxDirective
+	}
+	granted := make(map[string]bool, len(upstream))
+	for _, tok := range upstream {
+		granted[strings.ToLower(tok)] = true
+	}
+	kept := []string{"sandbox"}
+	for _, tok := range strings.Fields(sidecarSandboxDirective)[1:] {
+		if granted[tok] {
+			kept = append(kept, tok)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+func appendUniqueCSPToken(tokens []string, candidate string) []string {
+	for _, t := range tokens {
+		if strings.EqualFold(t, candidate) {
+			return tokens
+		}
+	}
+	return append(tokens, candidate)
+}
+
+// rewriteSidecarLocation keeps a redirect inside the capability prefix. A
+// relative Location resolves against reqDir, the upstream request's directory,
+// as the browser would resolve it against the request URL.
+func rewriteSidecarLocation(loc string, port int, capPrefix string, reqDir string) string {
+	loc = strings.TrimSpace(loc)
+	if loc == "" {
+		return loc
+	}
+	basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
+	if strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") {
+		if loc == capPrefix || strings.HasPrefix(loc, capPrefix+"/") {
+			return loc
+		}
+		if loc == basePrefix || strings.HasPrefix(loc, basePrefix+"/") {
+			sub := strings.TrimPrefix(loc, basePrefix)
+			if sub == "" {
+				sub = "/"
+			}
+			if strings.HasPrefix(sub, "/"+sidecarCapSegment+"/") {
+				return loc
+			}
+			return capPrefix + sub
+		}
+		if strings.HasPrefix(loc, "/__agy/") {
+			return loc
+		}
+		return capPrefix + loc
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return loc
+	}
+	if p, ok := loopbackPortFromURL(loc); ok && p == port {
+		ep := u.EscapedPath()
+		if ep == "" {
+			ep = "/"
+		}
+		out := capPrefix + ep
+		if u.RawQuery != "" {
+			out += "?" + u.RawQuery
+		}
+		if u.Fragment != "" {
+			out += "#" + u.Fragment
+		}
+		return out
+	}
+	if !strings.Contains(loc, "://") && !hasURIScheme(loc) {
+		return rewriteSidecarRelativeOrLoopbackURL(loc, port, capPrefix, reqDir)
+	}
+	return loc
+}
+
+func sidecarBaseDir(reqPath string) string {
+	if reqPath == "" || !strings.HasPrefix(reqPath, "/") {
+		return "/"
+	}
+	if strings.HasSuffix(reqPath, "/") {
+		return reqPath
+	}
+	lastSlash := strings.LastIndexByte(reqPath, '/')
+	if lastSlash <= 0 {
+		return "/"
+	}
+	return reqPath[:lastSlash+1]
+}
+
+// rewriteSidecarHTML injects the external capability-scoped shim script and
+// rewrites relative and root-relative URL attributes while leaving raw text
+// elements (<script>, <title>, <textarea>, etc.) and comments untouched.
+//
+// The first <base href> moves the directory later relative URLs resolve
+// against, as it does in a browser, and a <meta> CSP is rewritten like a
+// header one.
+func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string, page sidecarPageCSP) []byte {
+	shimTag := fmt.Sprintf(`<script src="%s/%s"></script>`, capPrefix, sidecarShimName)
+	if page.shimNonce != "" {
+		shimTag = fmt.Sprintf(`<script nonce="%s" src="%s/%s"></script>`, page.shimNonce, capPrefix, sidecarShimName)
+	}
+	baseSet := false
+
+	var out bytes.Buffer
+	out.Grow(len(body) + len(shimTag) + 256)
+
+	injected := false
+	n := len(body)
+	i := 0
+
+	for i < n {
+		if body[i] != '<' {
+			next := bytes.IndexByte(body[i:], '<')
+			if next < 0 {
+				out.Write(body[i:])
+				break
+			}
+			out.Write(body[i : i+next])
+			i += next
+			continue
+		}
+		if !isHTMLTagOpen(body, i) {
+			out.WriteByte('<')
+			i++
+			continue
+		}
+
+		if i+4 <= n && bytes.Equal(body[i:i+4], []byte("<!--")) {
+			end := bytes.Index(body[i+4:], []byte("-->"))
+			if end < 0 {
+				out.Write(body[i:])
+				break
+			}
+			out.Write(body[i : i+4+end+3])
+			i += 4 + end + 3
+			continue
+		}
+
+		tagEnd := findHTMLTagEnd(body, i)
+		if tagEnd < 0 {
+			out.Write(body[i:])
+			break
+		}
+
+		tagBytes := body[i : tagEnd+1]
+		tagName, isClosing := parseHTMLTagName(tagBytes)
+
+		if !isClosing && tagName != "" && !strings.HasPrefix(tagName, "!") && !strings.HasPrefix(tagName, "?") {
+			out.Write(rewriteHTMLOpenTag(tagBytes, port, capPrefix, baseDir, page))
+			if tagName == "base" && !baseSet {
+				if href, ok := htmlTagAttrValue(tagBytes, "href"); ok {
+					baseSet = true
+					baseDir = sidecarBaseFromHref(href, port, capPrefix, baseDir)
+				}
+			}
+		} else {
+			out.Write(tagBytes)
+		}
+		i = tagEnd + 1
+
+		if !injected && !isClosing && tagName == "head" {
+			out.WriteString(shimTag)
+			injected = true
+		}
+
+		// "/>" does not close these in HTML: <script/> still starts a script.
+		if !isClosing && isRawTextHTMLElement(tagName) {
+			closeIdx := findRawTextCloseTag(body, i, tagName)
+			if closeIdx < 0 {
+				rawRest := body[i:]
+				if tagName == "style" {
+					out.Write(rewriteSidecarCSS(rawRest, port, capPrefix, baseDir))
+				} else {
+					out.Write(rawRest)
+				}
+				break
+			}
+			inner := body[i:closeIdx]
+			if tagName == "style" {
+				out.Write(rewriteSidecarCSS(inner, port, capPrefix, baseDir))
+			} else {
+				out.Write(inner)
+			}
+			i = closeIdx
+		}
+	}
+
+	if !injected {
+		rendered := out.Bytes()
+		if insertAt := afterDoctypeOffset(rendered); insertAt > 0 {
+			var combined bytes.Buffer
+			combined.Grow(len(rendered) + len(shimTag))
+			combined.Write(rendered[:insertAt])
+			combined.WriteString(shimTag)
+			combined.Write(rendered[insertAt:])
+			return combined.Bytes()
+		}
+		var combined bytes.Buffer
+		combined.Grow(len(rendered) + len(shimTag))
+		combined.WriteString(shimTag)
+		combined.Write(rendered)
+		return combined.Bytes()
+	}
+	return out.Bytes()
+}
+
+// isHTMLTagOpen reports whether the '<' at i opens a tag, a comment or a
+// declaration, as the HTML tokenizer decides: only a letter, "/" and a
+// letter, "!" or "?" may follow. Any other '<' is text, as in "1 < 2".
+func isHTMLTagOpen(b []byte, i int) bool {
+	isLetter := func(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+	if i+1 >= len(b) {
+		return false
+	}
+	switch c := b[i+1]; {
+	case isLetter(c), c == '!', c == '?':
+		return true
+	case c == '/':
+		return i+2 < len(b) && isLetter(b[i+2])
+	}
+	return false
+}
+
+func isRawTextHTMLElement(tagName string) bool {
+	switch tagName {
+	case "script", "style", "title", "textarea", "xmp", "noembed", "noframes":
+		return true
+	default:
+		return false
+	}
+}
+
+func afterDoctypeOffset(b []byte) int {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t' || b[i] == '\r' || b[i] == '\n') {
+		i++
+	}
+	if i+9 <= len(b) && strings.EqualFold(string(b[i:i+9]), "<!doctype") {
+		end := findHTMLTagEnd(b, i)
+		if end >= 0 {
+			return end + 1
+		}
+	}
+	return 0
+}
+
+// findHTMLTagEnd returns the index of the '>' that ends the tag at start. As
+// in the HTML tokenizer, a quote opens a quoted value only where a value
+// starts, after "=" and any spaces. Elsewhere, as in title=it's, it is a
+// plain character, so one stray quote cannot run on through the document.
+func findHTMLTagEnd(b []byte, start int) int {
+	const (
+		inName = iota
+		beforeValue
+		inUnquotedValue
+	)
+	state := inName
+	var quote byte
+	for i := start + 1; i < len(b); i++ {
+		c := b[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		space := c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f'
+		if c == '>' {
+			return i
+		}
+		switch state {
+		case beforeValue:
+			switch {
+			case space:
+			case c == '"' || c == '\'':
+				quote = c
+				state = inName
+			default:
+				state = inUnquotedValue
+			}
+		case inUnquotedValue:
+			if space {
+				state = inName
+			}
+		default:
+			if c == '=' {
+				state = beforeValue
+			}
+		}
+	}
+	return -1
+}
+
+func parseHTMLTagName(tag []byte) (name string, closing bool) {
+	if len(tag) < 2 || tag[0] != '<' {
+		return "", false
+	}
+	j := 1
+	for j < len(tag) && (tag[j] == ' ' || tag[j] == '\t' || tag[j] == '\r' || tag[j] == '\n') {
+		j++
+	}
+	if j < len(tag) && tag[j] == '/' {
+		closing = true
+		j++
+	}
+	start := j
+	for j < len(tag) {
+		c := tag[j]
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '>' || c == '/' {
+			break
+		}
+		j++
+	}
+	return strings.ToLower(string(tag[start:j])), closing
+}
+
+func findRawTextCloseTag(b []byte, from int, tagName string) int {
+	needle := "</" + tagName
+	nLen := len(needle)
+	for i := from; i+nLen < len(b); i++ {
+		if b[i] == '<' && b[i+1] == '/' && strings.EqualFold(string(b[i:i+nLen]), needle) {
+			after := b[i+nLen]
+			if after == '>' || after == ' ' || after == '\t' || after == '\r' || after == '\n' || after == '/' {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+type htmlAttrToken struct {
+	leadWS   []byte
+	rawName  []byte
+	nameLow  string
+	hasValue bool
+	eqAndWS  []byte
+	quote    byte
+	value    string
+	closedQ  bool
+	// valued is false when the tag ends right after '=', leaving no value
+	// to rewrite.
+	valued bool
+}
+
+// sidecarPageCSP carries what a <meta> policy needs to be rewritten like a
+// header one.
+type sidecarPageCSP struct {
+	httpPrefix string
+	wsPrefix   string
+	shimNonce  string
+}
+
+// sidecarExternalBase is the base directory once a <base href> points away
+// from the sidecar. The browser then resolves relative and root-relative URLs
+// against that other origin, so they are left as written.
+const sidecarExternalBase = "\x00external-base"
+
+// parseHTMLOpenTag splits an opening tag into its name part, its attributes
+// with their raw values, and whatever closes it.
+const maxHTMLTagAttrs = 1024
+
+func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []byte) {
+	n := len(tag)
+	i := 1
+	for i < n && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\r' && tag[i] != '\n' && tag[i] != '>' && tag[i] != '/' {
+		i++
+	}
+	header = tag[:i]
+
+	for i < n {
+		wsStart := i
+		// A "/" that does not close the tag separates attributes like a
+		// space, as the HTML tokenizer treats it.
+		for i < n && (tag[i] == ' ' || tag[i] == '\t' || tag[i] == '\r' || tag[i] == '\n' ||
+			(tag[i] == '/' && !(i+1 < n && tag[i+1] == '>'))) {
+			i++
+		}
+		leadWS := tag[wsStart:i]
+		if i >= n {
+			tail = leadWS
+			break
+		}
+		// A tag with more attributes than any page needs keeps the rest as
+		// it is, so one tag cannot make the proxy allocate without bound.
+		if tag[i] == '>' || (tag[i] == '/' && i+1 < n && tag[i+1] == '>') || len(attrs) >= maxHTMLTagAttrs {
+			tail = append(tail, leadWS...)
+			tail = append(tail, tag[i:]...)
+			break
+		}
+
+		attrStart := i
+		for i < n && tag[i] != '=' && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\r' && tag[i] != '\n' && tag[i] != '>' && tag[i] != '/' {
+			i++
+		}
+		rawName := tag[attrStart:i]
+		nameLow := strings.ToLower(string(rawName))
+
+		eqStart := i
+		for i < n && (tag[i] == ' ' || tag[i] == '\t' || tag[i] == '\r' || tag[i] == '\n') {
+			i++
+		}
+		if i >= n || tag[i] != '=' {
+			if len(rawName) == 0 {
+				// Nothing was read. Keep the rest as it is rather than
+				// looping on it.
+				tail = append(tail, leadWS...)
+				tail = append(tail, tag[attrStart:]...)
+				break
+			}
+			attrs = append(attrs, htmlAttrToken{
+				leadWS:  leadWS,
+				rawName: rawName,
+				nameLow: nameLow,
+			})
+			i = eqStart
+			continue
+		}
+		i++ // '='
+		for i < n && (tag[i] == ' ' || tag[i] == '\t' || tag[i] == '\r' || tag[i] == '\n') {
+			i++
+		}
+		eqAndWS := tag[eqStart:i]
+		if i >= n {
+			attrs = append(attrs, htmlAttrToken{
+				leadWS:   leadWS,
+				rawName:  rawName,
+				nameLow:  nameLow,
+				hasValue: true,
+				eqAndWS:  eqAndWS,
+			})
+			break
+		}
+
+		if tag[i] == '"' || tag[i] == '\'' {
+			quote := tag[i]
+			i++
+			valStart := i
+			for i < n && tag[i] != quote {
+				i++
+			}
+			rawVal := string(tag[valStart:i])
+			closedQ := false
+			if i < n && tag[i] == quote {
+				closedQ = true
+				i++
+			}
+			attrs = append(attrs, htmlAttrToken{
+				leadWS:   leadWS,
+				rawName:  rawName,
+				nameLow:  nameLow,
+				hasValue: true,
+				eqAndWS:  eqAndWS,
+				quote:    quote,
+				value:    rawVal,
+				closedQ:  closedQ,
+				valued:   true,
+			})
+		} else {
+			valStart := i
+			for i < n && tag[i] != ' ' && tag[i] != '\t' && tag[i] != '\r' && tag[i] != '\n' && tag[i] != '>' {
+				i++
+			}
+			attrs = append(attrs, htmlAttrToken{
+				leadWS:   leadWS,
+				rawName:  rawName,
+				nameLow:  nameLow,
+				hasValue: true,
+				eqAndWS:  eqAndWS,
+				value:    string(tag[valStart:i]),
+				valued:   true,
+			})
+		}
+	}
+	return header, attrs, tail
+}
+
+// htmlTagAttrValue returns the decoded value of the first attribute called
+// name in an opening tag.
+func htmlTagAttrValue(tag []byte, name string) (string, bool) {
+	_, attrs, _ := parseHTMLOpenTag(tag)
+	for _, a := range attrs {
+		if a.nameLow == name && a.valued {
+			return html.UnescapeString(a.value), true
+		}
+	}
+	return "", false
+}
+
+func rewriteHTMLOpenTag(tag []byte, port int, capPrefix string, baseDir string, page sidecarPageCSP) []byte {
+	header, attrs, tail := parseHTMLOpenTag(tag)
+
+	cspMeta := false
+	if strings.EqualFold(string(header[1:]), "meta") {
+		for _, a := range attrs {
+			if a.nameLow == "http-equiv" && a.valued && strings.EqualFold(strings.TrimSpace(html.UnescapeString(a.value)), "content-security-policy") {
+				cspMeta = true
+				break
+			}
+		}
+	}
+
+	isObject := strings.EqualFold(string(header[1:]), "object")
+	rewroteURL := false
+	for i := range attrs {
+		a := &attrs[i]
+		if !a.valued {
+			continue
+		}
+		if a.nameLow == "data" && !isObject {
+			// Only <object data> is a URL.
+			continue
+		}
+		if cspMeta && a.nameLow == "content" {
+			// An unquoted value cannot hold the spaces a policy has.
+			if a.quote != 0 {
+				a.value = html.EscapeString(rewriteMetaSidecarCSP(html.UnescapeString(a.value), page.httpPrefix, page.wsPrefix, page.shimNonce))
+			}
+			continue
+		}
+		newVal := rewriteTagAttrValue(a.nameLow, a.value, port, capPrefix, baseDir)
+		if newVal != a.value || strings.HasPrefix(strings.TrimSpace(newVal), capPrefix+"/") {
+			rewroteURL = true
+		}
+		a.value = newVal
+	}
+
+	var out bytes.Buffer
+	out.Grow(len(tag) + 64)
+	out.Write(header)
+	for _, a := range attrs {
+		if rewroteURL && a.nameLow == "integrity" {
+			continue
+		}
+		out.Write(a.leadWS)
+		out.Write(a.rawName)
+		if !a.hasValue {
+			continue
+		}
+		out.Write(a.eqAndWS)
+		if a.quote != 0 {
+			out.WriteByte(a.quote)
+			out.WriteString(a.value)
+			if a.closedQ {
+				out.WriteByte(a.quote)
+			}
+		} else {
+			out.WriteString(a.value)
+		}
+	}
+	out.Write(tail)
+	return out.Bytes()
+}
+
+// sidecarBaseFromHref returns the base directory that relative URLs resolve
+// against after a <base href>. href resolves against the document's own
+// directory, cur. An href leaving the sidecar gives sidecarExternalBase.
+func sidecarBaseFromHref(href string, port int, capPrefix string, cur string) string {
+	t := strings.TrimSpace(href)
+	if t == "" {
+		return cur
+	}
+	if strings.HasPrefix(t, "//") {
+		return sidecarExternalBase
+	}
+	if hasURIScheme(t) {
+		if p, ok := loopbackPortFromURL(t); ok && p == port {
+			if u, err := url.Parse(t); err == nil {
+				if u.Path == "" {
+					return "/"
+				}
+				return sidecarBaseDir(u.Path)
+			}
+		}
+		return sidecarExternalBase
+	}
+
+	pathPart := t
+	if cut := strings.IndexAny(t, "?#"); cut >= 0 {
+		pathPart = t[:cut]
+	}
+	if pathPart == "" {
+		return cur
+	}
+	if !strings.HasPrefix(pathPart, "/") {
+		joined := path.Join(cur, pathPart)
+		if isDirectoryRef(pathPart) && joined != "/" {
+			joined += "/"
+		}
+		return sidecarBaseDir(joined)
+	}
+
+	basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
+	switch {
+	case pathPart == capPrefix || strings.HasPrefix(pathPart, capPrefix+"/"):
+		pathPart = strings.TrimPrefix(pathPart, capPrefix)
+	case pathPart == basePrefix || strings.HasPrefix(pathPart, basePrefix+"/"):
+		pathPart = strings.TrimPrefix(pathPart, basePrefix)
+		if strings.HasPrefix(pathPart, "/"+sidecarCapSegment+"/") {
+			// Another capability's path; the browser would leave this one.
+			return sidecarExternalBase
+		}
+	case strings.HasPrefix(pathPart, "/__agy/"):
+		// The app's own paths are outside the sidecar.
+		return sidecarExternalBase
+	}
+	if pathPart == "" {
+		return "/"
+	}
+	clean := path.Clean(pathPart)
+	if isDirectoryRef(pathPart) && clean != "/" {
+		clean += "/"
+	}
+	return sidecarBaseDir(clean)
+}
+
+// isDirectoryRef reports whether a URL path names a directory: it ends in a
+// slash, or in a "." or ".." segment, which resolve to directories.
+func isDirectoryRef(p string) bool {
+	return strings.HasSuffix(p, "/") || p == "." || p == ".." || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..")
+}
+
+func rewriteTagAttrValue(attrName, rawVal string, port int, capPrefix string, baseDir string) string {
+	switch attrName {
+	case "src", "href", "action", "poster", "formaction", "data":
+		return rewriteSidecarRelativeOrLoopbackURL(rawVal, port, capPrefix, baseDir)
+	case "srcset", "imagesrcset":
+		return rewriteSrcsetValue(rawVal, port, capPrefix, baseDir)
+	case "style":
+		return string(rewriteSidecarCSS([]byte(rawVal), port, capPrefix, baseDir))
+	default:
+		return rawVal
+	}
+}
+
+func hasURIScheme(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ':' {
+			return i > 0
+		}
+		if c == '/' || c == '?' || c == '#' {
+			return false
+		}
+		if i == 0 {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+				return false
+			}
+		} else {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.') {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+func rewriteSidecarRelativeOrLoopbackURL(val string, port int, capPrefix string, baseDir string) string {
+	trimmed := strings.TrimSpace(val)
+	// A reference that is only a query or a fragment resolves against the
+	// document itself, which is already under the capability prefix.
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "?") || strings.HasPrefix(trimmed, "//") {
+		return val
+	}
+	leadLen := len(val) - len(strings.TrimLeft(val, " \t\r\n"))
+	trailLen := len(val) - len(strings.TrimRight(val, " \t\r\n"))
+	lead := val[:leadLen]
+	trail := ""
+	if trailLen > 0 {
+		trail = val[len(val)-trailLen:]
+	}
+
+	if hasURIScheme(trimmed) {
+		if p, ok := loopbackPortFromURL(trimmed); ok && p == port {
+			if u, err := url.Parse(trimmed); err == nil {
+				ep := u.EscapedPath()
+				if ep == "" {
+					ep = "/"
+				}
+				out := capPrefix + ep
+				if u.RawQuery != "" {
+					out += "?" + u.RawQuery
+				}
+				if u.Fragment != "" {
+					out += "#" + u.Fragment
+				}
+				return lead + out + trail
+			}
+		}
+		return val
+	}
+	if baseDir == sidecarExternalBase {
+		return val
+	}
+
+	basePrefix := fmt.Sprintf("%s%d", SidecarPrefix, port)
+	if strings.HasPrefix(trimmed, "/") {
+		if trimmed == capPrefix || strings.HasPrefix(trimmed, capPrefix+"/") {
+			return val
+		}
+		if trimmed == basePrefix || strings.HasPrefix(trimmed, basePrefix+"/") {
+			sub := strings.TrimPrefix(trimmed, basePrefix)
+			if sub == "" {
+				sub = "/"
+			}
+			if strings.HasPrefix(sub, "/"+sidecarCapSegment+"/") {
+				return val
+			}
+			return lead + capPrefix + sub + trail
+		}
+		if strings.HasPrefix(trimmed, "/__agy/") {
+			return val
+		}
+		return lead + capPrefix + trimmed + trail
+	}
+
+	if baseDir == "" {
+		baseDir = "/"
+	}
+	if strings.HasPrefix(trimmed, "?") {
+		return lead + capPrefix + baseDir + trimmed + trail
+	}
+
+	pathPart := trimmed
+	suffix := ""
+	if cut := strings.IndexAny(trimmed, "?#"); cut >= 0 {
+		pathPart = trimmed[:cut]
+		suffix = trimmed[cut:]
+	}
+	trailingSlash := isDirectoryRef(pathPart)
+	joined := path.Clean(path.Join(baseDir, pathPart))
+	if !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+	if trailingSlash && joined != "/" {
+		joined += "/"
+	}
+	return lead + capPrefix + joined + suffix + trail
+}
+
+func isSrcsetSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f'
+}
+
+func rewriteSrcsetValue(val string, port int, capPrefix string, baseDir string) string {
+	var out strings.Builder
+	out.Grow(len(val) + 64)
+	n := len(val)
+	i := 0
+	for i < n {
+		sepStart := i
+		for i < n && (isSrcsetSpace(val[i]) || val[i] == ',') {
+			i++
+		}
+		out.WriteString(val[sepStart:i])
+		if i >= n {
+			break
+		}
+
+		if i+5 <= n && strings.EqualFold(val[i:i+5], "data:") {
+			dataStart := i
+			commaIdx := strings.IndexByte(val[i:], ',')
+			if commaIdx < 0 {
+				out.WriteString(val[dataStart:])
+				break
+			}
+			i += commaIdx + 1
+			var quote byte
+			parenDepth := 0
+			inAngle := false
+			for i < n {
+				c := val[i]
+				if quote != 0 {
+					if c == quote {
+						quote = 0
+					}
+					i++
+					continue
+				}
+				if c == '"' || c == '\'' {
+					quote = c
+					i++
+					continue
+				}
+				if c == '<' {
+					inAngle = true
+				} else if c == '>' {
+					inAngle = false
+				} else if c == '(' {
+					parenDepth++
+				} else if c == ')' && parenDepth > 0 {
+					parenDepth--
+				} else if c == ',' && parenDepth == 0 && !inAngle {
+					break
+				}
+				i++
+			}
+			out.WriteString(val[dataStart:i])
+			continue
+		}
+
+		urlStart := i
+		for i < n && !isSrcsetSpace(val[i]) {
+			i++
+		}
+		rawURL := val[urlStart:i]
+		trailingCommas := 0
+		for len(rawURL) > 0 && rawURL[len(rawURL)-1] == ',' {
+			rawURL = rawURL[:len(rawURL)-1]
+			trailingCommas++
+		}
+		out.WriteString(rewriteSidecarRelativeOrLoopbackURL(rawURL, port, capPrefix, baseDir))
+		if trailingCommas > 0 {
+			for k := 0; k < trailingCommas; k++ {
+				out.WriteByte(',')
+			}
+			continue
+		}
+
+		descStart := i
+		parenDepth := 0
+		for i < n {
+			c := val[i]
+			if c == '(' {
+				parenDepth++
+			} else if c == ')' && parenDepth > 0 {
+				parenDepth--
+			} else if c == ',' && parenDepth == 0 {
+				break
+			}
+			i++
+		}
+		out.WriteString(val[descStart:i])
+	}
+	return out.String()
+}
+
+func rewriteSidecarCSS(body []byte, port int, capPrefix string, baseDir string) []byte {
+	var out bytes.Buffer
+	out.Grow(len(body) + 128)
+
+	n := len(body)
+	i := 0
+	for i < n {
+		if i+1 < n && body[i] == '/' && body[i+1] == '*' {
+			end := bytes.Index(body[i+2:], []byte("*/"))
+			if end < 0 {
+				out.Write(body[i:])
+				break
+			}
+			out.Write(body[i : i+2+end+2])
+			i += 2 + end + 2
+			continue
+		}
+
+		if i+4 <= n && strings.EqualFold(string(body[i:i+4]), "url(") && (i == 0 || !isCSSIdentChar(body[i-1])) {
+			out.Write(body[i : i+4])
+			i += 4
+			for i < n && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n') {
+				out.WriteByte(body[i])
+				i++
+			}
+			if i >= n {
+				break
+			}
+			if body[i] == '"' || body[i] == '\'' {
+				q := body[i]
+				out.WriteByte(q)
+				i++
+				start := i
+				for i < n && body[i] != q {
+					if body[i] == '\\' && i+1 < n {
+						i += 2
+						continue
+					}
+					i++
+				}
+				out.WriteString(rewriteSidecarRelativeOrLoopbackURL(string(body[start:i]), port, capPrefix, baseDir))
+				if i < n && body[i] == q {
+					out.WriteByte(q)
+					i++
+				}
+			} else {
+				start := i
+				for i < n && body[i] != ')' && body[i] != ' ' && body[i] != '\t' && body[i] != '\r' && body[i] != '\n' {
+					i++
+				}
+				out.WriteString(rewriteSidecarRelativeOrLoopbackURL(string(body[start:i]), port, capPrefix, baseDir))
+			}
+			continue
+		}
+
+		if i+7 <= n && strings.EqualFold(string(body[i:i+7]), "@import") {
+			out.Write(body[i : i+7])
+			i += 7
+			wsStart := i
+			for i < n && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n') {
+				i++
+			}
+			out.Write(body[wsStart:i])
+			if i < n && (body[i] == '"' || body[i] == '\'') {
+				q := body[i]
+				out.WriteByte(q)
+				i++
+				start := i
+				for i < n && body[i] != q {
+					if body[i] == '\\' && i+1 < n {
+						i += 2
+						continue
+					}
+					i++
+				}
+				out.WriteString(rewriteSidecarRelativeOrLoopbackURL(string(body[start:i]), port, capPrefix, baseDir))
+				if i < n && body[i] == q {
+					out.WriteByte(q)
+					i++
+				}
+			}
+			continue
+		}
+
+		if body[i] == '"' || body[i] == '\'' {
+			q := body[i]
+			start := i
+			i++
+			for i < n && body[i] != q {
+				if body[i] == '\\' && i+1 < n {
+					i += 2
+					continue
+				}
+				i++
+			}
+			if i < n && body[i] == q {
+				i++
+			}
+			out.Write(body[start:i])
+			continue
+		}
+
+		out.WriteByte(body[i])
+		i++
+	}
+	return out.Bytes()
+}
+
+func isCSSIdentChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'
+}
+
+func isValidWebSocketHandshake(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodGet {
+		return false
+	}
+	if r.ContentLength > 0 || len(r.TransferEncoding) > 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+		return false
+	}
+	if !headerContainsToken(r.Header, "Connection", "upgrade") {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("Sec-WebSocket-Version")) != "13" {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key")) == "" {
+		return false
+	}
+	return true
+}
+
+func headerContainsToken(h http.Header, headerName, wantToken string) bool {
+	for _, line := range h.Values(headerName) {
+		for _, tok := range strings.Split(line, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), wantToken) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stripHopByHopHeaders(h http.Header) {
+	for _, k := range []string{
+		"Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"TE",
+		"Trailer",
+		"Transfer-Encoding",
+		"Upgrade",
+	} {
+		h.Del(k)
+	}
+}
+
+func setTCPKeepAlive(conn net.Conn, period time.Duration) {
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(period)
+	}
+}
+
+type halfCloseConn interface {
+	CloseWrite() error
+}
+
+func (p *Proxy) proxySidecarWebSocket(w http.ResponseWriter, r *http.Request, port int, dialAddr string, capPrefix string, capSess *sidecarCapSession, decodedPath, rawPath string) {
+	if !isValidWebSocketHandshake(r) {
+		http.Error(w, "invalid websocket upgrade request", http.StatusBadRequest)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	upConn, err := dialSidecarAddress(r.Context(), "tcp", dialAddr)
+	if err != nil {
+		http.Error(w, "sidecar websocket unreachable", http.StatusBadGateway)
+		return
+	}
+
+	upstreamHost := fmt.Sprintf("localhost:%d", port)
+	upstreamOrigin := "http://" + upstreamHost
+
+	outReq := r.Clone(r.Context())
+	outReq.Method = http.MethodGet
+	outReq.Body = nil
+	outReq.GetBody = nil
+	outReq.ContentLength = 0
+	outReq.TransferEncoding = nil
+	outReq.URL.Scheme = "http"
+	outReq.URL.Host = upstreamHost
+	outReq.URL.Path = decodedPath
+	outReq.URL.RawPath = rawPath
+	outReq.Host = upstreamHost
+	outReq.RequestURI = ""
+	prepareSidecarUpstreamHeaders(outReq.Header, upstreamOrigin, capSess.cookieHeader())
+	outReq.Header["X-Forwarded-For"] = nil
+	outReq.Header.Set("Connection", "Upgrade")
+	outReq.Header.Set("Upgrade", "websocket")
+
+	_ = upConn.SetWriteDeadline(time.Now().Add(sidecarDialTimeout))
+	if err := outReq.Write(upConn); err != nil {
+		_ = upConn.Close()
+		http.Error(w, "sidecar websocket handshake write failed", http.StatusBadGateway)
+		return
+	}
+	_ = upConn.SetWriteDeadline(time.Time{})
+
+	upReader := bufio.NewReader(upConn)
+	_ = upConn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	resp, err := http.ReadResponse(upReader, outReq)
+	_ = upConn.SetReadDeadline(time.Time{})
+	if err != nil {
+		_ = upConn.Close()
+		http.Error(w, "sidecar websocket handshake read failed", http.StatusBadGateway)
+		return
+	}
+
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer upConn.Close()
+		defer resp.Body.Close()
+		stripHopByHopHeaders(resp.Header)
+		if err := p.modifySidecarResponse(resp, r, port, capPrefix, capSess, nil); err != nil {
+			http.Error(w, "sidecar websocket handshake rejected", http.StatusBadGateway)
+			return
+		}
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, sidecarMaxWSRejectBody+1))
+		if err != nil || int64(len(bodyBytes)) > sidecarMaxWSRejectBody {
+			http.Error(w, "sidecar websocket handshake response too large", http.StatusBadGateway)
+			return
+		}
+		for k, vv := range resp.Header {
+			if strings.EqualFold(k, "Content-Length") {
+				continue
+			}
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(bodyBytes)))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(bodyBytes)
+		return
+	}
+
+	if rawCookies := resp.Header.Values("Set-Cookie"); len(rawCookies) > 0 {
+		capSess.storeSetCookies(rawCookies)
+		resp.Header.Del("Set-Cookie")
+	}
+	stripOriginWideHeaders(resp.Header)
+
+	clientConn, clientBuf, err := hj.Hijack()
+	if err != nil {
+		_ = upConn.Close()
+		return
+	}
+	defer clientConn.Close()
+	defer upConn.Close()
+
+	setTCPKeepAlive(clientConn, 30*time.Second)
+	setTCPKeepAlive(upConn, 30*time.Second)
+
+	stopWatch := make(chan struct{})
+	defer close(stopWatch)
+	if p.closed != nil {
+		go func() {
+			select {
+			case <-p.closed:
+				_ = clientConn.Close()
+				_ = upConn.Close()
+			case <-stopWatch:
+			}
+		}()
+	}
+
+	var hs bytes.Buffer
+	fmt.Fprintf(&hs, "HTTP/1.1 %s\r\n", resp.Status)
+	_ = resp.Header.Write(&hs)
+	hs.WriteString("\r\n")
+	_ = clientConn.SetWriteDeadline(time.Now().Add(sidecarWSWriteTimeout))
+	if _, err := clientConn.Write(hs.Bytes()); err != nil {
+		return
+	}
+
+	if upBuffered := upReader.Buffered(); upBuffered > 0 {
+		if _, err := io.CopyN(clientConn, upReader, int64(upBuffered)); err != nil {
+			return
+		}
+	}
+	if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
+		_ = upConn.SetWriteDeadline(time.Now().Add(sidecarWSWriteTimeout))
+		if _, err := io.CopyN(upConn, clientBuf.Reader, int64(clientBuf.Reader.Buffered())); err != nil {
+			return
+		}
+	}
+	_ = clientConn.SetWriteDeadline(time.Time{})
+	_ = upConn.SetWriteDeadline(time.Time{})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	// The idle limit is for the connection. A sidecar that only pushes, to a
+	// page that never sends, keeps it open, so a read timing out in one
+	// direction is retried while the other has been active. Once one side has
+	// closed its half, closeBy holds when the other must be done, and reads
+	// no longer extend past it.
+	idleLimit, closeGrace := sidecarWSIdleTimeout, sidecarWSCloseGrace
+	var lastActivity, closeBy atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	pipeConn := func(dst, src net.Conn) {
+		defer wg.Done()
+		buf := make([]byte, 32*1024)
+		for {
+			_ = src.SetReadDeadline(time.Now().Add(idleLimit))
+			// Checked after setting the idle deadline: if the other side
+			// stores closeBy after this load, its own deadline call on this
+			// conn comes later and wins.
+			if by := closeBy.Load(); by != 0 {
+				_ = src.SetReadDeadline(time.Unix(0, by))
+			}
+			n, rErr := src.Read(buf)
+			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
+				p.touchActivity()
+				_ = dst.SetWriteDeadline(time.Now().Add(sidecarWSWriteTimeout))
+				if _, wErr := dst.Write(buf[:n]); wErr != nil {
+					_ = src.Close()
+					_ = dst.Close()
+					return
+				}
+			}
+			if rErr != nil {
+				var netErr net.Error
+				if errors.As(rErr, &netErr) && netErr.Timeout() && closeBy.Load() == 0 &&
+					time.Since(time.Unix(0, lastActivity.Load())) < idleLimit {
+					continue
+				}
+				if hc, ok := dst.(halfCloseConn); ok && errors.Is(rErr, io.EOF) {
+					by := time.Now().Add(closeGrace)
+					closeBy.Store(by.UnixNano())
+					_ = hc.CloseWrite()
+					_ = dst.SetReadDeadline(by)
+				} else {
+					_ = dst.Close()
+				}
+				return
+			}
+		}
+	}
+
+	go pipeConn(upConn, clientConn)
+	go pipeConn(clientConn, upConn)
+	wg.Wait()
+}
+
+// sidecarPreloadSuffixJS runs after the sidecar bridge, preload.js. The app
+// takes an add-artifact-comment message only from the frame's own origin, and
+// a sandboxed frame has none, so the message carries the gateway token from
+// the frame's URL instead: the app's window.__agySidecarMessageOK compares it
+// with the token in the iframe's src. A page the frame navigated to does not
+// know the token. window.parent is replaced only while the bridge's
+// addArtifactComment runs, so the bridge's own message format is kept.
+const sidecarPreloadSuffixJS = `;(function () {
+  var s = window.sidecar, ui = s && s.ui, add = ui && ui.addArtifactComment;
+  var token = new URLSearchParams(location.search).get("token");
+  var desc = Object.getOwnPropertyDescriptor(window, "parent");
+  if (typeof add !== "function" || !token || !desc || !desc.configurable || window.parent === window) return;
+  var realParent = window.parent;
+  var relay = {
+    postMessage: function (msg, targetOrigin, transfer) {
+      if (msg && typeof msg === "object" && msg.type === "add-artifact-comment") {
+        msg = Object.assign({}, msg, { agySidecarToken: token });
+      }
+      return realParent.postMessage(msg, targetOrigin, transfer);
+    }
+  };
+  ui.addArtifactComment = function () {
+    Object.defineProperty(window, "parent", { value: relay, configurable: true, writable: true });
+    try {
+      return add.apply(this, arguments);
+    } finally {
+      Object.defineProperty(window, "parent", desc);
+    }
+  };
+})();
+`
+
+func sidecarShimJS(port int, capPrefix string) string {
+	return `(function(){
+  var PORT = ` + strconv.Itoa(port) + `;
+  var BASE_PREFIX = "` + SidecarPrefix + `" + PORT;
+  var PREFIX = ` + strconv.Quote(capPrefix) + `;
+  if (window.__agySidecarShimPrefix === PREFIX) return;
+  window.__agySidecarShimPrefix = PREFIX;
+
+  function makeMemoryStorage() {
+    var store = Object.create(null);
+    return {
+      get length() { return Object.keys(store).length; },
+      key: function(i) { var k = Object.keys(store); return i >= 0 && i < k.length ? k[i] : null; },
+      getItem: function(k) { k = String(k); return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+      setItem: function(k, v) { store[String(k)] = String(v); },
+      removeItem: function(k) { delete store[String(k)]; },
+      clear: function() { store = Object.create(null); }
+    };
+  }
+  ["localStorage", "sessionStorage"].forEach(function(prop) {
+    try { void window[prop]; } catch (e) {
+      try { Object.defineProperty(window, prop, { value: makeMemoryStorage(), configurable: true }); } catch (e2) {}
+    }
+  });
+
+  function isNonNetworkScheme(s) {
+    return /^(?:data|blob|javascript|mailto|tel|about):/i.test(s);
+  }
+
+  function mapSidecarPath(p) {
+    if (!p || p.charAt(0) !== "/") p = "/" + (p || "");
+    if (p === PREFIX || p.indexOf(PREFIX + "/") === 0) return p;
+    if (p === BASE_PREFIX || p.indexOf(BASE_PREFIX + "/") === 0) {
+      var sub = p.slice(BASE_PREFIX.length) || "/";
+      if (sub.indexOf("/` + sidecarCapSegment + `/") === 0) return p;
+      return PREFIX + sub;
+    }
+    if (p.indexOf("/__agy/") === 0) return p;
+    return PREFIX + p;
+  }
+
+  function rewriteStr(u, forWS) {
+    if (typeof u !== "string" || !u) return u;
+    var trimmed = u.trim();
+    if (!trimmed || trimmed.charAt(0) === "#" || isNonNetworkScheme(trimmed)) return u;
+
+    var wsOrigin = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+    var httpOrigin = location.protocol + "//" + location.host;
+
+    if (trimmed.charAt(0) === "/" && trimmed.charAt(1) !== "/") {
+      var mappedRoot = mapSidecarPath(trimmed);
+      if (mappedRoot.indexOf("/__agy/") === 0 && mappedRoot !== PREFIX && mappedRoot.indexOf(PREFIX + "/") !== 0) {
+        return forWS ? (wsOrigin + mappedRoot) : u;
+      }
+      return forWS ? (wsOrigin + mappedRoot) : mappedRoot;
+    }
+
+    try {
+      var parsed = new URL(trimmed, location.href);
+      var protoLow = parsed.protocol.toLowerCase();
+      if (protoLow !== "http:" && protoLow !== "https:" && protoLow !== "ws:" && protoLow !== "wss:") {
+        return u;
+      }
+      var h = parsed.hostname.toLowerCase();
+      var isLoop = (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1") && parsed.port === String(PORT);
+      var isSameSidecar = parsed.host === location.host && (parsed.pathname === BASE_PREFIX || parsed.pathname.indexOf(BASE_PREFIX + "/") === 0);
+      var isSameRoot = parsed.host === location.host && parsed.pathname.indexOf("/__agy/") !== 0;
+      if (isLoop || isSameSidecar || isSameRoot) {
+        var nextPath = mapSidecarPath(parsed.pathname || "/");
+        var outOrigin = forWS ? wsOrigin : httpOrigin;
+        return outOrigin + nextPath + parsed.search + parsed.hash;
+      }
+    } catch (e) {}
+    return u;
+  }
+
+  function rewriteAny(u) {
+    if (typeof u === "string") return rewriteStr(u, false);
+    if (typeof URL !== "undefined" && u instanceof URL) {
+      var s = rewriteStr(u.href, false);
+      if (s !== u.href) { try { return new URL(s, location.href); } catch (e) {} }
+    }
+    return u;
+  }
+
+  if (typeof window.Request === "function") {
+    var OrigRequest = window.Request;
+    var PatchedRequest = function(input, init) {
+      if (typeof input === "string" || (typeof URL !== "undefined" && input instanceof URL)) {
+        input = rewriteAny(input);
+      } else if (input instanceof OrigRequest) {
+        var next = rewriteStr(input.url, false);
+        if (next !== input.url) input = new OrigRequest(next, input);
+      }
+      return arguments.length > 1 ? new OrigRequest(input, init) : new OrigRequest(input);
+    };
+    PatchedRequest.prototype = OrigRequest.prototype;
+    try { Object.setPrototypeOf(PatchedRequest, OrigRequest); } catch (e) {}
+    window.Request = PatchedRequest;
+  }
+
+  if (typeof window.fetch === "function") {
+    var origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        if (typeof input === "string" || (typeof URL !== "undefined" && input instanceof URL)) {
+          input = rewriteAny(input);
+        } else if (typeof Request !== "undefined" && input instanceof Request) {
+          var next = rewriteStr(input.url, false);
+          if (next !== input.url) input = new Request(next, input);
+        }
+      } catch (e) {}
+      return origFetch.call(this, input, init);
+    };
+  }
+
+  if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    var origBeacon = navigator.sendBeacon;
+    navigator.sendBeacon = function(url, data) {
+      var next = rewriteAny(url);
+      return arguments.length > 1 ? origBeacon.call(this, next, data) : origBeacon.call(this, next);
+    };
+  }
+
+  if (typeof XMLHttpRequest !== "undefined" && XMLHttpRequest.prototype && XMLHttpRequest.prototype.open) {
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length > 1) args[1] = rewriteAny(args[1]);
+      return origOpen.apply(this, args);
+    };
+  }
+
+  if (typeof window.EventSource === "function") {
+    var OrigES = window.EventSource;
+    var PatchedES = function(url, cfg) {
+      return arguments.length > 1 ? new OrigES(rewriteAny(url), cfg) : new OrigES(rewriteAny(url));
+    };
+    PatchedES.prototype = OrigES.prototype;
+    PatchedES.CONNECTING = OrigES.CONNECTING;
+    PatchedES.OPEN = OrigES.OPEN;
+    PatchedES.CLOSED = OrigES.CLOSED;
+    window.EventSource = PatchedES;
+  }
+
+  if (typeof window.WebSocket === "function") {
+    var OrigWS = window.WebSocket;
+    var PatchedWS = function(url, protocols) {
+      var next = typeof url === "string" ? rewriteStr(url, true) : (url && url.href ? rewriteStr(url.href, true) : url);
+      return protocols === undefined ? new OrigWS(next) : new OrigWS(next, protocols);
+    };
+    PatchedWS.prototype = OrigWS.prototype;
+    PatchedWS.CONNECTING = 0;
+    PatchedWS.OPEN = 1;
+    PatchedWS.CLOSING = 2;
+    PatchedWS.CLOSED = 3;
+    window.WebSocket = PatchedWS;
+  }
+
+  function isSrcsetWS(c) {
+    return c === " " || c === "\t" || c === "\r" || c === "\n" || c === "\f";
+  }
+
+  function rewriteSrcset(val) {
+    if (typeof val !== "string" || !val) return val;
+    var out = "";
+    var n = val.length;
+    var i = 0;
+    while (i < n) {
+      var sepStart = i;
+      while (i < n && (isSrcsetWS(val.charAt(i)) || val.charAt(i) === ",")) i++;
+      out += val.slice(sepStart, i);
+      if (i >= n) break;
+      if (val.slice(i, i + 5).toLowerCase() === "data:") {
+        var dataStart = i;
+        var commaIdx = val.indexOf(",", i);
+        if (commaIdx < 0) {
+          out += val.slice(dataStart);
+          break;
+        }
+        i = commaIdx + 1;
+        var quote = "";
+        var pDepth = 0;
+        var inAngle = false;
+        while (i < n) {
+          var dc = val.charAt(i);
+          if (quote) {
+            if (dc === quote) quote = "";
+            i++;
+            continue;
+          }
+          if (dc === "\"" || dc === "'") {
+            quote = dc;
+            i++;
+            continue;
+          }
+          if (dc === "<") inAngle = true;
+          else if (dc === ">") inAngle = false;
+          else if (dc === "(") pDepth++;
+          else if (dc === ")" && pDepth > 0) pDepth--;
+          else if (dc === "," && pDepth === 0 && !inAngle) break;
+          i++;
+        }
+        out += val.slice(dataStart, i);
+        continue;
+      }
+      var urlStart = i;
+      while (i < n && !isSrcsetWS(val.charAt(i))) i++;
+      var rawUrl = val.slice(urlStart, i);
+      var commas = "";
+      while (rawUrl.length > 0 && rawUrl.charAt(rawUrl.length - 1) === ",") {
+        rawUrl = rawUrl.slice(0, -1);
+        commas += ",";
+      }
+      out += rewriteStr(rawUrl, false);
+      if (commas) {
+        out += commas;
+        continue;
+      }
+      var descStart = i;
+      var depth = 0;
+      while (i < n) {
+        var ch = val.charAt(i);
+        if (ch === "(") depth++;
+        else if (ch === ")" && depth > 0) depth--;
+        else if (ch === "," && depth === 0) break;
+        i++;
+      }
+      out += val.slice(descStart, i);
+    }
+    return out;
+  }
+
+  function isCSSIdent(c) {
+    return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_";
+  }
+
+  function rewriteCSSText(css) {
+    if (typeof css !== "string" || !css || !/url\(|@import/i.test(css)) return css;
+    var out = "";
+    var n = css.length;
+    var i = 0;
+    while (i < n) {
+      if (i + 1 < n && css.charAt(i) === "/" && css.charAt(i + 1) === "*") {
+        var cEnd = css.indexOf("*/", i + 2);
+        if (cEnd < 0) { out += css.slice(i); break; }
+        out += css.slice(i, cEnd + 2);
+        i = cEnd + 2;
+        continue;
+      }
+      if (i + 4 <= n && css.slice(i, i + 4).toLowerCase() === "url(" && (i === 0 || !isCSSIdent(css.charAt(i - 1)))) {
+        out += css.slice(i, i + 4);
+        i += 4;
+        while (i < n && isSrcsetWS(css.charAt(i))) { out += css.charAt(i); i++; }
+        if (i >= n) break;
+        var q = css.charAt(i);
+        if (q === "\"" || q === "'") {
+          out += q;
+          i++;
+          var qs = i;
+          while (i < n && css.charAt(i) !== q) {
+            if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+            i++;
+          }
+          out += rewriteStr(css.slice(qs, i), false);
+          if (i < n && css.charAt(i) === q) { out += q; i++; }
+        } else {
+          var us = i;
+          while (i < n && css.charAt(i) !== ")" && !isSrcsetWS(css.charAt(i))) i++;
+          out += rewriteStr(css.slice(us, i), false);
+        }
+        continue;
+      }
+      if (i + 7 <= n && css.slice(i, i + 7).toLowerCase() === "@import") {
+        out += css.slice(i, i + 7);
+        i += 7;
+        while (i < n && isSrcsetWS(css.charAt(i))) { out += css.charAt(i); i++; }
+        var iq = i < n ? css.charAt(i) : "";
+        if (iq === "\"" || iq === "'") {
+          out += iq;
+          i++;
+          var iqs = i;
+          while (i < n && css.charAt(i) !== iq) {
+            if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+            i++;
+          }
+          out += rewriteStr(css.slice(iqs, i), false);
+          if (i < n && css.charAt(i) === iq) { out += iq; i++; }
+        }
+        continue;
+      }
+      var ch = css.charAt(i);
+      if (ch === "\"" || ch === "'") {
+        var litStart = i;
+        i++;
+        while (i < n && css.charAt(i) !== ch) {
+          if (css.charAt(i) === "\\" && i + 1 < n) { i += 2; continue; }
+          i++;
+        }
+        if (i < n && css.charAt(i) === ch) i++;
+        out += css.slice(litStart, i);
+        continue;
+      }
+      out += ch;
+      i++;
+    }
+    return out;
+  }
+
+  if (typeof Element !== "undefined" && Element.prototype && Element.prototype.setAttribute) {
+    var origSetAttr = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function(name, value) {
+      if (typeof name === "string" && typeof value === "string") {
+        var low = name.toLowerCase();
+        if (low === "src" || low === "href" || low === "action" || low === "poster" || low === "formaction" ||
+            (low === "data" && String(this.localName).toLowerCase() === "object")) {
+          value = rewriteStr(value, false);
+        } else if (low === "srcset" || low === "imagesrcset") {
+          value = rewriteSrcset(value);
+        } else if (low === "style") {
+          value = rewriteCSSText(value);
+        }
+      }
+      return origSetAttr.call(this, name, value);
+    };
+  }
+
+  function wrapProp(Ctor, prop, transform) {
+    if (!Ctor || !Ctor.prototype) return;
+    var desc = Object.getOwnPropertyDescriptor(Ctor.prototype, prop);
+    if (!desc || typeof desc.set !== "function") return;
+    var fn = transform || function(v) { return rewriteStr(v, false); };
+    Object.defineProperty(Ctor.prototype, prop, {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: function(v) {
+        return desc.set.call(this, typeof v === "string" ? fn(v) : v);
+      }
+    });
+  }
+  try {
+    wrapProp(window.HTMLImageElement, "src");
+    wrapProp(window.HTMLImageElement, "srcset", rewriteSrcset);
+    wrapProp(window.HTMLSourceElement, "src");
+    wrapProp(window.HTMLSourceElement, "srcset", rewriteSrcset);
+    wrapProp(window.HTMLScriptElement, "src");
+    wrapProp(window.HTMLLinkElement, "href");
+    wrapProp(window.HTMLLinkElement, "imageSrcset", rewriteSrcset);
+    wrapProp(window.HTMLAnchorElement, "href");
+    wrapProp(window.HTMLFormElement, "action");
+    wrapProp(window.HTMLButtonElement, "formAction");
+    wrapProp(window.HTMLInputElement, "src");
+    wrapProp(window.HTMLInputElement, "formAction");
+    wrapProp(window.HTMLIFrameElement, "src");
+    wrapProp(window.HTMLMediaElement, "src");
+    wrapProp(window.HTMLVideoElement, "poster");
+    wrapProp(window.HTMLObjectElement, "data");
+  } catch (e) {}
+
+  try {
+    if (window.CSSStyleDeclaration && window.CSSStyleDeclaration.prototype) {
+      var styleProto = window.CSSStyleDeclaration.prototype;
+      if (typeof styleProto.setProperty === "function") {
+        var origSetProp = styleProto.setProperty;
+        styleProto.setProperty = function(prop, val, prio) {
+          if (typeof val === "string") val = rewriteCSSText(val);
+          return arguments.length > 2 ? origSetProp.call(this, prop, val, prio) : origSetProp.call(this, prop, val);
+        };
+      }
+      wrapProp(window.CSSStyleDeclaration, "cssText", rewriteCSSText);
+      ["background", "backgroundImage", "mask", "maskImage", "webkitMask", "webkitMaskImage", "listStyleImage", "borderImage", "borderImageSource", "cursor"].forEach(function(p) {
+        wrapProp(window.CSSStyleDeclaration, p, rewriteCSSText);
+      });
+    }
+    if (window.CSSStyleSheet && window.CSSStyleSheet.prototype) {
+      var sheetProto = window.CSSStyleSheet.prototype;
+      if (typeof sheetProto.insertRule === "function") {
+        var origInsertRule = sheetProto.insertRule;
+        sheetProto.insertRule = function(rule, index) {
+          if (typeof rule === "string") rule = rewriteCSSText(rule);
+          return arguments.length > 1 ? origInsertRule.call(this, rule, index) : origInsertRule.call(this, rule);
+        };
+      }
+      ["replace", "replaceSync"].forEach(function(m) {
+        if (typeof sheetProto[m] !== "function") return;
+        var origReplace = sheetProto[m];
+        sheetProto[m] = function(text) {
+          if (typeof text === "string") text = rewriteCSSText(text);
+          return origReplace.call(this, text);
+        };
+      });
+    }
+    if (window.Node && window.Node.prototype) {
+      var tcDesc = Object.getOwnPropertyDescriptor(window.Node.prototype, "textContent");
+      if (tcDesc && typeof tcDesc.set === "function") {
+        Object.defineProperty(window.Node.prototype, "textContent", {
+          configurable: true,
+          enumerable: tcDesc.enumerable,
+          get: tcDesc.get,
+          set: function(v) {
+            if (this && this.nodeType === 1 && this.tagName === "STYLE" && typeof v === "string") {
+              v = rewriteCSSText(v);
+            }
+            return tcDesc.set.call(this, v);
+          }
+        });
+      }
+      ["appendChild", "insertBefore"].forEach(function(fn) {
+        var origNodeFn = window.Node.prototype[fn];
+        if (typeof origNodeFn !== "function") return;
+        window.Node.prototype[fn] = function(child) {
+          if (this && this.nodeType === 1 && this.tagName === "STYLE" && child && child.nodeType === 3 && typeof child.nodeValue === "string") {
+            child.nodeValue = rewriteCSSText(child.nodeValue);
+          }
+          return origNodeFn.apply(this, arguments);
+        };
+      });
+    }
+    if (window.Element && window.Element.prototype) {
+      var ihDesc = Object.getOwnPropertyDescriptor(window.Element.prototype, "innerHTML");
+      if (ihDesc && typeof ihDesc.set === "function") {
+        Object.defineProperty(window.Element.prototype, "innerHTML", {
+          configurable: true,
+          enumerable: ihDesc.enumerable,
+          get: ihDesc.get,
+          set: function(v) {
+            if (this && this.tagName === "STYLE" && typeof v === "string") {
+              v = rewriteCSSText(v);
+            }
+            return ihDesc.set.call(this, v);
+          }
+        });
+      }
+    }
+  } catch (e) {}
+
+  if (window.history) {
+    ["pushState", "replaceState"].forEach(function(fn) {
+      var orig = window.history[fn];
+      if (typeof orig !== "function") return;
+      window.history[fn] = function(state, title, url) {
+        var next = url;
+        if (typeof url === "string") {
+          next = rewriteStr(url, false);
+        } else if (typeof URL !== "undefined" && url instanceof URL) {
+          next = rewriteAny(url);
+        }
+        try {
+          return orig.call(this, state, title, next);
+        } catch (e) {
+          try { return orig.call(this, state, title, url); } catch (e2) {}
+        }
+      };
+    });
+  }
+})();`
+}

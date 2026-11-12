@@ -605,3 +605,119 @@ func TestRunnerStartPortConflictDoesNotSpawnLanguageServerAndSetsHeaderTimeout(t
 		t.Fatalf("language_server should not have been spawned when listening port bind fails (stat err=%v)", err)
 	}
 }
+
+type fakeTreePorts map[int]lsproc.LoopbackListenMask
+
+func (f fakeTreePorts) Lookup(_ context.Context, port int) (lsproc.LoopbackListenMask, bool) {
+	mask, ok := f[port]
+	return mask, ok
+}
+
+type fakeOwnPorts struct {
+	ports  map[int]bool
+	failed bool
+	asked  []int
+}
+
+func (f *fakeOwnPorts) Holds(_ context.Context, port int) bool {
+	f.asked = append(f.asked, port)
+	return f.failed || f.ports[port]
+}
+
+func TestLoopbackPortPolicy(t *testing.T) {
+	const (
+		agyPort     = 8765
+		lsAPIPort   = 40095
+		lsLatePort  = 41000 // opened by the language server after startup
+		gatewayPort = 38489 // a sidecar gateway inside the language server
+		sidecarPort = 46371 // a sidecar's own web server, a child process
+		devPort     = 5173  // a dev server the agent started
+		v6DevPort   = 5174
+		outsidePort = 6379 // a service outside the process tree
+	)
+	tree := fakeTreePorts{
+		lsAPIPort:   lsproc.ListenIPv4,
+		lsLatePort:  lsproc.ListenIPv4,
+		gatewayPort: lsproc.ListenIPv4,
+		sidecarPort: lsproc.ListenIPv4,
+		devPort:     lsproc.ListenIPv4 | lsproc.ListenIPv6,
+		v6DevPort:   lsproc.ListenIPv6,
+	}
+	own := &fakeOwnPorts{ports: map[int]bool{lsAPIPort: true, lsLatePort: true, gatewayPort: true}}
+	var sidecarAsked []int
+	lp := &loopbackPortPolicy{
+		static:             map[int]struct{}{agyPort: {}, lsAPIPort: {}},
+		staticHasStartupLS: true,
+		tree:               tree,
+		lsOwn:              own,
+		sidecarPort: func(_ context.Context, port int) bool {
+			sidecarAsked = append(sidecarAsked, port)
+			return port == gatewayPort || port == sidecarPort
+		},
+	}
+	ctx := context.Background()
+
+	for port, want := range map[int]bool{
+		agyPort:     true,
+		lsAPIPort:   true,
+		lsLatePort:  true,
+		gatewayPort: true,
+		sidecarPort: true,
+		devPort:     false,
+		v6DevPort:   false,
+		outsidePort: false,
+	} {
+		if got := lp.reserved(ctx, port); got != want {
+			t.Errorf("reserved(%d) = %v, want %v", port, got, want)
+		}
+	}
+	for _, port := range append(append([]int{}, own.asked...), sidecarAsked...) {
+		if port == outsidePort || port == agyPort {
+			t.Errorf("port %d was looked up although it is static or outside the tree", port)
+		}
+	}
+
+	for port, want := range map[int]string{devPort: "127.0.0.1", v6DevPort: "::1", outsidePort: ""} {
+		host, ok := lp.fetchTarget(ctx, port)
+		if host != want || ok != (want != "") {
+			t.Errorf("fetchTarget(%d) = %q %v, want %q", port, host, ok, want)
+		}
+	}
+
+	for _, tc := range []struct {
+		port    int
+		urlHost string
+		want    string
+	}{
+		{lsLatePort, "localhost", "127.0.0.1"},
+		{devPort, "::1", "::1"},
+		{v6DevPort, "127.0.0.1", ""},
+		{agyPort, "localhost", ""},
+		{lsAPIPort, "localhost", ""},
+		{gatewayPort, "localhost", ""},
+		{sidecarPort, "localhost", ""},
+		{outsidePort, "localhost", ""},
+	} {
+		host, ok := lp.oauthTarget(ctx, tc.port, tc.urlHost)
+		if host != tc.want || ok != (tc.want != "") {
+			t.Errorf("oauthTarget(%d, %q) = %q %v, want %q", tc.port, tc.urlHost, host, ok, tc.want)
+		}
+	}
+
+	// Without its startup ports, an OAuth callback does not reach any port
+	// the language server itself holds, while its children's still do.
+	lp.staticHasStartupLS = false
+	if host, ok := lp.oauthTarget(ctx, lsLatePort, "localhost"); ok {
+		t.Errorf("oauthTarget(%d) = %q without the startup ports, want refused", lsLatePort, host)
+	}
+	if _, ok := lp.oauthTarget(ctx, devPort, "localhost"); !ok {
+		t.Error("oauthTarget refused a child's listener without the startup ports")
+	}
+
+	// When the language server's own ports cannot be read, every listener of
+	// the tree is refused.
+	own.failed = true
+	if !lp.reserved(ctx, devPort) {
+		t.Error("a failed walk of the language server's ports did not reserve a tree port")
+	}
+}

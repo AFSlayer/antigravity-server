@@ -292,6 +292,7 @@ agy-server config [flags]       config.json設定の管理
 - **ブルートフォース保護**: 5回以上ログイン失敗時にIPを一時ロック（5分〜30分）。
 - **アップロードの隔離**: ファイルアップロードは指定されたプロジェクトディレクトリ配下に厳格に制限され、パストラバーサル（`../`）は拒否されます。
 - **信頼できるプロキシ**: Nginx、Caddy、Cloudflare等の背後で実行する場合は`--trusted-proxies`を指定してヘッダー偽装を防止します。
+- **サイドカーUIとlocalhostの中継**: SwarmボードなどのサイドカーUIは`/__agy/sidecar/`でopaque originのサンドボックスとして開き、`/__agy/api/loopback-fetch`と`/__agy/api/oauth-callback`はlocalhostのプレビューとOAuthリダイレクトを中継します。いずれもログインが必要です。境界は[SECURITY.md](SECURITY.md)を参照してください。
 
 ---
 

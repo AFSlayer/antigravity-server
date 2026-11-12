@@ -1,8 +1,10 @@
 package patches
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -107,7 +109,77 @@ var (
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
 	)
+
+	sidecarResolveURLRe = regexp.MustCompile(
+		`(resolveSidecarUrl:\s*\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*=>\s*\{[\s\S]{1,360}?var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\s*\?\s*` +
+			"`plugin://\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\.pathname\\}\\$\\{[a-zA-Z0-9_$]+\\.search\\}`" +
+			`\s*:\s*)` +
+			`([a-zA-Z0-9_$]+\.toString\(\))` +
+			`(\s*;\s*break\s+[a-zA-Z0-9_$]+\s*\}\s*catch(?:\s*\(\s*[a-zA-Z0-9_$]+\s*\))?\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*\(\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\[[a-zA-Z0-9_$]+\]\s*\)\s*\?\s*` +
+			"`plugin://\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" +
+			`\s*:\s*)` +
+			`(` + "`\\$\\{[a-zA-Z0-9_$]+\\}\\$\\{[a-zA-Z0-9_$]+\\}`" + `)`,
+	)
+	// sidecarCommentOriginRe finds the sidecar panel's check that an
+	// add-artifact-comment message comes from the iframe's origin.
+	sidecarCommentOriginRe = regexp.MustCompile(
+		`(new URL\(\s*([a-zA-Z0-9_$]+)\.src\s*\)[^{}]{0,120}\}\s*catch(?:\s*\([a-zA-Z0-9_$]+\))?\s*\{\s*\}\s*[a-zA-Z0-9_$]+\s*=\s*void 0\s*\}\s*)` +
+			`([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\s*===\s*([a-zA-Z0-9_$]+)` +
+			`(\s*\}\s*if\s*\(\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\.data\?\.type\s*===\s*"add-artifact-comment")`,
+	)
+	// sidecarIframeSandboxRe finds where the sidecar panel creates its iframe,
+	// before it sets the frame's src.
+	sidecarIframeSandboxRe = regexp.MustCompile(
+		`(let\s+([a-zA-Z0-9_$]+)\s*=\s*document\.createElement\("iframe"\)\s*;)` +
+			`(\s*[a-zA-Z0-9_$]+\.setAttribute\(\s*"allow"\s*,\s*"clipboard-read;)`,
+	)
+	sidecarModalEndpointRe = regexp.MustCompile(
+		`([a-zA-Z0-9_$]+\s*=\s*)` +
+			`([a-zA-Z0-9_$]+\.baseUrl\s*\|\|\s*\(\s*[a-zA-Z0-9_$]+\.webPort\s*\?\s*` +
+			"`http://127\\.0\\.0\\.1:\\$\\{[a-zA-Z0-9_$]+\\.webPort\\}`" +
+			`\s*:\s*"(?:\\u2014|—)"\s*\))`,
+	)
+	loopbackPreviewFeatureGateRe = regexp.MustCompile(
+		`(browserAuxPane:\s*\{\s*feature:\s*!1\s*,\s*applyFirst:\s*\[\s*\{\s*runtimeGating:\s*\{\s*host:\s*\[[^\]]+\])` +
+			`\s*,\s*userCohort:\s*\[\s*"google"\s*\]` +
+			`(\s*\}\s*,\s*feature:\s*)[a-zA-Z0-9_$]+` +
+			`(\s*\}\s*\]\s*,\s*applyAll:\s*\[[\s\S]{1,260}?\}\s*,\s*remoteConversationBrowserPane:\s*\{\s*feature:\s*!1\s*,\s*applyAll:\s*\[\s*\{\s*runtimeGating:\s*\{[^}]+\}\s*,\s*feature:\s*([a-zA-Z0-9_$]+))`,
+	)
+	loopbackPreviewFetchFallbackRe = regexp.MustCompile(
+		`(,\s*fetchSandboxPort:\s*\(\s*\.\.\.([a-zA-Z0-9_$]+)\s*\)\s*=>\s*([a-zA-Z0-9_$]+)\(\s*async\s+([a-zA-Z0-9_$]+)\s*=>\s*)` +
+			`[a-zA-Z0-9_$]+\.fetchSandboxPort\(\s*\.\.\.[a-zA-Z0-9_$]+\s*\)` +
+			`(\s*\)\s*,)`,
+	)
+	routerNavigateBridgeRe = regexp.MustCompile(
+		`(function\s+[a-zA-Z0-9_$]+\(\)\s*\{\s*(?:var|let|const)\s+([a-zA-Z0-9_$]+)\s*=\s*[a-zA-Z0-9_$]+\(\)\s*;)` +
+			`(\s*return\s+(?:\(0,\s*[a-zA-Z0-9_$]+\.useCallback\)|[a-zA-Z0-9_$]+\.useCallback)\(\s*[a-zA-Z0-9_$]+\s*=>\s*[a-zA-Z0-9_$]+\.navigate\(\s*\{\s*\.\.\.[a-zA-Z0-9_$]+\s*,\s*from:\s*[a-zA-Z0-9_$]+\.from\s*\?\?\s*void 0\s*\}\s*\))`,
+	)
+	pluginMentionRemoteSignInRe = regexp.MustCompile(
+		`(function\s+[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\s*\{\s*var\s+([a-zA-Z0-9_$]+)\s*=\s*[a-zA-Z0-9_$]+\(\)\s*,\s*\{\s*startPluginAuthSignIn:\s*([a-zA-Z0-9_$]+)\s*\}[\s\S]{1,120}?,\s*([a-zA-Z0-9_$]+)\s*=\s*)` +
+			`([a-zA-Z0-9_$]+)\s*&&\s*([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.runtimeEnvironment\)\s*===\s*1)` +
+			// The replacement ends the var statement before reassigning the
+			// flag, so the declaration must end here too. Otherwise a later
+			// name in it would become an undeclared assignment.
+			`(\s*;[\s\S]{1,180}?useCallback\)?\(\s*([a-zA-Z0-9_$]+)\s*=>\s*\{\s*)` +
+			`[a-zA-Z0-9_$]+\s*&&\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+\(\s*\{\s*plugin:\s*[a-zA-Z0-9_$]+\.plugin\s*,\s*provider:\s*[a-zA-Z0-9_$]+\.provider)`,
+	)
+	mcpOAuthRemoteCallbackRe = regexp.MustCompile(
+		`(completeMcpOAuth:\s*async\s*\(\s*([a-zA-Z0-9_$]+)\s*,\s*([a-zA-Z0-9_$]+)\s*\)\s*=>\s*)` +
+			`([a-zA-Z0-9_$]+\(\s*async\s+[a-zA-Z0-9_$]+\s*=>\s*\{[\s\S]{1,180}?completeMcpOAuth\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*serverName:\s*[a-zA-Z0-9_$]+\s*,\s*authorizationCode:\s*)` +
+			`[a-zA-Z0-9_$]+` +
+			`(\s*\}\s*\)\s*\)\s*\)\s*\)\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}\s*\))`,
+	)
+	pluginOAuthRemoteCallbackRe = regexp.MustCompile(
+		`(signInPluginAuthProvider:\s*async\s+([a-zA-Z0-9_$]+)\s*=>\s*)` +
+			`([a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*=>\s*[a-zA-Z0-9_$]+\.signInPluginAuthProvider\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*)` +
+			`[a-zA-Z0-9_$]+` +
+			`(\s*\)\s*\)\s*\))`,
+	)
 )
+
+// SidecarFrameSandbox is the sandbox of a sidecar's frame: the iframe's
+// attribute, and the proxy's CSP sandbox for every sidecar response.
+const SidecarFrameSandbox = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
 
 const (
 	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
@@ -978,6 +1050,120 @@ func All() []Patch {
 					string(g[9]),
 				)
 			},
+		},
+
+		{
+			ID:      "remote-runtime-bridge",
+			Desc:    "Provide runtime helpers for proxied sidecar UIs, loopback previews, and remote OAuth callbacks",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: remoteRuntimeBridgeScript,
+		},
+		{
+			ID:           "sidecar-resolve-url",
+			Desc:         "Rewrite localhost sidecar gateway URLs (Swarm UI and UI plugins) through the same-origin sidecar proxy",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("resolveSidecarUrl:")) },
+			FindRe:       sidecarResolveURLRe,
+			Replace:      `${1}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${2}):${2})${3}(window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(${4}):${4})`,
+		},
+		{
+			ID:           "sidecar-iframe-sandbox",
+			Desc:         "Sandbox the sidecar panel's iframe, so a page the proxy did not give a sandbox CSP still has an opaque origin",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`dataset.testid="sidecar-iframe"`)) },
+			FindRe:       sidecarIframeSandboxRe,
+			Replace:      `${1}${2}.setAttribute("sandbox",` + strconv.Quote(SidecarFrameSandbox) + `);${3}`,
+		},
+		{
+			ID:           "sidecar-artifact-comment-origin",
+			Desc:         "Accept add-artifact-comment from the sandboxed sidecar frame when it carries the gateway token of the frame's URL",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`"add-artifact-comment"`)) },
+			FindRe:       sidecarCommentOriginRe,
+			Replace:      `${1}${3}=${4}===${5}||${4}==="null"&&!!window.__agySidecarMessageOK&&window.__agySidecarMessageOK(${2}.src,${7}.data)${6}`,
+		},
+		{
+			ID:       "sidecar-modal-endpoint-url",
+			Desc:     "Display proxied sidecar URLs in the Sidecars status modal",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(".webPort")) && bytes.Contains(b, []byte("http://127.0.0.1:"))
+			},
+			FindRe:  sidecarModalEndpointRe,
+			Replace: `${1}(_u=>window.__agyResolveSidecarUrl?window.__agyResolveSidecarUrl(_u):_u)(${2})`,
+		},
+		{
+			ID:       "loopback-preview-feature-gate",
+			Desc:     "Enable the isolated srcdoc loopback preview side panel on web for localhost links",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("browserAuxPane:")) && bytes.Contains(b, []byte("remoteConversationBrowserPane:"))
+			},
+			FindRe:  loopbackPreviewFeatureGateRe,
+			Replace: `${1}${2}${4}${3}`,
+		},
+		{
+			ID:           "loopback-preview-fetch-fallback",
+			Desc:         "Fall back to /__agy/api/loopback-fetch when FetchSandboxPort is unimplemented on standalone language_server",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("fetchSandboxPort:")) },
+			FindRe:       loopbackPreviewFetchFallbackRe,
+			Replace:      `${1}{if(!${2}[0]?.conversationId&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);try{return await ${4}.fetchSandboxPort(...${2})}catch(_e){if(_e?.code===12&&window.__agyFetchLoopbackPort)return window.__agyFetchLoopbackPort(${2}[0],${2}[1]);throw _e}}${5}`,
+		},
+		{
+			ID:       "router-navigate-bridge",
+			Desc:     "Capture the SPA router instance so remote helpers can open settings screens without reloading",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(".navigate({")) && bytes.Contains(b, []byte("startPluginAuthSignIn:"))
+			},
+			FindRe:  routerNavigateBridgeRe,
+			Replace: `${1}window.__agyRouter=${2};${3}`,
+		},
+		{
+			ID:           "plugin-mention-remote-signin",
+			Desc:         "Route plugin @-mention sign-in clicks on web to the plugin Accounts settings tab",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("startPluginAuthSignIn:")) },
+			FindRe:       pluginMentionRemoteSignInRe,
+			Replace:      `${1}!1,_agyDesk=Boolean(${5}&&(${6}));${4}=Boolean(${5}&&(_agyDesk||!!window.__agyOpenPluginAuth))${7}!_agyDesk&&window.__agyOpenPluginAuth?window.__agyOpenPluginAuth(${8}.plugin):_agyDesk&&${3}&&${9}`,
+		},
+		{
+			ID:           "mcp-oauth-remote-callback",
+			Desc:         "Relay pasted loopback OAuth redirect URLs and extract auth codes in CompleteMcpOAuth",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("completeMcpOAuth:")) },
+			FindRe:       mcpOAuthRemoteCallbackRe,
+			Replace:      `${1}{const _sub=_c=>${4}_c${5};return window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${3},_sub):_sub(${3})}`,
+		},
+		{
+			ID:           "plugin-oauth-remote-callback",
+			Desc:         "Relay pasted loopback OAuth redirect URLs and extract auth codes in SignInPluginAuthProvider",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("signInPluginAuthProvider:")) },
+			FindRe:       pluginOAuthRemoteCallbackRe,
+			Replace:      `${1}{const _sub=_s=>${3}{...${2},secret:_s}${4};return ${2}?.secret&&window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${2}.secret,_sub):${3}${2}${4}}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -4613,5 +4799,206 @@ const connectionPrewarmScript = `<script id="agy-connection-prewarm">
     WS.CLOSED = 3;
     window.WebSocket = WS;
   } catch (e) {}
+})();
+</script>`
+
+const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
+(function () {
+  if (window.__agyRemoteRuntimeBridge) return;
+  window.__agyRemoteRuntimeBridge = 1;
+
+  function isLoopbackHostname(h) {
+    var low = String(h || "").toLowerCase();
+    return low === "localhost" || low === "127.0.0.1" || low === "[::1]" || low === "::1";
+  }
+
+  // A sidecar frame has an opaque origin, so the app cannot match an
+  // add-artifact-comment message's origin to the frame's URL. The proxy has
+  // the sidecar's bridge send the gateway token from that URL with the
+  // comment, and a page the frame navigated to does not know it.
+  window.__agySidecarMessageOK = function (src, data) {
+    if (!data || typeof data !== "object" || data.type !== "add-artifact-comment") return false;
+    try {
+      var u = new URL(src, location.href);
+      var token = u.searchParams.get("token");
+      return u.origin === location.origin && u.pathname.indexOf("/__agy/sidecar/") === 0 &&
+        !!token && data.agySidecarToken === token;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  window.__agyResolveSidecarUrl = function (rawUrl) {
+    if (typeof rawUrl !== "string" || !rawUrl) return rawUrl;
+    if (rawUrl.indexOf("/__agy/sidecar/") === 0) {
+      return location.origin + rawUrl;
+    }
+    try {
+      var u = new URL(rawUrl);
+      if (u.protocol !== "http:" || !isLoopbackHostname(u.hostname) || !u.port) {
+        return rawUrl;
+      }
+      var port = Number(u.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return rawUrl;
+      }
+      var path = u.pathname || "/";
+      if (path.charAt(0) !== "/") path = "/" + path;
+      return location.origin + "/__agy/sidecar/" + port + path + u.search + u.hash;
+    } catch (e) {
+      return rawUrl;
+    }
+  };
+
+  function encodeBytesBase64(bytes) {
+    if (!bytes) return "";
+    var u8 = bytes instanceof Uint8Array
+      ? bytes
+      : (bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : (ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null));
+    if (!u8 || u8.byteLength === 0) return "";
+    var parts = [];
+    var chunk = 0x8000;
+    for (var i = 0; i < u8.length; i += chunk) {
+      parts.push(String.fromCharCode.apply(null, u8.subarray(i, i + chunk)));
+    }
+    return btoa(parts.join(""));
+  }
+
+  function decodeBase64Bytes(b64) {
+    if (!b64) return new Uint8Array(0);
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) {
+      out[i] = bin.charCodeAt(i);
+    }
+    return out;
+  }
+
+  function makeConnectError(code, msg) {
+    var err = new Error(msg);
+    err.name = "ConnectError";
+    err.rawMessage = msg;
+    err.code = code;
+    err.metadata = typeof Headers === "function" ? new Headers() : {};
+    err.details = [];
+    return err;
+  }
+
+  window.__agyFetchLoopbackPort = async function (req, callOpts) {
+    if (!req || typeof req !== "object") {
+      throw makeConnectError(3, "Invalid loopback fetch request");
+    }
+    var payload = {
+      port: Number(req.port || 0),
+      method: typeof req.method === "string" && req.method ? req.method : "GET",
+      path: typeof req.path === "string" && req.path ? req.path : "/",
+      headers: Array.isArray(req.headers)
+        ? req.headers.map(function (h) { return { name: String((h && h.name) || ""), value: String((h && h.value) || "") }; })
+        : [],
+      bodyBase64: encodeBytesBase64(req.body)
+    };
+    var res = await fetch("/__agy/api/loopback-fetch", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: callOpts && callOpts.signal ? callOpts.signal : undefined
+    });
+    if (res.status === 403) {
+      throw makeConnectError(7, "Port is restricted");
+    }
+    if (!res.ok) {
+      throw makeConnectError(13, "Loopback fetch failed with status " + res.status);
+    }
+    var data = await res.json();
+    if (data && data.noListener) {
+      throw makeConnectError(5, "No server listening on port " + payload.port);
+    }
+    return {
+      statusCode: Number((data && data.statusCode) || 200),
+      headers: Array.isArray(data && data.headers) ? data.headers : [],
+      body: decodeBase64Bytes(data && data.bodyBase64)
+    };
+  };
+
+  window.__agyOpenPluginAuth = function (pluginPath) {
+    if (!pluginPath || typeof pluginPath !== "string") return;
+    var clean = pluginPath;
+    if (/^file:/i.test(clean)) {
+      try {
+        clean = new URL(clean).pathname;
+      } catch (e) {
+        clean = clean.replace(/^file:\/\/\/?/i, "").replace(/[?#].*$/, "");
+      }
+    }
+    clean = clean.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (/^\/?[a-zA-Z]:$/.test(clean)) return;
+    var seg = clean.split("/").pop() || "";
+    var pluginId = seg;
+    try { pluginId = decodeURIComponent(seg); } catch (e) {}
+    if (!pluginId) return;
+    if (window.__agyRouter && typeof window.__agyRouter.navigate === "function") {
+      window.__agyRouter.navigate({
+        to: "/customizations/plugins/$pluginId",
+        params: { pluginId: pluginId },
+        search: { pluginTab: "accounts" }
+      });
+      return;
+    }
+    var target = "/customizations/plugins/" + encodeURIComponent(pluginId) + "?pluginTab=accounts";
+    if (window.history && typeof window.history.pushState === "function") {
+      window.history.pushState(null, "", target);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    } else {
+      window.location.href = target;
+    }
+  };
+
+  window.__agyCompleteRemoteOAuth = async function (rawInput, submitFn) {
+    if (typeof rawInput !== "string") {
+      return submitFn(rawInput);
+    }
+    var trimmed = rawInput.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      return submitFn(rawInput);
+    }
+    var parsed = null;
+    try { parsed = new URL(trimmed); } catch (e) { parsed = null; }
+    if (!parsed) {
+      return submitFn(rawInput);
+    }
+    var code = parsed.searchParams.get("code") || "";
+    if (!code) {
+      return submitFn(rawInput);
+    }
+    if (parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname) && parsed.port) {
+      try {
+        var cbRes = await fetch("/__agy/api/oauth-callback", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: trimmed })
+        });
+        if (cbRes.ok) {
+          var cbData = await cbRes.json();
+          if (cbData && cbData.delivered && cbData.statusCode >= 200 && cbData.statusCode < 400) {
+            return {};
+          }
+        }
+      } catch (e) {}
+    }
+    // The full URL goes first. A language server that wants only the code
+    // rejects the URL without using the code, which the retry below then
+    // sends. Sending the code first could spend it with a server that needs
+    // the URL's state as well, and the URL retry would then fail.
+    try {
+      return await submitFn(trimmed);
+    } catch (firstErr) {
+      if (code && code !== trimmed) {
+        return await submitFn(code);
+      }
+      throw firstErr;
+    }
+  };
 })();
 </script>`

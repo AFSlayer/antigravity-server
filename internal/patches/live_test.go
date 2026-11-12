@@ -71,11 +71,13 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 
 		switch p.Kind {
 		case Literal:
-			if n := bytes.Count(body, []byte(p.Find)); n != 1 && (!p.Optional || n != 0) {
+			wantOne := !p.Optional || (p.Precondition != nil && p.Precondition(body))
+			if n := bytes.Count(body, []byte(p.Find)); n != 1 && (wantOne || n != 0) {
 				t.Errorf("%s: anchor matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		case Regexp:
-			if n := len(regexpFindAllIndex(p.FindRe, body, -1)); n != 1 && (!p.Optional || n != 0) {
+			wantOne := !p.Optional || (p.Precondition != nil && p.Precondition(body))
+			if n := len(regexpFindAllIndex(p.FindRe, body, -1)); n != 1 && (wantOne || n != 0) {
 				t.Errorf("%s: regexp matched %d times in the live bundle, want 1", p.ID, n)
 			}
 		}
@@ -146,6 +148,44 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Errorf("mobile-back-clears-section: the titlebar flags %q, not the home hook %q", hook, header[1])
 	}
 
+	// 2.31+ sidecar gateway, loopback preview, and remote OAuth patches are marked optional for older bundles,
+	// so assert they match whenever the corresponding feature exists in the live bundle.
+	if bytes.Contains(mainJS, []byte("resolveSidecarUrl:")) && !regexpMatch(sidecarResolveURLRe, mainJS) {
+		t.Error("sidecar-resolve-url: resolveSidecarUrl exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte(".webPort")) && bytes.Contains(mainJS, []byte("http://127.0.0.1:")) && !regexpMatch(sidecarModalEndpointRe, mainJS) {
+		t.Error("sidecar-modal-endpoint-url: sidecar modal endpoint exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte(`"add-artifact-comment"`)) && !regexpMatch(sidecarCommentOriginRe, mainJS) {
+		t.Error("sidecar-artifact-comment-origin: the sidecar panel's comment handler exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte(`dataset.testid="sidecar-iframe"`)) && !regexpMatch(sidecarIframeSandboxRe, mainJS) {
+		t.Error("sidecar-iframe-sandbox: the sidecar panel's iframe exists in bundle but patch regexp did not match")
+	}
+	// These run when the registry's precondition holds or the feature shows
+	// in the bundle another way, so a precondition gone stale still fails.
+	if (preconditionHolds("loopback-preview-feature-gate", mainJS) ||
+		bytes.Contains(mainJS, []byte("browserAuxPane:")) && bytes.Contains(mainJS, []byte("openLoopbackInPreviewByDefault"))) &&
+		!regexpMatch(loopbackPreviewFeatureGateRe, mainJS) {
+		t.Error("loopback-preview-feature-gate: browserAuxPane loopback preview exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("fetchSandboxPort:")) && !regexpMatch(loopbackPreviewFetchFallbackRe, mainJS) {
+		t.Error("loopback-preview-fetch-fallback: fetchSandboxPort exists in bundle but patch regexp did not match")
+	}
+	pluginSignIn := bytes.Contains(mainJS, []byte("startPluginAuthSignIn:")) && bytes.Contains(mainJS, []byte(`get("pluginAuth")`))
+	if (pluginSignIn || preconditionHolds("router-navigate-bridge", mainJS)) && !regexpMatch(routerNavigateBridgeRe, mainJS) {
+		t.Error("router-navigate-bridge: router useNavigate hook did not match")
+	}
+	if (pluginSignIn || preconditionHolds("plugin-mention-remote-signin", mainJS)) && !regexpMatch(pluginMentionRemoteSignInRe, mainJS) {
+		t.Error("plugin-mention-remote-signin: plugin @-mention sign-in hook did not match")
+	}
+	if bytes.Contains(mainJS, []byte("completeMcpOAuth:")) && !regexpMatch(mcpOAuthRemoteCallbackRe, mainJS) {
+		t.Error("mcp-oauth-remote-callback: completeMcpOAuth exists in bundle but patch regexp did not match")
+	}
+	if bytes.Contains(mainJS, []byte("signInPluginAuthProvider:")) && !regexpMatch(pluginOAuthRemoteCallbackRe, mainJS) {
+		t.Error("plugin-oauth-remote-callback: signInPluginAuthProvider exists in bundle but patch regexp did not match")
+	}
+
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
 	opts.CacheKey = CacheKey("test", opts)
 
@@ -177,6 +217,28 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("JavaScript Syntax Error in patched bundle: %v\nOutput: %s", err, string(out))
 			}
+		} else if target.target == HTML {
+			for _, helper := range []string{
+				"window.__agyResolveSidecarUrl",
+				"window.__agyFetchLoopbackPort",
+				"window.__agyOpenPluginAuth",
+				"window.__agyCompleteRemoteOAuth",
+			} {
+				if !bytes.Contains(patched, []byte(helper)) {
+					t.Errorf("patched live HTML missing %s", helper)
+				}
+			}
 		}
 	}
+}
+
+// preconditionHolds reports whether the registry's precondition for the patch
+// id holds for body.
+func preconditionHolds(id string, body []byte) bool {
+	for _, p := range All() {
+		if p.ID == id {
+			return p.Precondition != nil && p.Precondition(body)
+		}
+	}
+	return false
 }

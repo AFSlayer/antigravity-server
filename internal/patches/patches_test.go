@@ -98,6 +98,16 @@ var regexpFixtures = map[string]string{
 	"auth-startup-retry":              `if(a._authState.state==="uninitialized"){let n=j0a(m);if(b>0&&n){let p=4-b;d(await c(new Promise(r=>{setTimeout(r,1E3*2**p)})));return a.isLoggingOut||a._currentSessionId!==f?void 0:k0a(a,b-1)}a._authActor.send({type:"SIGN_OUT"})}`,
 	"user-status-keep-on-error":       `async function RPb(a,b,c,d,f,g){var h=e,k=e;try{try{var {userStatus:l}=k(await h(a.getUserStatus()));f()||(l&&b(Xq(Opa(l,c))),l?.email||g?.())}catch(m){k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||(b(Xq(Wb(E.UserStatusSchema))),g?.())}}finally{h()}}` + "\n" + `function SPb(){var a=nk(),b=mk(),c=Pt,d=ok(ik),f=fd()?.core.authService,k=!1,l=void 0;(0,B.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(Xq(Wb(E.UserStatusSchema)));else{var p=!1,q=()=>p,t=()=>{ik(b.getState())?.state==="signedIn"&&f?.signOutIfServerHasNoCredential?.()};RPb(c,a,k,l,q,t);var u=setInterval(()=>{RPb(c,a,k,l,q,t)},6E5);return()=>{p=!0;clearInterval(u)}}},[a,c,d,f,b,k,l]);return null}`,
 	"bootstrap-local-user-info-retry": `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
+	"sidecar-resolve-url":             `var obj={resolveSidecarUrl:(C,F)=>{a:{var G=u;F=F.startsWith("/")?F:` + "`/${F}`" + `;try{let J=new URL(C),K=new URL(F,"http://dummy.local");J.pathname=K.pathname;for(let [L,N]of K.searchParams.entries())J.searchParams.set(L,N);let M=G[C];var H=M?` + "`plugin://${M}${J.pathname}${J.search}`" + `:J.toString();break a}catch(J){H=(H=G[C])?` + "`plugin://${H}${F}`" + `:` + "`${C}${F}`" + `;break a}H=void 0}return H}};`,
+	"sidecar-artifact-comment-origin": `function quc(a){var b=nk(),c=FE();(0,B.useEffect)(()=>{var d=f=>{var g=a.current,h;if(h=g?.contentWindow!=null&&f.source===g.contentWindow){h=f.origin;a:{try{var {origin:k}=new URL(g.src);var l=k==="null"?void 0:k;break a}catch{}l=void 0}h=h===l}if(h&&f.data?.type==="add-artifact-comment"){b(f.data.payload)}};window.addEventListener("message",d);return()=>{window.removeEventListener("message",d)}},[b,c,a])}`,
+	"sidecar-iframe-sandbox":          `(0,B.useEffect)(()=>{if(g.current){k(!1);g.current.textContent="";let m=document.createElement("iframe");m.setAttribute("allow","clipboard-read; clipboard-write; microphone");try{asa(m,2,b)}catch(n){}m.dataset.testid="sidecar-iframe";g.current?.appendChild(m)}},[b]);`,
+	"sidecar-modal-endpoint-url":      `var A=c.baseUrl||(c.webPort?` + "`http://127.0.0.1:${c.webPort}`" + `:"\u2014"),D=f==="extension";`,
+	"loopback-preview-feature-gate":   `var gates={browserAuxPane:{feature:!1,applyFirst:[{runtimeGating:{host:[ti.Web.Desktop,ti.Web.Mobile],userCohort:["google"]},feature:qBb}],applyAll:[{runtimeGating:{host:[ti.Electron],customFlag:"enable-hub-builtin-browser"},feature:sBb}]},remoteConversationBrowserPane:{feature:!1,applyAll:[{runtimeGating:{host:[ti.Web.Desktop],userCohort:["google"],customFlag:"enable-remote-conversation-preview"},feature:rBb}]}};`,
+	"loopback-preview-fetch-fallback": `var svc={streamTerminalOutput:(...u)=>f(v=>v.streamTerminalOutput(...u)),fetchSandboxPort:(...u)=>f(async v=>v.fetchSandboxPort(...u)),listBackgroundTasks:(...u)=>f(async v=>v.listBackgroundTasks(...u))};`,
+	"router-navigate-bridge":          `function RD(){var a=SC();return B.useCallback(b=>a.navigate({...b,from:b.from??void 0}),[void 0,a])}`,
+	"plugin-mention-remote-signin":    `function nCc(a){var b=gj(),{startPluginAuthSignIn:c}=Qt(),d=St(),f=!!b.get("pluginAuth"),g=f&&CT(b.runtimeEnvironment)===1;b=(0,B.useCallback)((k,l)=>{if(f)return mCc(l??a,k)},[a,f]);var h=(0,B.useCallback)(k=>{g&&c&&c({plugin:k.plugin,provider:k.provider,accountId:k.accountId,mode:1}).then(l=>{dm(window,l.authUrl,"_blank","noopener,noreferrer")})},[g,d,c]);return{canSignIn:g,authViewFor:b,startSignIn:h}}`,
+	"mcp-oauth-remote-callback":       `var mcpSvc={completeMcpOAuth:async(u,v)=>f(async w=>{var x=e,y=e;try{y(await x(w.completeMcpOAuth(Wb(Dia,{serverName:u,authorizationCode:v}))))}finally{x()}})};`,
+	"plugin-oauth-remote-callback":    `var plugSvc={signInPluginAuthProvider:async u=>f(v=>v.signInPluginAuthProvider(Wb(Eja,u)))};`,
 }
 
 func fullOptions() Options {
@@ -1395,5 +1405,39 @@ func TestWindowedRegexpMatchesFullScan(t *testing.T) {
 	}
 	if regexpMatch(anchoredEnd, interior) {
 		t.Fatal("$ anchor falsely matched interior window boundary")
+	}
+}
+
+func TestOptionalPatchPreconditionDetectsDrift(t *testing.T) {
+	// Drifted bundle: contains the feature's stable identifier ("resolveSidecarUrl:")
+	// so Precondition returns true, but its body shape changed so FindRe does not match.
+	drifted := []byte(`var helper={resolveSidecarUrl:(a,b)=>completelyChangedShape(a,b)};`)
+	_, driftedReport := Apply(MainJS, drifted, fullOptions())
+
+	var gotDrifted Result
+	for _, r := range driftedReport {
+		if r.ID == "sidecar-resolve-url" {
+			gotDrifted = r
+			break
+		}
+	}
+	if gotDrifted.Status != StatusMissing {
+		t.Fatalf("drifted bundle with satisfied Precondition: got status %q, want %q", gotDrifted.Status, StatusMissing)
+	}
+
+	// Older bundle without the feature at all: Precondition returns false, so Optional
+	// cleanly reports StatusNotNeeded rather than a false alarm.
+	older := []byte(`var legacyBundleWithoutSidecars = 1;`)
+	_, olderReport := Apply(MainJS, older, fullOptions())
+
+	var gotOlder Result
+	for _, r := range olderReport {
+		if r.ID == "sidecar-resolve-url" {
+			gotOlder = r
+			break
+		}
+	}
+	if gotOlder.Status != StatusNotNeeded {
+		t.Fatalf("older bundle without feature: got status %q, want %q", gotOlder.Status, StatusNotNeeded)
 	}
 }
