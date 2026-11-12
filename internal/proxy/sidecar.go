@@ -58,6 +58,8 @@ const (
 	sidecarMissRefreshMin = 200 * time.Millisecond
 	sidecarFreePortTTL    = time.Second
 	sidecarFreePortsMax   = 1024
+	// defaultSidecarRPCTimeout bounds a GetSidecars call.
+	defaultSidecarRPCTimeout = 3 * time.Second
 	// sidecarFailBackoff spaces GetSidecars calls while it fails, so each
 	// sidecar request does not send one.
 	sidecarFailBackoff     = time.Second
@@ -65,7 +67,6 @@ const (
 	sidecarMaxWSRejectBody = 4 << 20
 	sidecarDialTimeout     = 5 * time.Second
 	sidecarHeaderTimeout   = 30 * time.Second
-	sidecarRPCTimeout      = 3 * time.Second
 	sidecarWSWriteTimeout  = 30 * time.Second
 
 	sidecarSandboxDirective = "sandbox " + patches.SidecarFrameSandbox
@@ -381,12 +382,21 @@ func (p *Proxy) allowedSidecarDialMode(ctx context.Context, port int) (string, b
 	}
 	now := time.Now()
 	p.sidecarMu.Lock()
-	if !p.sidecarCachedAt.IsZero() && now.Sub(p.sidecarCachedAt) < sidecarCacheTTL && p.sidecarLastErr == nil {
-		if mode, ok := p.sidecarAllowed[port]; ok {
+	if !p.sidecarCachedAt.IsZero() {
+		age := now.Sub(p.sidecarCachedAt)
+		// A sidecar in the last list that succeeded is allowed at once for
+		// two cache TTLs, also while GetSidecars fails or hangs. An expired
+		// list is refreshed in the background, so a slow call does not
+		// stall a page in use.
+		if mode, ok := p.sidecarAllowed[port]; ok && age < 2*sidecarCacheTTL {
+			if age >= sidecarCacheTTL {
+				p.refreshSidecarPortsInBackgroundLocked()
+			}
 			p.sidecarMu.Unlock()
 			return mode, true
 		}
-		if !p.sidecarLastProbe.IsZero() && now.Sub(p.sidecarLastProbe) < sidecarMissRefreshMin {
+		if age < sidecarCacheTTL && p.sidecarLastErr == nil &&
+			!p.sidecarLastProbe.IsZero() && now.Sub(p.sidecarLastProbe) < sidecarMissRefreshMin {
 			p.sidecarMu.Unlock()
 			return "", false
 		}
@@ -395,19 +405,29 @@ func (p *Proxy) allowedSidecarDialMode(ctx context.Context, port int) (string, b
 
 	allowed, _, err := p.refreshSidecarPorts(ctx, now)
 	if err != nil {
-		// One failed GetSidecars does not close a sidecar in use: the last
-		// list that succeeded still allows it for two cache TTLs.
-		p.sidecarMu.Lock()
-		mode, ok := p.sidecarAllowed[port]
-		recent := !p.sidecarCachedAt.IsZero() && time.Since(p.sidecarCachedAt) < 2*sidecarCacheTTL
-		p.sidecarMu.Unlock()
-		if ok && recent {
-			return mode, true
-		}
 		return "", false
 	}
 	mode, ok := allowed[port]
 	return mode, ok
+}
+
+// refreshSidecarPortsInBackgroundLocked starts a GetSidecars call unless one
+// is in flight or the last one failed within the backoff. The caller holds
+// sidecarMu.
+func (p *Proxy) refreshSidecarPortsInBackgroundLocked() {
+	if p.sidecarInflight != nil || p.sidecarBackgroundRefresh {
+		return
+	}
+	if p.sidecarLastErr != nil && time.Since(p.sidecarLastProbe) < sidecarFailBackoff {
+		return
+	}
+	p.sidecarBackgroundRefresh = true
+	go func() {
+		_, _, _ = p.refreshSidecarPorts(context.Background(), time.Now())
+		p.sidecarMu.Lock()
+		p.sidecarBackgroundRefresh = false
+		p.sidecarMu.Unlock()
+	}()
 }
 
 // refreshSidecarPorts returns a GetSidecars result from a call that started
@@ -482,7 +502,7 @@ func (p *Proxy) fetchSidecarPorts(parent context.Context) (allowed map[int]strin
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, sidecarRPCTimeout)
+	ctx, cancel := context.WithTimeout(parent, p.sidecarRPCTimeout)
 	defer cancel()
 
 	rpcURL := p.target.String() + "/exa.language_server_pb.LanguageServerService/GetSidecars"
@@ -1783,7 +1803,8 @@ func rewriteSidecarHTML(body []byte, port int, capPrefix string, baseDir string,
 			injected = true
 		}
 
-		if !isClosing && isRawTextHTMLElement(tagName) && !strings.HasSuffix(strings.TrimSpace(string(tagBytes[:len(tagBytes)-1])), "/") {
+		// "/>" does not close these in HTML: <script/> still starts a script.
+		if !isClosing && isRawTextHTMLElement(tagName) {
 			closeIdx := findRawTextCloseTag(body, i, tagName)
 			if closeIdx < 0 {
 				rawRest := body[i:]
@@ -1863,7 +1884,17 @@ func afterDoctypeOffset(b []byte) int {
 	return 0
 }
 
+// findHTMLTagEnd returns the index of the '>' that ends the tag at start. As
+// in the HTML tokenizer, a quote opens a quoted value only where a value
+// starts, after "=" and any spaces. Elsewhere, as in title=it's, it is a
+// plain character, so one stray quote cannot run on through the document.
 func findHTMLTagEnd(b []byte, start int) int {
+	const (
+		inName = iota
+		beforeValue
+		inUnquotedValue
+	)
+	state := inName
 	var quote byte
 	for i := start + 1; i < len(b); i++ {
 		c := b[i]
@@ -1873,12 +1904,28 @@ func findHTMLTagEnd(b []byte, start int) int {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' {
-			quote = c
-			continue
-		}
+		space := c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f'
 		if c == '>' {
 			return i
+		}
+		switch state {
+		case beforeValue:
+			switch {
+			case space:
+			case c == '"' || c == '\'':
+				quote = c
+				state = inName
+			default:
+				state = inUnquotedValue
+			}
+		case inUnquotedValue:
+			if space {
+				state = inName
+			}
+		default:
+			if c == '=' {
+				state = beforeValue
+			}
 		}
 	}
 	return -1
@@ -1950,6 +1997,8 @@ const sidecarExternalBase = "\x00external-base"
 
 // parseHTMLOpenTag splits an opening tag into its name part, its attributes
 // with their raw values, and whatever closes it.
+const maxHTMLTagAttrs = 1024
+
 func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []byte) {
 	n := len(tag)
 	i := 1
@@ -1971,7 +2020,9 @@ func parseHTMLOpenTag(tag []byte) (header []byte, attrs []htmlAttrToken, tail []
 			tail = leadWS
 			break
 		}
-		if tag[i] == '>' || (tag[i] == '/' && i+1 < n && tag[i+1] == '>') {
+		// A tag with more attributes than any page needs keeps the rest as
+		// it is, so one tag cannot make the proxy allocate without bound.
+		if tag[i] == '>' || (tag[i] == '/' && i+1 < n && tag[i+1] == '>') || len(attrs) >= maxHTMLTagAttrs {
 			tail = append(tail, leadWS...)
 			tail = append(tail, tag[i:]...)
 			break

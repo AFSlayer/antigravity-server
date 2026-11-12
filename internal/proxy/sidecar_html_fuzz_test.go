@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,11 @@ func TestSidecarHTMLStrayCharactersTerminate(t *testing.T) {
 		`<p>1 < 2</p>`:                          `<p>1 < 2</p>`,
 		`<p>a <b> c</p><a href="/y">`:           `<p>a <b> c</p><a href="` + fuzzCapPrefix + `/y">`,
 		`<p>it's 3 <4 and "q"</p><a href="/z">`: `<p>it's 3 <4 and "q"</p><a href="` + fuzzCapPrefix + `/z">`,
+		// A quote that does not start a value is a plain character.
+		`<a title=it's href="/x"> <a href="/y">`: `<a title=it's href="` + fuzzCapPrefix + `/x"> <a href="` + fuzzCapPrefix + `/y">`,
+		`<a title="a>b" href="/x">`:              `<a title="a>b" href="` + fuzzCapPrefix + `/x">`,
+		// <script/> still starts a script, whose text is left alone.
+		`<script/>var s="<a href='/no'>"</script><a href="/y">`: `<script/>var s="<a href='/no'>"</script><a href="` + fuzzCapPrefix + `/y">`,
 		// Read as a tag, the text's quote would swallow the link after it.
 		`<p>3 <4 "</p><a href="/z">`: `<p>3 <4 "</p><a href="` + fuzzCapPrefix + `/z">`,
 		`x </ y> <a href=/w>`:        `x </ y> <a href=` + fuzzCapPrefix + `/w>`,
@@ -72,4 +78,21 @@ func FuzzRewriteSidecarHTML(f *testing.F) {
 			t.Fatalf("rewriting CSS or a Location from %q did not return", body)
 		}
 	})
+}
+
+// One tag with a huge number of attributes is parsed only up to a bound, so a
+// page cannot make the proxy allocate without limit.
+func TestSidecarHTMLAttributeBound(t *testing.T) {
+	in := `<a` + strings.Repeat(" x", 200000) + ` href="/z">`
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	out := strings.TrimPrefix(rewriteWithin(t, in, 5*time.Second), `<script src="`+fuzzCapPrefix+`/`+sidecarShimName+`"></script>`)
+	runtime.ReadMemStats(&after)
+	if out != in {
+		t.Fatal("attributes past the bound were changed")
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 16<<20 {
+		t.Fatalf("rewriting one tag of %d bytes allocated %d MiB", len(in), grown>>20)
+	}
 }

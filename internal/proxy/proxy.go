@@ -80,14 +80,20 @@ type Proxy struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 
-	sidecarMu              sync.Mutex
-	sidecarAllowed         map[int]string
-	sidecarReserved        map[int]struct{}
-	sidecarFreePorts       map[int]time.Time
-	sidecarCachedAt        time.Time
-	sidecarLastProbe       time.Time
-	sidecarLastErr         error
-	sidecarInflight        chan struct{}
+	sidecarMu        sync.Mutex
+	sidecarAllowed   map[int]string
+	sidecarReserved  map[int]struct{}
+	sidecarFreePorts map[int]time.Time
+	sidecarCachedAt  time.Time
+	sidecarLastProbe time.Time
+	sidecarLastErr   error
+	sidecarInflight  chan struct{}
+	// sidecarBackgroundRefresh is set while a GetSidecars call started for
+	// an expired list runs.
+	sidecarBackgroundRefresh bool
+	// sidecarRPCTimeout bounds a GetSidecars call; a field so a test can
+	// shorten it for its own proxy.
+	sidecarRPCTimeout      time.Duration
 	sidecarInflightStarted time.Time
 
 	sidecarCapMu sync.Mutex
@@ -123,6 +129,7 @@ func New(opts Options) (*Proxy, error) {
 	}
 	rp.Transport = p.transport
 	p.sidecarTransport = newSidecarTransport()
+	p.sidecarRPCTimeout = defaultSidecarRPCTimeout
 
 	host := target.Host
 	base := rp.Director
