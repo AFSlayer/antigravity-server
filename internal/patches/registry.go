@@ -175,6 +175,37 @@ var (
 			`[a-zA-Z0-9_$]+` +
 			`(\s*\)\s*\)\s*\))`,
 	)
+
+	// sidePanelBodyRe finds where the side panel renders its active tab, or an
+	// empty pane when it has none.
+	sidePanelBodyRe = regexp.MustCompile(
+		`("data-side-panel-body"\s*:\s*!0\s*\}\s*,\s*)([a-zA-Z0-9_$]+)\s*\?\s*` +
+			`(([a-zA-Z0-9_$]+)\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"h-full w-full"\s*\}\s*,\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*treeId\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
+			`tabId\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*tab\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*\))\s*:\s*` +
+			`([a-zA-Z0-9_$]+\.createElement\(\s*([a-zA-Z0-9_$]+)\s*,\s*\{\s*treeId\s*:\s*[a-zA-Z0-9_$]+\s*,\s*isPaneOpen\s*:\s*([a-zA-Z0-9_$]+)\s*\}\s*\))`,
+	)
+	// sidePanelBodyLegacyRe is the same place in the side panel used when
+	// auxPaneComponent.redesignEnabled is off. The terminal hint before it
+	// renders only while the panel is open.
+	sidePanelBodyLegacyRe = regexp.MustCompile(
+		`(([a-zA-Z0-9_$]+)\s*&&\s*[a-zA-Z0-9_$]+\.some\(\s*[a-zA-Z0-9_$]+\s*=>\s*[a-zA-Z0-9_$]+\.id\s*===\s*"terminal"\s*\)\s*&&\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*stripRef\s*:\s*[a-zA-Z0-9_$]+\s*,\s*activeTabId\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*,\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"flex-grow overflow-hidden"\s*,\s*"data-side-panel-body"\s*:\s*!0\s*\}\s*,\s*)` +
+			`([a-zA-Z0-9_$]+)\s*&&\s*` +
+			`(([a-zA-Z0-9_$]+)\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"h-full w-full"\s*\}\s*,\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*treeId\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
+			`tabId\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*tab\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*\))`,
+	)
+	// conversationNavTabRe finds where opening a conversation picks the tab
+	// for the URL from the conversation's side panel. Only the mobile layout
+	// asks whether that panel is open.
+	conversationNavTabRe = regexp.MustCompile(
+		`([a-zA-Z0-9_$]+\s*=\s*)![a-zA-Z0-9_$]+\s*\|\|\s*` +
+			`([a-zA-Z0-9_$]+\.sidePanel\s*&&\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\?\s*[a-zA-Z0-9_$]+\s*\?\s*` +
+			`[a-zA-Z0-9_$]+\.sidePanelV2\.conversationPanes\[\s*[a-zA-Z0-9_$]+\s*\]\?\.activeTabId\s*:\s*` +
+			`[a-zA-Z0-9_$]+\.sidePanel\.conversationPanes\[\s*[a-zA-Z0-9_$]+\s*\]\?\.activeTabId\s*:\s*void 0)`,
+	)
 )
 
 // SidecarFrameSandbox is the sandbox of a sidecar's frame: the iframe's
@@ -1164,6 +1195,52 @@ func All() []Patch {
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("signInPluginAuthProvider:")) },
 			FindRe:       pluginOAuthRemoteCallbackRe,
 			Replace:      `${1}{const _sub=_s=>${3}{...${2},secret:_s}${4};return ${2}?.secret&&window.__agyCompleteRemoteOAuth?window.__agyCompleteRemoteOAuth(${2}.secret,_sub):${3}${2}${4}}`,
+		},
+
+		// The side panel keeps its active tab mounted while it is closed, and
+		// opening a conversation restores the tab its panel showed last. A
+		// file or artifact viewer there reads the whole file through the
+		// language server on every visit, which over a remote link delays the
+		// conversation. These patches mount such a viewer only once the panel
+		// opens, and drop the tab from the URL when the panel closes.
+		{
+			ID:      "side-panel-tab-helper",
+			Desc:    "Provide the component that holds back a closed side panel's file viewer and clears its tab from the URL",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: sidePanelTabScript,
+		},
+		{
+			ID:           "side-panel-closed-file-viewer",
+			Desc:         "Don't load a file or artifact into the side panel while it is closed",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`"data-side-panel-body"`)) },
+			FindRe:       sidePanelBodyRe,
+			Replace:      `${1}${2}?(window.__agyPaneTab?${4}.createElement(window.__agyPaneTab,{key:${2}.id,R:${4},treeId:${5},tab:${2},open:${8},idle:${4}.createElement(${7},{treeId:${5},isPaneOpen:!1})},${3}):${3}):${6}`,
+		},
+		{
+			ID:       "side-panel-closed-file-viewer-legacy",
+			Desc:     "Don't load a file or artifact into the side panel while it is closed, when the side panel redesign is off",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(`"data-side-panel-body"`)) && bytes.Contains(b, []byte(`stripRef:`))
+			},
+			FindRe:  sidePanelBodyLegacyRe,
+			Replace: `${1}${3}&&(window.__agyPaneTab?${5}.createElement(window.__agyPaneTab,{key:${3}.id,R:${5},treeId:${6},tab:${3},open:${2},idle:null},${4}):${4})`,
+		},
+		{
+			ID:           "conversation-nav-tab-open-pane",
+			Desc:         "Put the side panel's tab in a conversation's URL only while that panel is open, as the mobile layout does",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`.sidePanelV2.conversationPanes[`)) },
+			FindRe:       conversationNavTabRe,
+			Replace:      `${1}${2}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -4999,6 +5076,64 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
       }
       throw firstErr;
     }
+  };
+})();
+</script>`
+
+// sidePanelTabScript defines __agyPaneTab, the component that
+// side-panel-closed-file-viewer wraps the side panel's active tab in. It is
+// given React as R, because the bundle does not expose it.
+//
+// A file or artifact viewer in a closed panel renders idle instead, until the
+// panel opens in that conversation. It then stays while the panel closes, so
+// it does not vanish as the panel slides shut or load again when it reopens.
+// Other tabs, such as terminals and browsers, keep state the user would lose,
+// so they render as before.
+//
+// When the panel closes, the tab also leaves the URL. It needs the router
+// that router-navigate-bridge captures, and without it the URL keeps the tab.
+const sidePanelTabScript = `<script id="agy-side-panel-tab">
+(function () {
+  if (window.__agyPaneTab) return;
+
+  var readsFile = { fileView: true, artifactView: true };
+
+  function treeKey(t) {
+    if (!t || typeof t !== "object") return "";
+    return String(t.kind) + ":" + String(t.cascadeId || t.projectId || t.viewId || "");
+  }
+
+  function clearURLTab() {
+    var router = window.__agyRouter;
+    var loc = router && router.state && router.state.location;
+    if (!loc || !loc.search || loc.search.tab === undefined || typeof router.navigate !== "function") return;
+    router.navigate({
+      search: function (s) {
+        var next = Object.assign({}, s);
+        delete next.tab;
+        return next;
+      },
+      replace: true,
+      unsafeRelative: "path"
+    });
+  }
+
+  window.__agyPaneTab = function (p) {
+    var R = p.R;
+    var key = treeKey(p.treeId);
+    var open = !!p.open;
+    var shown = R.useState(open ? key : null);
+    var last = R.useRef({ key: key, open: open });
+    R.useEffect(function () {
+      var was = last.current;
+      last.current = { key: key, open: open };
+      if (open) shown[1](key);
+      else if (was.key !== key) shown[1](null);
+      else if (was.open) clearURLTab();
+    }, [key, open]);
+    var type = p.tab && p.tab.content && p.tab.content.type;
+    if (open || !readsFile[type] || shown[0] === key) return p.children;
+    return p.idle || null;
   };
 })();
 </script>`
