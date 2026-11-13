@@ -1307,7 +1307,7 @@ func All() []Patch {
 		// Off unless AGY_DEBUG is set.
 		{
 			ID:      "mobile-debug",
-			Desc:    "Record the viewport and shell geometry around every keyboard event",
+			Desc:    "Record the viewport and shell geometry around every keyboard event on a touch screen",
 			Target:  HTML,
 			Kind:    InjectHead,
 			Enabled: func(o Options) bool { return o.Debug },
@@ -2983,6 +2983,11 @@ const mobileDebug = `<script id="agy-debug">
 (function () {
   var vv = window.visualViewport;
   if (!vv) return;
+  // The bugs this records are a touch screen's. A sample reads the layout of
+  // every element on the page, every frame for a second or more after a focus
+  // change, so on a desktop it would only slow closing the side panel and
+  // typing in a long conversation.
+  if (!window.matchMedia || !window.matchMedia("(pointer: coarse)").matches) return;
 
   var ENDPOINT = "/__agy/api/debug/log";
 
@@ -5099,17 +5104,29 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
 // When the panel closes on a file or artifact, its tab also leaves the URL.
 // The store already holds that tab as the panel's active one. A terminal tab
 // stays in the URL, because the bundle keeps the selected terminal only
-// there. Clearing needs the router that router-navigate-bridge captures, and
-// without it the URL keeps the tab.
+// there. Changing the URL renders the route again, so it waits until the
+// panel has finished closing, and is dropped if the panel opens again or the
+// page moves on first. Clearing needs the router that router-navigate-bridge
+// captures, and without it the URL keeps the tab.
 const sidePanelTabScript = `<script id="agy-side-panel-tab">
 (function () {
   if (window.__agyPaneTab) return;
 
   var readsFile = { fileView: true, artifactView: true };
 
+  // The panel's width animates for 500ms as it closes, and the conversation
+  // lays itself out again at the new width.
+  var CLEAR_URL_AFTER_MS = 700;
+
   function treeKey(t) {
     if (!t || typeof t !== "object") return "";
     return String(t.kind) + ":" + String(t.cascadeId || t.projectId || t.viewId || "");
+  }
+
+  function currentPath() {
+    var router = window.__agyRouter;
+    var loc = router && router.state && router.state.location;
+    return loc ? loc.pathname : null;
   }
 
   function clearURLTab() {
@@ -5137,9 +5154,22 @@ const sidePanelTabScript = `<script id="agy-side-panel-tab">
     R.useEffect(function () {
       var was = last.current;
       last.current = { key: key, open: open };
-      if (open) shown[1](key);
-      else if (was.key !== key) shown[1](null);
-      else if (was.open && readsFile[type]) clearURLTab();
+      if (open) {
+        shown[1](key);
+        return;
+      }
+      if (was.key !== key) {
+        shown[1](null);
+        return;
+      }
+      if (!was.open || !readsFile[type]) return;
+      var path = currentPath();
+      var timer = setTimeout(function () {
+        if (currentPath() === path) clearURLTab();
+      }, CLEAR_URL_AFTER_MS);
+      return function () {
+        clearTimeout(timer);
+      };
     }, [key, open, type]);
     if (open || !readsFile[type] || shown[0] === key) return p.children;
     return p.idle || null;

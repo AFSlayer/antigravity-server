@@ -1,6 +1,7 @@
 package patches
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,15 +102,23 @@ for (const mobile of [false, true]) {
 
 // __agyPaneTab holds back a file or artifact viewer in a closed panel until
 // the panel opens in that conversation, keeps it while the panel closes, and
-// takes the tab out of the URL when the panel closes.
+// takes the tab out of the URL once the panel has closed.
 func TestSidePanelTabHelper(t *testing.T) {
 	runNode(t, `"use strict";
 const assert = require("assert");
 global.window = global;
+// Timers fire only when the test says so.
+const timers = new Map();
+let timerSeq = 0;
+global.setTimeout = (fn, ms) => { timers.set(++timerSeq, { fn, ms }); return timerSeq; };
+global.clearTimeout = (id) => { timers.delete(id); };
+function flushTimers() {
+  for (const [id, t] of [...timers]) { timers.delete(id); assert.strictEqual(t.ms, 700); t.fn(); }
+}
 `+sidePanelTabJS()+`
 // A component with hooks, rendered again until its effects stop setting state.
 function host(Comp) {
-  const slots = [];
+  const slots = [], cleanups = [];
   let cursor = 0, pending = [], dirty = false;
   const R = {
     useState(init) {
@@ -126,23 +135,25 @@ function host(Comp) {
     useEffect(fn, deps) {
       const i = cursor++;
       const prev = slots[i];
-      if (!prev || deps.some((d, j) => !Object.is(d, prev[j]))) { slots[i] = deps; pending.push(fn); }
+      if (!prev || deps.some((d, j) => !Object.is(d, prev[j]))) { slots[i] = deps; pending.push([i, fn]); }
     },
   };
-  return (props) => {
+  const render = (props) => {
     for (let n = 0; n < 10; n++) {
       cursor = 0; pending = []; dirty = false;
       const out = Comp(Object.assign({ R }, props));
-      pending.forEach((fn) => fn());
+      pending.forEach(([i, fn]) => { if (cleanups[i]) cleanups[i](); cleanups[i] = fn(); });
       if (!dirty) return out;
     }
     throw new Error("the component keeps setting state");
   };
+  render.unmount = () => cleanups.forEach((c) => c && c());
+  return render;
 }
 
 const navs = [];
 window.__agyRouter = {
-  state: { location: { search: { project: "p", tab: "file__x.pdf" } } },
+  state: { location: { pathname: "/c/A", search: { project: "p", tab: "file__x.pdf" } } },
   navigate(o) {
     navs.push(o);
     assert.strictEqual(o.replace, true);
@@ -160,6 +171,8 @@ let r = host(window.__agyPaneTab);
 assert.strictEqual(r(props(A, pdf, false)), IDLE, "a closed panel loaded the file");
 assert.strictEqual(r(props(A, pdf, true)), VIEW, "an open panel did not show the file");
 assert.strictEqual(r(props(A, pdf, false)), VIEW, "the file vanished as the panel closed");
+assert.strictEqual(navs.length, 0, "the URL changed while the panel was closing");
+flushTimers();
 assert.strictEqual(navs.length, 1);
 assert.deepStrictEqual(window.__agyRouter.state.location.search, { project: "p" });
 assert.strictEqual(r(props(Bc, pdf, false)), IDLE, "another conversation's closed panel loaded the same file");
@@ -173,6 +186,7 @@ assert.strictEqual(r(props(A, pdf, true)), VIEW);
 assert.strictEqual(r(props(Bc, pdf, true)), VIEW);
 assert.strictEqual(navs.length, 1);
 assert.strictEqual(r(props(Bc, pdf, false)), VIEW);
+flushTimers();
 assert.strictEqual(navs.length, 2);
 assert.deepStrictEqual(window.__agyRouter.state.location.search, {});
 
@@ -180,7 +194,26 @@ assert.deepStrictEqual(window.__agyRouter.state.location.search, {});
 r = host(window.__agyPaneTab);
 r(props(A, pdf, true));
 r(props(A, pdf, false));
+flushTimers();
 assert.strictEqual(navs.length, 2);
+
+// A panel that opens again, a conversation change, the panel going away or a
+// new page before the delay keep the URL.
+const closeThen = (after) => {
+  window.__agyRouter.state.location = { pathname: "/c/A", search: { tab: pdf.id } };
+  const h = host(window.__agyPaneTab);
+  h(props(A, pdf, true));
+  h(props(A, pdf, false));
+  after(h);
+  flushTimers();
+  assert.strictEqual(navs.length, 2);
+  assert.deepStrictEqual(window.__agyRouter.state.location.search, { tab: pdf.id });
+};
+closeThen((h) => h(props(A, pdf, true)));
+closeThen((h) => h(props(Bc, pdf, false)));
+closeThen((h) => h.unmount());
+closeThen(() => { window.__agyRouter.state.location.pathname = "/c/B"; });
+window.__agyRouter.state.location = { pathname: "/c/A", search: {} };
 
 // Artifacts are held back too, and the legacy panel renders nothing.
 assert.strictEqual(host(window.__agyPaneTab)(props(A, plan, false, null)), null);
@@ -188,6 +221,7 @@ r = host(window.__agyPaneTab);
 window.__agyRouter.state.location.search = { tab: plan.id };
 r(props(A, plan, true));
 assert.strictEqual(r(props(A, plan, false)), VIEW);
+flushTimers();
 assert.strictEqual(navs.length, 3);
 assert.deepStrictEqual(window.__agyRouter.state.location.search, {});
 
@@ -199,6 +233,7 @@ r = host(window.__agyPaneTab);
 window.__agyRouter.state.location.search = { tab: term.id };
 assert.strictEqual(r(props(A, term, true)), VIEW);
 assert.strictEqual(r(props(A, term, false)), VIEW);
+flushTimers();
 assert.strictEqual(navs.length, 3, "closing on a terminal cleared the URL");
 assert.deepStrictEqual(window.__agyRouter.state.location.search, { tab: term.id });
 
@@ -207,6 +242,7 @@ delete window.__agyRouter;
 r = host(window.__agyPaneTab);
 r(props(A, pdf, true));
 assert.strictEqual(r(props(A, pdf, false)), VIEW);
+flushTimers();
 `)
 }
 
@@ -223,4 +259,29 @@ func TestConversationNavTabNotNeededWithoutOpenCheck(t *testing.T) {
 	if string(out) != v229 {
 		t.Fatalf("the navigation changed:\n%s", out)
 	}
+}
+
+// The geometry tracer records touch screens only. On a desktop it would read
+// the layout of every element each frame after a focus change.
+func TestDebugTracerSkipsDesktop(t *testing.T) {
+	js := strings.TrimPrefix(mobileDebug, `<script id="agy-debug">`)
+	src, err := json.Marshal(strings.TrimSuffix(js, `</script>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runNode(t, `"use strict";
+const assert = require("assert");
+for (const coarse of [false, true]) {
+  const hooks = [];
+  const win = {
+    visualViewport: { addEventListener: (name) => hooks.push("vv:" + name) },
+    matchMedia: (q) => ({ matches: q === "(pointer: coarse)" ? coarse : false }),
+    addEventListener: (name) => hooks.push(name),
+  };
+  const run = new Function("window", "setInterval", "document", "navigator", "screen", "performance", "fetch", "requestAnimationFrame", `+string(src)+`);
+  run(win, () => hooks.push("interval"), {}, {}, {}, { now: () => 0 }, () => {}, () => 0);
+  if (coarse) assert.ok(hooks.includes("vv:resize") && hooks.includes("focusin") && hooks.includes("interval"), "a touch screen is not traced: " + hooks);
+  else assert.deepStrictEqual(hooks, [], "a desktop is traced");
+}
+`)
 }
