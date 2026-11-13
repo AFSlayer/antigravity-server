@@ -184,9 +184,23 @@ assert.strictEqual(navs.length, 2);
 
 // Artifacts are held back too, and the legacy panel renders nothing.
 assert.strictEqual(host(window.__agyPaneTab)(props(A, plan, false, null)), null);
-// Other tabs keep their state, so they render as before.
+r = host(window.__agyPaneTab);
+window.__agyRouter.state.location.search = { tab: plan.id };
+r(props(A, plan, true));
+assert.strictEqual(r(props(A, plan, false)), VIEW);
+assert.strictEqual(navs.length, 3);
+assert.deepStrictEqual(window.__agyRouter.state.location.search, {});
+
+// Other tabs keep their state, so they render as before. The selected
+// terminal lives only in the URL, so closing the panel on it keeps the tab.
 assert.strictEqual(host(window.__agyPaneTab)(props(A, term, false)), VIEW);
 assert.strictEqual(host(window.__agyPaneTab)(props(A, undefined, false)), VIEW);
+r = host(window.__agyPaneTab);
+window.__agyRouter.state.location.search = { tab: term.id };
+assert.strictEqual(r(props(A, term, true)), VIEW);
+assert.strictEqual(r(props(A, term, false)), VIEW);
+assert.strictEqual(navs.length, 3, "closing on a terminal cleared the URL");
+assert.deepStrictEqual(window.__agyRouter.state.location.search, { tab: term.id });
 
 // Without the router the panel still closes.
 delete window.__agyRouter;
@@ -194,4 +208,19 @@ r = host(window.__agyPaneTab);
 r(props(A, pdf, true));
 assert.strictEqual(r(props(A, pdf, false)), VIEW);
 `)
+}
+
+// Before 2.30 the bundle never asks whether the panel is open, so there is
+// nothing to rewrite and the patch must not report itself missing.
+func TestConversationNavTabNotNeededWithoutOpenCheck(t *testing.T) {
+	v229 := `else{g=f?.focusedId??g;var l=c?h.sidePanelV2.conversationPanes[g]?.activeTabId:h.sidePanel.conversationPanes[g]?.activeTabId;a({to:"/c/$cascadeId"`
+	out, report := Apply(MainJS, []byte(v229), Options{})
+	for _, r := range report {
+		if r.ID == "conversation-nav-tab-open-pane" && r.Status != StatusNotNeeded {
+			t.Fatalf("conversation-nav-tab-open-pane on a bundle without the open check: status %v", r.Status)
+		}
+	}
+	if string(out) != v229 {
+		t.Fatalf("the navigation changed:\n%s", out)
+	}
 }

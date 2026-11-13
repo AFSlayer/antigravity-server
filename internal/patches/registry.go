@@ -206,6 +206,10 @@ var (
 			`[a-zA-Z0-9_$]+\.sidePanelV2\.conversationPanes\[\s*[a-zA-Z0-9_$]+\s*\]\?\.activeTabId\s*:\s*` +
 			`[a-zA-Z0-9_$]+\.sidePanel\.conversationPanes\[\s*[a-zA-Z0-9_$]+\s*\]\?\.activeTabId\s*:\s*void 0)`,
 	)
+	// conversationNavOpenCheckSkippedRe finds the open check that the desktop
+	// layout skips. Bundles before it, such as 2.29, never check the panel,
+	// and a bundle that drops the skip has fixed this itself.
+	conversationNavOpenCheckSkippedRe = regexp.MustCompile(`![a-zA-Z0-9_$]+\s*\|\|\s*[a-zA-Z0-9_$]+\.sidePanel\s*&&\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\?`)
 )
 
 // SidecarFrameSandbox is the sandbox of a sidecar's frame: the iframe's
@@ -1202,10 +1206,10 @@ func All() []Patch {
 		// file or artifact viewer there reads the whole file through the
 		// language server on every visit, which over a remote link delays the
 		// conversation. These patches mount such a viewer only once the panel
-		// opens, and drop the tab from the URL when the panel closes.
+		// opens, and drop its tab from the URL when the panel closes.
 		{
 			ID:      "side-panel-tab-helper",
-			Desc:    "Provide the component that holds back a closed side panel's file viewer and clears its tab from the URL",
+			Desc:    "Provide the component that holds back a closed side panel's file viewer and clears the viewer's tab from the URL",
 			Target:  HTML,
 			Kind:    InjectHead,
 			Replace: sidePanelTabScript,
@@ -1233,14 +1237,16 @@ func All() []Patch {
 			Replace: `${1}${3}&&(window.__agyPaneTab?${5}.createElement(window.__agyPaneTab,{key:${3}.id,R:${5},treeId:${6},tab:${3},open:${2},idle:null},${4}):${4})`,
 		},
 		{
-			ID:           "conversation-nav-tab-open-pane",
-			Desc:         "Put the side panel's tab in a conversation's URL only while that panel is open, as the mobile layout does",
-			Target:       MainJS,
-			Kind:         Regexp,
-			Optional:     true,
-			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`.sidePanelV2.conversationPanes[`)) },
-			FindRe:       conversationNavTabRe,
-			Replace:      `${1}${2}`,
+			ID:       "conversation-nav-tab-open-pane",
+			Desc:     "Put the side panel's tab in a conversation's URL only while that panel is open, as the mobile layout does",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(`.sidePanelV2.conversationPanes[`)) && conversationNavOpenCheckSkippedRe.Match(b)
+			},
+			FindRe:  conversationNavTabRe,
+			Replace: `${1}${2}`,
 		},
 
 		// Opening the RPC socket costs several round trips, and the bundle only
@@ -5090,8 +5096,11 @@ const remoteRuntimeBridgeScript = `<script id="agy-remote-runtime-bridge">
 // Other tabs, such as terminals and browsers, keep state the user would lose,
 // so they render as before.
 //
-// When the panel closes, the tab also leaves the URL. It needs the router
-// that router-navigate-bridge captures, and without it the URL keeps the tab.
+// When the panel closes on a file or artifact, its tab also leaves the URL.
+// The store already holds that tab as the panel's active one. A terminal tab
+// stays in the URL, because the bundle keeps the selected terminal only
+// there. Clearing needs the router that router-navigate-bridge captures, and
+// without it the URL keeps the tab.
 const sidePanelTabScript = `<script id="agy-side-panel-tab">
 (function () {
   if (window.__agyPaneTab) return;
@@ -5122,6 +5131,7 @@ const sidePanelTabScript = `<script id="agy-side-panel-tab">
     var R = p.R;
     var key = treeKey(p.treeId);
     var open = !!p.open;
+    var type = p.tab && p.tab.content && p.tab.content.type;
     var shown = R.useState(open ? key : null);
     var last = R.useRef({ key: key, open: open });
     R.useEffect(function () {
@@ -5129,9 +5139,8 @@ const sidePanelTabScript = `<script id="agy-side-panel-tab">
       last.current = { key: key, open: open };
       if (open) shown[1](key);
       else if (was.key !== key) shown[1](null);
-      else if (was.open) clearURLTab();
-    }, [key, open]);
-    var type = p.tab && p.tab.content && p.tab.content.type;
+      else if (was.open && readsFile[type]) clearURLTab();
+    }, [key, open, type]);
     if (open || !readsFile[type] || shown[0] === key) return p.children;
     return p.idle || null;
   };

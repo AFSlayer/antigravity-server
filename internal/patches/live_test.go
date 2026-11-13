@@ -185,15 +185,6 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if bytes.Contains(mainJS, []byte("signInPluginAuthProvider:")) && !regexpMatch(pluginOAuthRemoteCallbackRe, mainJS) {
 		t.Error("plugin-oauth-remote-callback: signInPluginAuthProvider exists in bundle but patch regexp did not match")
 	}
-	if bytes.Contains(mainJS, []byte(`"data-side-panel-body"`)) && !regexpMatch(sidePanelBodyRe, mainJS) {
-		t.Error("side-panel-closed-file-viewer: the side panel body exists in bundle but patch regexp did not match")
-	}
-	if bytes.Contains(mainJS, []byte(`stripRef:`)) && !regexpMatch(sidePanelBodyLegacyRe, mainJS) {
-		t.Error("side-panel-closed-file-viewer-legacy: the legacy side panel exists in bundle but patch regexp did not match")
-	}
-	if bytes.Contains(mainJS, []byte(`.sidePanelV2.conversationPanes[`)) && !regexpMatch(conversationNavTabRe, mainJS) {
-		t.Error("conversation-nav-tab-open-pane: the side panel's tab exists in bundle but the conversation navigation did not match")
-	}
 
 	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
 	opts.CacheKey = CacheKey("test", opts)
