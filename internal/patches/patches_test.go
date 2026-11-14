@@ -213,7 +213,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 		`return b!==null?b==="true":a.get("wsTransport")!=="1"}`,
-		`OJ(a,b))},3E4)}else PJ(a)},
+		`OJ(a,b))},Math.max(3E4,2E3))}else PJ(a)},
 2E3)}`,
 		`for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}`,
 		`catch(m){return k(),console.warn("[UserStatusSync] Failed to fetch user status:",m),f()||g?.(),!1}`,

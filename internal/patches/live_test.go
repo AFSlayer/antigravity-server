@@ -31,11 +31,6 @@ var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
 
-// userStatusNoResetOnErrorRe matches builds where UserStatusSync logs a failed getUserStatus call without wiping
-// Redux userStatus (2.28 and earlier, or a future build that drops the reset upstream). Anchoring from catch{ ensures a
-// reset moved before console.warn does not slip past the guard.
-var userStatusNoResetOnErrorRe = regexp.MustCompile(`catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+\(\)\s*[;,]\s*)?console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
-
 func regexpFindSubmatch(re *regexp.Regexp, body []byte) [][]byte {
 	loc := regexpFindSubmatchIndex(re, body)
 	if loc == nil {

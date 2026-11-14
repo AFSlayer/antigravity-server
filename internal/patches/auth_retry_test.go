@@ -16,13 +16,23 @@ grantedScopes:l.grantedScopes??[],wifProvider:l.wifProvider,authMode:l.authMode}
 wifProvider:n.wifProvider,authMode:n.authMode}),a.broadcastChannel?.broadcastSignIn(n)}else d(await c(l0a(a,l,m,g)))}}else h!=="signedOut"&&h!=="validatingLogin"&&SD(a,!1)}}catch(m){if(d(),a._currentSessionId===f){if(a._authState.state==="uninitialized"){let n=j0a(m);if(b>0&&n){let p=4-b;d(await c(new Promise(r=>{setTimeout(r,1E3*2**p)})));return a.isLoggingOut||a._currentSessionId!==f?void 0:k0a(a,b-1)}a._authActor.send({type:"SIGN_OUT"})}a.recordError(Ng.AUTH_STATUS_VALIDATION_FAILED,m)}}}}finally{c()}}
 `
 
+// TestAuthStartupRetryOutlastsASlowLink runs the 2.29.0 check and the 2.32
+// one, which also counts its tries and records the last error code.
 func TestAuthStartupRetryOutlastsASlowLink(t *testing.T) {
-	patched := applyOnly(t, "auth-startup-retry", authCheck, Options{})
-	if patched == authCheck {
-		t.Fatal("anchor not found in the 2.29.0 check")
+	checks := []struct{ version, src, fn string }{
+		{"2.29", authCheck, "k0a"},
+		{"2.32", v232AuthCheck, "u6a"},
 	}
-	if !strings.Contains(patched, "k0a(a,b>1?b-1:Date.now()<(a.__agyAuthRetryUntil??=Date.now()+3E5)?1:0)") {
-		t.Fatalf("unexpected rewrite: %s", patched)
+	patched := map[string]string{}
+	for _, c := range checks {
+		out := applyOnly(t, "auth-startup-retry", c.src, Options{})
+		if out == c.src {
+			t.Fatalf("anchor not found in the %s check", c.version)
+		}
+		if !strings.Contains(out, c.fn+"(a,b>1?b-1:Date.now()<(a.__agyAuthRetryUntil??=Date.now()+3E5)?1:0)") {
+			t.Fatalf("unexpected rewrite of the %s check: %s", c.version, out)
+		}
+		patched[c.version] = out
 	}
 
 	node, err := exec.LookPath("node")
@@ -33,15 +43,19 @@ func TestAuthStartupRetryOutlastsASlowLink(t *testing.T) {
 const assert = require("assert");
 const fs = require("fs");
 class yh extends Error { constructor(code) { super("rpc failed"); this.code = code; } }
+const eh = yh;
 const e = x => x;
-const Ng = {};
+const Ng = {}, xg = {}, wg = {};
+// What only the 2.32 check calls: the error code it records, and its sign-out helper's own calls.
+const l6a = err => String(err.code), BB = () => {}, n6a = () => {};
 const waits = [];
 // Each request takes its full 10 second timeout before failing, and each wait takes as long as it says.
 let clock = 0;
 Date.now = () => clock;
 global.setTimeout = (fn, ms) => { waits.push(ms); clock += ms; fn(); };
-const l0a = async () => {};
-eval(fs.readFileSync(process.argv[1], "utf8") + "; globalThis.check = k0a;");
+const l0a = async () => {}, v6a = l0a;
+const counts = process.argv[3] === "u6a";
+eval(fs.readFileSync(process.argv[1], "utf8") + "; globalThis.check = " + process.argv[3] + ";");
 
 // Fails the token check failures times with the given code, then succeeds. onCall runs before each request.
 async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
@@ -50,6 +64,8 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
   const app = {
     isLoggingOut: false,
     _currentSessionId: 1,
+    sessionTracker: { id: 1 },
+    startupAuth: { attempts: 0, lastErrorCode: "none" },
     _authState: { state: "uninitialized", context: { grantedScopes: [] } },
     _authActor: { send: ev => sent.push(ev.type) },
     recordError() {},
@@ -66,7 +82,7 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
   waits.length = 0;
   clock = 0;
   await check(app, retries);
-  return { calls, sent, waits: waits.slice(), elapsed: clock };
+  return { calls, sent, waits: waits.slice(), elapsed: clock, startupAuth: app.startupAuth };
 }
 
 (async () => {
@@ -77,6 +93,8 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
     assert.deepStrictEqual(slow.sent, ["AUTH_SUCCESS"]);
     assert.strictEqual(slow.calls, 13);
     assert.deepStrictEqual(slow.waits, [1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000]);
+    // The 2.32 check goes on counting its tries and recording what it saw.
+    if (counts) assert.deepStrictEqual(slow.startupAuth, { attempts: 13, hasToken: "yes", lastErrorCode: "4" });
   } else {
     assert.deepStrictEqual(slow.sent, ["SIGN_OUT"], "upstream gives up after five tries");
     assert.strictEqual(slow.calls, 5);
@@ -85,6 +103,7 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
   // A link that never recovers still ends at the sign-in screen, five minutes after upstream would have.
   const dead = await run(Infinity, 4);
   assert.deepStrictEqual(dead.sent, ["SIGN_OUT"]);
+  if (counts) assert.strictEqual(dead.startupAuth.fallback, "transient_fallback");
   if (patched) {
     assert.ok(dead.elapsed >= 65000 + 300000 && dead.elapsed < 65000 + 330000, "gave up after " + dead.elapsed + "ms");
   } else {
@@ -103,7 +122,7 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
 
   // A new session or a sign-out in progress ends the loop without signing out.
   if (patched) {
-    const replaced = await run(Infinity, 4, { onCall: (app, n) => { if (n === 7) app._currentSessionId = 2; } });
+    const replaced = await run(Infinity, 4, { onCall: (app, n) => { if (n === 7) { app._currentSessionId = 2; app.sessionTracker.id = 2; } } });
     assert.deepStrictEqual(replaced.sent, []);
     assert.strictEqual(replaced.calls, 7);
     const leaving = await run(Infinity, 4, { onCall: (app, n) => { if (n === 7) app.isLoggingOut = true; } });
@@ -116,13 +135,15 @@ async function run(failures, code, { retries = 4, onCall = () => {} } = {}) {
 })().catch(err => { console.error(err); process.exit(1); });
 `
 	dir := t.TempDir()
-	for mode, body := range map[string]string{"patched": patched, "upstream": authCheck} {
-		path := filepath.Join(dir, mode+".js")
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if out, err := exec.Command(node, "-e", harness, "--", path, mode).CombinedOutput(); err != nil {
-			t.Errorf("%s: %v\n%s", mode, err, out)
+	for _, c := range checks {
+		for mode, body := range map[string]string{"patched": patched[c.version], "upstream": c.src} {
+			path := filepath.Join(dir, c.version+"-"+mode+".js")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command(node, "-e", harness, "--", path, mode, c.fn).CombinedOutput(); err != nil {
+				t.Errorf("%s %s: %v\n%s", c.version, mode, err, out)
+			}
 		}
 	}
 }
