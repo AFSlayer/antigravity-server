@@ -55,6 +55,34 @@ func TestUserStatusKeepOnErrorShapesAndGuards(t *testing.T) {
 		}
 	})
 
+	t.Run("2.32 clears only in clearStatus mode, which the poll runs in", func(t *testing.T) {
+		if userStatusNoResetOnErrorRe.MatchString(v232UserStatusSync) {
+			t.Error("2.32 UserStatusSync should not match userStatusNoResetOnErrorRe")
+		}
+		out, status := applyUserStatusPatch(t, v232UserStatusSync)
+		if status != StatusApplied {
+			t.Fatalf("got status %s, want applied", status)
+		}
+		if !strings.Contains(out, `catch(n){return l(),console.warn("[UserStatusSync] Failed to fetch user status:",n),f()||g?.(),!1}`) {
+			t.Errorf("unexpected 2.32 catch rewrite:\n%s", out)
+		}
+		// The function's own answer for a client without getUserStatus stays.
+		if !strings.Contains(out, `if(typeof a.getUserStatus!=="function")h==="clearStatus"&&b(jr(Vb(E.UserStatusSchema)));else{`) {
+			t.Errorf("the 2.32 rewrite changed more than the catch:\n%s", out)
+		}
+	})
+
+	t.Run("a reset the patch does not match is reported", func(t *testing.T) {
+		drifted := strings.Replace(v232UserStatusSync, `(h==="clearStatus"&&b(jr(Vb(E.UserStatusSchema))),g?.())`, `(clearUnlessKept(b,h),g?.())`, 1)
+		if drifted == v232UserStatusSync {
+			t.Fatal("failed to construct drifted catch fixture")
+		}
+		out, status := applyUserStatusPatch(t, drifted)
+		if status != StatusMissing || out != drifted {
+			t.Errorf("got status=%s changed=%v, want not found and unchanged", status, out != drifted)
+		}
+	})
+
 	t.Run("2.31 Replace matches ReplaceMatch byte-for-byte", func(t *testing.T) {
 		var patch Patch
 		for _, p := range All() {
@@ -115,6 +143,9 @@ func TestUserStatusKeepOnErrorShapesAndGuards(t *testing.T) {
 			if userStatusNoResetOnErrorRe.MatchString(drifted) {
 				t.Errorf("userStatusNoResetOnErrorRe unexpectedly matched drifted catch:\n%s", driftedCatch)
 			}
+			if _, status := applyUserStatusPatch(t, drifted); status != StatusMissing {
+				t.Errorf("drifted catch reported as %s, want not found:\n%s", status, driftedCatch)
+			}
 		}
 	})
 }
@@ -133,17 +164,25 @@ func TestUserStatusKeepOnErrorRuntime(t *testing.T) {
 	if status != StatusApplied {
 		t.Fatalf("2.29 patch status = %s, want applied", status)
 	}
+	patched232, status := applyUserStatusPatch(t, v232UserStatusSync)
+	if status != StatusApplied {
+		t.Fatalf("2.32 patch status = %s, want applied", status)
+	}
 
 	dir := t.TempDir()
 	upFile := filepath.Join(dir, "upstream231.js")
 	p231File := filepath.Join(dir, "patched231.js")
 	p229File := filepath.Join(dir, "patched229.js")
+	up232File := filepath.Join(dir, "upstream232.js")
+	p232File := filepath.Join(dir, "patched232.js")
 	harnessFile := filepath.Join(dir, "harness.cjs")
 
 	for name, content := range map[string]string{
-		upFile:   v231UserStatusSync,
-		p231File: patched231,
-		p229File: patched229,
+		upFile:    v231UserStatusSync,
+		p231File:  patched231,
+		p229File:  patched229,
+		up232File: v232UserStatusSync,
+		p232File:  patched232,
 	} {
 		if err := os.WriteFile(name, []byte(content), 0600); err != nil {
 			t.Fatal(err)
@@ -157,6 +196,8 @@ const fs = require("fs");
 const upstream231Src = fs.readFileSync(process.argv[2], "utf8");
 const patched231Src = fs.readFileSync(process.argv[3], "utf8");
 const patched229Src = fs.readFileSync(process.argv[4], "utf8");
+const upstream232Src = fs.readFileSync(process.argv[5], "utf8");
+const patched232Src = fs.readFileSync(process.argv[6], "utf8");
 
 function createEnv(source, version) {
   let now = 1_000_000;
@@ -237,6 +278,7 @@ function createEnv(source, version) {
   let effectCleanup = null;
   const React = {
     useContext: () => client,
+    useCallback: fn => fn,
     useEffect: fn => {
       if (effectCleanup) {
         const prev = effectCleanup;
@@ -254,7 +296,49 @@ function createEnv(source, version) {
 
   let mount;
   let callDirect5Args;
-  if (version === "231") {
+  let refreshKeepingStatus;
+  if (version === "232") {
+    const fn = new Function(
+      "Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+      "document", "window", "console", "e",
+      "B", "jt", "zk", "yk", "Ak", "tk", "kd", "Al", "oj", "jr", "Vb", "E", "Ypa",
+      source + "\nreturn { vSb, uSb, wV };"
+    );
+    const exports = fn(
+      fakeDate,
+      (cb, ms) => setTimer(cb, ms, false),
+      clearTimer,
+      (cb, ms) => setTimer(cb, ms, true),
+      clearTimer,
+      fakeDoc,
+      fakeWin,
+      fakeConsole,
+      e,
+      React,
+      {},
+      () => dispatch,
+      () => store,
+      sel => sel(state),
+      s => s.auth,
+      () => ({ core: { authService } }),
+      () => null,
+      () => settingsMap,
+      payload => ({ type: "setUserStatus", payload }),
+      schema => schema(),
+      { UserStatusSchema: emptyStatus },
+      Opa
+    );
+    mount = () => exports.vSb();
+    callDirect5Args = (cancelled = () => false) => exports.wV(
+      client,
+      dispatch,
+      false,
+      settingsMap.get("settings").onTelemetrySettingChanged,
+      cancelled
+    );
+    // 2.32's own refresh, which asks the function to keep the status.
+    refreshKeepingStatus = () => exports.uSb()();
+  } else if (version === "231") {
     const fn = new Function(
       "Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
       "document", "window", "console", "e",
@@ -373,6 +457,7 @@ function createEnv(source, version) {
   return {
     mount,
     callDirect5Args,
+    refreshKeepingStatus,
     unmount: () => {
       if (effectCleanup) {
         const c = effectCleanup;
@@ -770,6 +855,78 @@ function createEnv(source, version) {
     assert.deepStrictEqual(env.getTimerDelays(), []);
     env.unmount();
   }
+
+  const closed = async () => { throw new Error("WebSocket connection closed unexpectedly (close code 1006)"); };
+  const twoModels = async () => ({
+    userStatus: {
+      email: "dev@example.com",
+      cascadeModelConfigData: {
+        clientModelConfigs: [
+          { label: "Gemini 2.5 Pro", value: 101, quota: "fresh" },
+          { label: "Gemini 2.5 Flash", value: 102 },
+        ],
+      },
+    },
+  });
+
+  // Upstream 2.32 keeps the status only when its own refresh asks for that. The 10-minute poll still wipes it.
+  {
+    const env = createEnv(upstream232Src, "232");
+    env.mount();
+    await env.flushMicrotasks();
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro");
+
+    env.setRpc(closed);
+    await env.refreshKeepingStatus();
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro", "upstream's own refresh keeps the status");
+
+    await env.advance(600_000);
+    assert.strictEqual(env.getState().userStatus.email, "");
+    assert.strictEqual(env.selectedModel(), undefined, "upstream 2.32 wipes the selected model at the poll");
+    env.unmount();
+  }
+
+  // Patched 2.32 keeps models and selection across the failed poll, runs the credential check, and retries 1s later.
+  {
+    const env = createEnv(patched232Src, "232");
+    env.mount();
+    await env.flushMicrotasks();
+    assert.strictEqual(env.getRpcCalls(), 1);
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro");
+
+    let failOnce = true;
+    env.setRpc(async () => {
+      if (failOnce) {
+        failOnce = false;
+        return closed();
+      }
+      return twoModels();
+    });
+
+    await env.advance(600_000);
+    assert.strictEqual(env.getRpcCalls(), 2);
+    assert.strictEqual(env.getState().userStatus.email, "dev@example.com", "email preserved during error");
+    assert.strictEqual(env.selectedModel()?.label, "Gemini 2.5 Pro", "selection never dropped");
+    assert.strictEqual(env.getSignOutChecks(), 1, "signOutIfServerHasNoCredential still invoked");
+    assert.deepStrictEqual(env.getTimerDelays(), [1000]);
+
+    await env.advance(1000);
+    assert.strictEqual(env.getRpcCalls(), 3);
+    assert.strictEqual(env.selectedModel()?.quota, "fresh", "backoff retry updated models");
+    assert.deepStrictEqual(env.getTimerDelays(), []);
+
+    // The function called on its own, as the auth refresh calls it, keeps the status too and reports the failure.
+    env.setRpc(closed);
+    assert.strictEqual(await env.callDirect5Args(), false);
+    assert.strictEqual(env.selectedModel()?.quota, "fresh");
+
+    // Its own refresh still works, and the listeners and timers go with the effect.
+    env.setRpc(twoModels);
+    await env.refreshKeepingStatus();
+    env.unmount();
+    assert.strictEqual(env.getListenerCount(), 0);
+    assert.strictEqual(env.getTimerCount(), 0);
+  }
 })().catch(err => {
   console.error(err);
   process.exit(1);
@@ -779,7 +936,7 @@ function createEnv(source, version) {
 		t.Fatal(err)
 	}
 
-	if out, err := exec.Command(node, harnessFile, upFile, p231File, p229File).CombinedOutput(); err != nil {
+	if out, err := exec.Command(node, harnessFile, upFile, p231File, p229File, up232File, p232File).CombinedOutput(); err != nil {
 		t.Fatalf("runtime harness failed: %v\n%s", err, out)
 	}
 }

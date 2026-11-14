@@ -264,7 +264,7 @@ func submatches(body []byte, loc []int) [][]byte {
 // appended to the /main.js URL so the bundle URL changes the moment the patches
 // or version change. It does not cover language server updates; the proxy's
 // ETag revalidation is what keeps browsers from running a stale bundle.
-const patchSetRevision = "2026-11-12-r9"
+const patchSetRevision = "2026-11-14-r10"
 
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()

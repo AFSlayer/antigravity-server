@@ -40,7 +40,7 @@ var (
 			`(\)\)\)\};[\s\S]+?var a=([a-zA-Z0-9_$]+)\(\),b=!!a\.get\("settings"\)\?\.hideProjects[\s\S]{1,400}?(?:\{(?:settingsFeature:[a-zA-Z0-9_$]+,)?projectManagementFeature:g\}=(\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\))|f=([a-zA-Z0-9_$]+\(\)))[\s\S]{1,400}?,[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\([fg]\??\.projectsStateProvider\))`,
 	)
 	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
-	mobileConversationRowActionsRe = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",(?:[\r\n\s]*![a-zA-Z0-9_$]+&&"\[&>\*\]:pointer-events-auto",)?)[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":[\r\n\s]*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
+	mobileConversationRowActionsRe = regexp.MustCompile(`className:\s*([a-zA-Z0-9_$]+)\(\s*"((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10"\s*,(?:\s*![a-zA-Z0-9_$]+\s*&&\s*"\[&>\*\]:pointer-events-auto"\s*,)?)\s*([a-zA-Z0-9_$]+)\s*\?\s*"hidden"\s*:\s*([a-zA-Z0-9_$]+)\s*\?\s*"opacity-100"\s*:\s*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\s*\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),[\r\n\s]*handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)((?:,\s*handleRename:[a-zA-Z0-9_$]+)?)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
@@ -72,16 +72,44 @@ var (
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
 
-	folderPickerInitialPathRe = regexp.MustCompile(`initialPath:[a-zA-Z0-9_$]+\?[a-zA-Z0-9_$]+\.fsPath:[a-zA-Z0-9_$]+\?"C:/":"/",fetchDirectoryContents:`)
+	// folderPickerInitialPathRe finds the path the interactive folder picker
+	// opens at. Up to 2.31 the call computes it inline from the home directory;
+	// 2.32 puts it in a variable first and passes that.
+	folderPickerInitialPathRe = regexp.MustCompile(
+		`(?:initialPath:\s*[a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\.fsPath\s*:\s*[a-zA-Z0-9_$]+\s*\?\s*"C:/"\s*:\s*"/"|` +
+			`(=\s*[a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*:\s*"/"\s*,\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\(\s*await\s+[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*\{\s*)initialPath:\s*[a-zA-Z0-9_$]+)` +
+			`(\s*,\s*fetchDirectoryContents:)`,
+	)
 
 	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(Media|Files)",onClick:([a-zA-Z0-9_$]+)\}`)
 
 	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)(?:accept:[a-zA-Z0-9_$]+,[\r\n\s]*)?multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
-	fileDropAcceptAllRe   = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b=""\)\{if\(b\.startsWith\("image\/"\)\|\|b\.startsWith\("video\/"\)\|\|b\.startsWith\("audio\/"\)\|\|(?:b==="application\/pdf"|[a-zA-Z0-9_$]+\(b,a\))\|\|[a-zA-Z0-9_$]+\(b,a\)\|\|[a-zA-Z0-9_$]+\(b,a\)\)return!0;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return [a-zA-Z0-9_$]+\.has\(a\)\}`)
+	// fileDropAcceptAllRe finds the test for whether a dropped file is media.
+	// 2.32 first answers no for a name that is a text file.
+	fileDropAcceptAllRe = regexp.MustCompile(
+		`function ([a-zA-Z0-9_$]+)\(\s*a\s*,\s*b\s*=\s*""\s*\)\s*\{\s*` +
+			`(?:if\s*\(\s*a\s*&&\s*[a-zA-Z0-9_$]+\(\s*""\s*,\s*a\s*\)\s*\)\s*return\s*!1\s*;\s*)?` +
+			`if\s*\(\s*b\.startsWith\(\s*"image\/"\s*\)\s*\|\|\s*b\.startsWith\(\s*"video\/"\s*\)\s*\|\|\s*b\.startsWith\(\s*"audio\/"\s*\)\s*\|\|\s*` +
+			`(?:b\s*===\s*"application\/pdf"|[a-zA-Z0-9_$]+\(\s*b\s*,\s*a\s*\))\s*\|\|\s*[a-zA-Z0-9_$]+\(\s*b\s*,\s*a\s*\)\s*\|\|\s*[a-zA-Z0-9_$]+\(\s*b\s*,\s*a\s*\)\s*\)\s*return\s*!0\s*;\s*` +
+			`a\s*=\s*` + extensionOfAExpr + `\s*;\s*return\s+[a-zA-Z0-9_$]+\.has\(\s*a\s*\)\s*\}`,
+	)
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;(?:[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)|if\([a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\.files\.length>0\)\{[\s\S]{1,300}?[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.value=""\})\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
-	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\("",a\)!==void 0\}|function [a-zA-Z0-9_$]+\(a,b=""\)\{return [a-zA-Z0-9_$]+\(b,a\)!==void 0\}function [a-zA-Z0-9_$]+\(a,b\)\{a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);if\(a!=="webm")`)
+	// fileUploadCustomTextTypesRe finds the function that names the text MIME
+	// type of a file from its type and its extension. 2.32 answers text/xml
+	// for application/xml first, and looks the extension up only for a name
+	// with a dot after its first character.
+	fileUploadCustomTextTypesRe = regexp.MustCompile(
+		`function ([a-zA-Z0-9_$]+)\(\s*a\s*,\s*b\s*\)\s*\{\s*b\s*=\s*b\.split\(\s*";"\s*\)\[0\]\.trim\(\s*\)\.toLowerCase\(\s*\)\s*;\s*` +
+			`(if\s*\(\s*b\s*===\s*"application\/xml"\s*\)\s*return\s*"text\/xml"\s*;\s*)?` +
+			`if\s*\(\s*([a-zA-Z0-9_$]+)\.includes\(\s*b\s*\)\s*\)\s*return\s+b\s*;\s*` +
+			`(?:a\s*=\s*` + extensionOfAExpr + `\s*;\s*return\s+([a-zA-Z0-9_$]+)\[a\]|` +
+			`b\s*=\s*a\.lastIndexOf\(\s*"\."\s*\)\s*;\s*if\s*\(\s*!\s*\(\s*b\s*<=\s*0\s*\)\s*\)\s*return\s+([a-zA-Z0-9_$]+)\[a\.slice\(\s*b\s*\+\s*1\s*\)\.toLowerCase\(\s*\)\])\s*\}\s*` +
+			`(function [a-zA-Z0-9_$]+\(\s*a\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+\(\s*""\s*,\s*a\s*\)\s*!==\s*void 0\s*\}|` +
+			`function [a-zA-Z0-9_$]+\(\s*a\s*,\s*b\s*=\s*""\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+\(\s*b\s*,\s*a\s*\)\s*!==\s*void 0\s*\}\s*` +
+			`function [a-zA-Z0-9_$]+\(\s*a\s*,\s*b\s*\)\s*\{\s*a\s*=\s*` + extensionOfAExpr + `\s*;\s*if\s*\(\s*a\s*!==\s*"webm")`,
+	)
 
 	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+=5(?:,[a-zA-Z0-9_$]+)?\)=>\{[\s\S]{1,450}?if\([a-zA-Z0-9_$]+>=[a-zA-Z0-9_$]+\)[a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\);(?:else if\([a-zA-Z0-9_$]+\.includes\([a-zA-Z0-9_$]+\.type\.toLowerCase\(\)\)\)|else\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.name,[a-zA-Z0-9_$]+\.type\);if\([a-zA-Z0-9_$]+\)\{?(?:if\(![a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\)\))?)if\(([a-zA-Z0-9_$]+)\.size>10485760\)[a-zA-Z0-9_$]+\?\.\("PDF file size exceeds 10MB limit"\)[\s\S]{1,600}?Error\("Document file size exceeds 10MB limit"\)\);[\s\S]{1,600}?Error\("Zip file size exceeds 20MB limit"\)\);[\s\S]{1,600}?Error\("Text file size exceeds 1MB limit"\)\);[\s\S]{1,1000}?[\s\S]{0,400}?Error\("Audio file size exceeds 20MB limit"\)\);(?:[\s\S]{1,1000}?[\s\S]{0,400}?Error\("File size exceeds 20MB limit"\)\);(?:[\s\S]{1,900}?if\([a-zA-Z0-9_$]+\.length!==0\)\{(?:(?:[a-zA-Z0-9_$]+\?\.\(null\);)?var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+;)?)?)?|if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[\r\n\s]*[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
 	fileUploadIcbHeaderRe                 = regexp.MustCompile(`(var [a-zA-Z0-9_$]+=\([a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+)=5(?:,[a-zA-Z0-9_$]+)?\)=>\{)([\s\S]{1,350}?async ([a-zA-Z0-9_$]+)=>\{[\s\S]{1,150}?)if\(([a-zA-Z0-9_$]+)>=([a-zA-Z0-9_$]+)\)([a-zA-Z0-9_$]+\?\.\("Maximum number of attachments reached"\));`)
@@ -97,15 +125,29 @@ var (
 	pagingTrimWaitsRe                     = regexp.MustCompile(`(([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.startIndex\s*<\s*([a-zA-Z0-9_$]+)\.startIndex\s*\|\|\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*>\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*;\s*if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{`)
 	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+(?:\.current)?)\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
-	websocketLivenessProbeRe              = regexp.MustCompile(`(type:"ping"\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for 4000ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)2E3(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*2E3\s*\)\s*\})`)
+	websocketLivenessProbeRe              = regexp.MustCompile(`(type:\s*"ping"\s*\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for \d+ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)(\d+(?:E\d+)?)(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*\d+(?:E\d+)?\s*\)\s*\})`)
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
-	authStartupRetryRe                    = regexp.MustCompile(`(_authState\.state==="uninitialized"\)\{let [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);if\(([a-zA-Z0-9_$]+)>0&&[a-zA-Z0-9_$]+\)\{let [a-zA-Z0-9_$]+=4-[a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+\(await [a-zA-Z0-9_$]+\(new Promise\([a-zA-Z0-9_$]+=>\{setTimeout\([a-zA-Z0-9_$]+,1E3\*2\*\*[a-zA-Z0-9_$]+\)\}\)\)\);return ([a-zA-Z0-9_$]+)\.isLoggingOut\|\|[a-zA-Z0-9_$]+(?:\._currentSessionId|\.sessionTracker\.id)!==[a-zA-Z0-9_$]+\?void 0:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,)[a-zA-Z0-9_$]+-1(\)\})`)
-	userStatusKeepOnErrorRe               = regexp.MustCompile(
+	authStartupRetryRe                    = regexp.MustCompile(
+		`(_authState\.state\s*===\s*"uninitialized"\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)*\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*)?` +
+			`let\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*if\s*\(\s*([a-zA-Z0-9_$]+)\s*>\s*0\s*&&\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*let\s+[a-zA-Z0-9_$]+\s*=\s*4\s*-\s*[a-zA-Z0-9_$]+\s*;\s*` +
+			`[a-zA-Z0-9_$]+\(\s*await\s+[a-zA-Z0-9_$]+\(\s*new Promise\(\s*[a-zA-Z0-9_$]+\s*=>\s*\{\s*` + authStartupBackoffExpr + `\s*\}\s*\)\s*\)\s*\)\s*;\s*` +
+			`return\s+([a-zA-Z0-9_$]+)\.isLoggingOut\s*\|\|\s*[a-zA-Z0-9_$]+(?:\._currentSessionId|\.sessionTracker\.id)\s*!==\s*[a-zA-Z0-9_$]+\s*\?\s*void 0\s*:\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*)` +
+			`[a-zA-Z0-9_$]+\s*-\s*1(\s*\)\s*\})`,
+	)
+	// userStatusNoResetOnErrorRe matches builds where UserStatusSync logs a
+	// failed getUserStatus call without wiping Redux userStatus: 2.28 and
+	// earlier, or a future build that drops the reset. Anchoring from catch{
+	// ensures a reset moved before console.warn does not slip past.
+	userStatusNoResetOnErrorRe = regexp.MustCompile(`catch\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+\(\)\s*[;,]\s*)?console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,\s*!?\s*[a-zA-Z0-9_$]+\(\)\s*(?:\|\||&&)\s*[a-zA-Z0-9_$]+(?:\?\.)?\(\))?\s*\}`)
+	// authStartupBackoffRe finds the wait between tries of the startup sign-in
+	// check, in any bundle that retries it.
+	authStartupBackoffRe    = regexp.MustCompile(`_authState\.state\s*===\s*"uninitialized"\s*\)\s*\{[\s\S]{0,400}?` + authStartupBackoffExpr)
+	userStatusKeepOnErrorRe = regexp.MustCompile(
 		`catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*` +
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!?\s*[a-zA-Z0-9_$]+\(\))\s*(\|\||&&)\s*` +
-			`(?:\(\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusSchemaDispatchExpr + `)\s*\}` +
-			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
+			`(?:\(\s*` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `)\s*\}` +
+			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
 	)
@@ -219,6 +261,13 @@ const SidecarFrameSandbox = "allow-scripts allow-forms allow-popups allow-popups
 const (
 	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
 	userStatusSyncCallExpr       = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+(?:\s*,\s*[a-zA-Z0-9_$]+){3,7}\s*\)`
+	// userStatusClearModeExpr is the mode check 2.32 puts before the dispatch
+	// that clears the status. The poll runs in that mode, so it still clears.
+	userStatusClearModeExpr = `(?:[a-zA-Z0-9_$]+\s*===\s*"clearStatus"\s*&&\s*)?`
+	// extensionOfAExpr is how the bundle reads the lower-cased extension of the
+	// file name in a.
+	extensionOfAExpr       = `a\.slice\(\s*a\.lastIndexOf\(\s*"\."\s*\)\s*\+\s*1\s*\)\.toLowerCase\(\s*\)`
+	authStartupBackoffExpr = `setTimeout\(\s*[a-zA-Z0-9_$]+\s*,\s*1E3\s*\*\s*2\s*\*\*\s*[a-zA-Z0-9_$]+\s*\)`
 )
 
 func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar, callExpr, timerVar string) string {
@@ -263,6 +312,15 @@ func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar,
 		`typeof document!=="undefined"&&document.removeEventListener&&document.removeEventListener("visibilitychange",_agyWake);` +
 		`typeof window!=="undefined"&&window.removeEventListener&&(window.removeEventListener("pageshow",_agyWake),window.removeEventListener("pagehide",_agyWake),window.removeEventListener("online",_agyWake))` +
 		`}`
+}
+
+// renderCustomTextTypes writes the function that names a file's text MIME
+// type, extended to plain text types the bundle does not list, to names such
+// as Dockerfile, and to extensions such as .har and .jsonl. xmlFirst is the
+// bundle's own statement for application/xml, when it has one.
+func renderCustomTextTypes(name, xmlFirst, mimeList, extTable, tail string) string {
+	return `function ` + name + `(a,b){b=b.split(";")[0].trim().toLowerCase();` + xmlFirst + `if(` + mimeList + `.includes(b))return b;` +
+		`if(b.startsWith("text/"))return"text/plain";if(!a)return;var _base=a.replace(/\\/g,"/").split("/").pop().toLowerCase();if(_base==="dockerfile"||_base==="makefile")return"text/plain";if(!_base.includes("."))return;a=_base.slice(_base.lastIndexOf(".")+1);return ` + extTable + `[a]||(a==="md"||a==="markdown"?"text/markdown":a==="csv"?"text/csv":a==="json"||a==="har"||a==="jsonl"?"application/json":a==="html"||a==="htm"?"text/html":a==="css"?"text/css":a==="js"||a==="mjs"||a==="cjs"?"text/javascript":/^(txt|log|yaml|yml|toml|xml|sql|sh|bash|zsh|go|rs|c|cpp|cc|h|hpp|java|kt|swift|rb|php|env|ini|conf|cfg|dockerfile|makefile|graphql|proto|vue|svelte|astro)$/.test(a)?"text/plain":void 0)}` + tail
 }
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -777,6 +835,12 @@ func All() []Patch {
 			ReplaceFn: func(o Options) string {
 				return `initialPath:` + jsString(o.WorkspaceRoot) + `,fetchDirectoryContents:`
 			},
+			// The 2.32 form keeps the declaration of the variable it no longer
+			// reads. The path is written as it is, so a "$" in it is not taken
+			// for a group reference.
+			ReplaceMatch: func(g [][]byte, o Options) string {
+				return string(g[1]) + `initialPath:` + jsString(o.WorkspaceRoot) + string(g[2])
+			},
 		},
 		{
 			ID:      "workspace-file-uploader",
@@ -837,7 +901,16 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadCustomTextTypesRe,
-			Replace: `function $1(a,b){b=b.split(";")[0].trim().toLowerCase();if($2.includes(b))return b;if(b.startsWith("text/"))return"text/plain";if(!a)return;var _base=a.replace(/\\/g,"/").split("/").pop().toLowerCase();if(_base==="dockerfile"||_base==="makefile")return"text/plain";if(!_base.includes("."))return;a=_base.slice(_base.lastIndexOf(".")+1);return $3[a]||(a==="md"||a==="markdown"?"text/markdown":a==="csv"?"text/csv":a==="json"||a==="har"||a==="jsonl"?"application/json":a==="html"||a==="htm"?"text/html":a==="css"?"text/css":a==="js"||a==="mjs"||a==="cjs"?"text/javascript":/^(txt|log|yaml|yml|toml|xml|sql|sh|bash|zsh|go|rs|c|cpp|cc|h|hpp|java|kt|swift|rb|php|env|ini|conf|cfg|dockerfile|makefile|graphql|proto|vue|svelte|astro)$/.test(a)?"text/plain":void 0)}${4}`,
+			Replace: renderCustomTextTypes("${1}", "${2}", "${3}", "${5}", "${6}"),
+			// 2.32 names its extension table in a different group, and its
+			// application/xml answer is kept.
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				table := g[4]
+				if table == nil {
+					table = g[5]
+				}
+				return renderCustomTextTypes(string(g[1]), string(g[2]), string(g[3]), string(table), string(g[6]))
+			},
 		},
 		{
 			ID:      "file-upload-large-file-streaming-fallback",
@@ -1009,16 +1082,17 @@ func All() []Patch {
 		// the large initial frames arrive further apart than that, and the ping
 		// reply queues behind them, so the socket is dropped mid-transfer and the
 		// page reconnects and downloads everything again, which never finishes.
-		// Give the ping reply 30s instead of 2s so a slow but alive link survives.
+		// Give the ping reply 30s so a slow but alive link survives. The bundle
+		// waits 2s up to 2.31 and 5s in 2.32; a longer wait of its own is kept.
 		// Not optional: when the anchor moves the drops come back silently, so
 		// doctor and the startup report must flag it as missing.
 		{
 			ID:      "websocket-liveness-probe-relax",
-			Desc:    "Give the WebSocket liveness ping 30s instead of 2s so slow links are not dropped mid-transfer",
+			Desc:    "Give the WebSocket liveness ping 30s instead of a few seconds so slow links are not dropped mid-transfer",
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  websocketLivenessProbeRe,
-			Replace: `${1}3E4${2}`,
+			Replace: `${1}Math.max(3E4,${2})${3}`,
 		},
 
 		// During app bootstrap, getServerConfiguration and getMendelFlags catch
@@ -1048,8 +1122,11 @@ func All() []Patch {
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			FindRe:   authStartupRetryRe,
-			Replace:  `${1}${2}>1?${2}-1:Date.now()<(${3}.__agyAuthRetryUntil??=Date.now()+3E5)?1:0${4}`,
+			// Bundles before the check had a timeout do not retry it. One that
+			// retries in a form this does not match must be reported.
+			Precondition: authStartupBackoffRe.Match,
+			FindRe:       authStartupRetryRe,
+			Replace:      `${1}${2}>1?${2}-1:Date.now()<(${3}.__agyAuthRetryUntil??=Date.now()+3E5)?1:0${4}`,
 		},
 
 		// Since 2.29 UserStatusSync polls getUserStatus every ten minutes and wipes
@@ -1061,15 +1138,22 @@ func All() []Patch {
 		// through its own branch and signOutIfServerHasNoCredential still runs when
 		// present), retry with exponential backoff, and refresh on foreground wake.
 		// Optional because builds up to 2.28 already leave userStatus untouched on
-		// errors; the live bundle test checks that one or the other holds.
+		// errors. 2.32 added a mode in which the function keeps the status, but
+		// the poll does not use it.
 		{
 			ID:       "user-status-keep-on-error",
 			Desc:     "Keep loaded models and retry when a user-status refresh fails on a dropped socket",
 			Target:   MainJS,
 			Kind:     Regexp,
 			Optional: true,
-			FindRe:   userStatusKeepOnErrorRe,
-			Replace:  renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${6}", "${7}", "${8}", "${9}"),
+			// A bundle that logs the failed fetch and does anything more than
+			// the credential check still clears the status, so a form this
+			// does not match must be reported.
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(`"[UserStatusSync] Failed to fetch user status:"`)) && !userStatusNoResetOnErrorRe.Match(b)
+			},
+			FindRe:  userStatusKeepOnErrorRe,
+			Replace: renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${6}", "${7}", "${8}", "${9}"),
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				credCheck := ""
 				if g[5] != nil {
