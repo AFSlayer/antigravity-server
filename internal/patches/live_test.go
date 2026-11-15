@@ -27,6 +27,10 @@ var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Fin
 var userMessageButtonsOnTouchRe = regexp.MustCompile(`user-input-buttons-container[^"]*"\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
 var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
 
+// viewportInnerRe matches the one element the bundle puts inside the conversation's viewport, which is the first thing
+// it creates there. On iOS scroll-input-tracker keeps room above the rows as padding on it.
+var viewportInnerRe = regexp.MustCompile(`"data-testid":\s*"autoscroll-viewport"[^;]{0,300}?\},\s*[a-zA-Z0-9_$.]+\(\s*"div",\s*\{\s*className:\s*"mx-auto w-full"`)
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -118,6 +122,9 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// On iOS the scroll tracker makes room above the conversation only where the bundle's button says there are older
 	// rows to load, and finds it by its label. Without it the rows wait for the conversation to stop, as before. The
 	// patches that go with the room each say what of the bundle they need, so the loop above reports those.
+	if regexpMatch(pagingRowsKeptRe, mainJS) && !regexpMatch(viewportInnerRe, mainJS) {
+		t.Error("the conversation's viewport no longer holds one element with everything in it; the scroll tracker sets the room above the rows as padding on that element, and gives the room up where it finds none")
+	}
 	if bytes.Contains(mainJS, []byte("innerRadiusPx")) && !(bytes.Contains(mainJS, []byte("Load older messages")) && bytes.Contains(mainJS, []byte("No more older messages"))) {
 		t.Error("the conversation's paging is there but not the button that says whether there are older messages, which the scroll tracker reads")
 	}
