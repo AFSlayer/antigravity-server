@@ -1049,8 +1049,10 @@ func All() []Patch {
 		// moved the position, so on an iPhone the rows ended up to 350 px off. The move is handed to the scroll tracker,
 		// which makes it again once that drawing is done. The tracker is also told of every drawing, rows moved or not:
 		// being told is how it knows, before the first rows arrive, that the move is its own to make, and only then does
-		// it keep room for them on iOS. Bundles before 2.32 have no such component and go on moving the position
-		// themselves, and one that has it in a form this does not match is reported.
+		// it keep room for them on iOS. With that it is handed the component's way of finding the rows it chooses among,
+		// from which the tracker picks the row at the top of the screen to follow while the browser's anchoring is off.
+		// Bundles before 2.32 have no such component and go on moving the position themselves, and one that has it in
+		// a form this does not match is reported.
 		{
 			ID:       "paging-keeps-rows-after-render",
 			Desc:     "Keep the rows on screen in place when older rows load, through the second drawing of their tables",
@@ -1061,7 +1063,7 @@ func All() []Patch {
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("getAnchorCandidates")) && bytes.Contains(b, []byte("getSnapshotBeforeUpdate"))
 			},
-			Replace: `${1}window.__agyKeepRows?(window.__agyRowsDrawn?.(${2}),${2}&&${3}&&window.__agyKeepRows(${2},${3}.element,${3}.offset)):${4}}`,
+			Replace: `${1}window.__agyKeepRows?(window.__agyRowsDrawn?.(${2},this.props.getAnchorCandidates),${2}&&${3}&&window.__agyKeepRows(${2},${3}.element,${3}.offset)):${4}}`,
 		},
 		// The bundle asks for older rows once the first row is within 600 px of the screen. Drawing them takes a phone
 		// 0.3 to 0.5 s, and a flick covers that distance sooner, so the reader arrived at the top of what was loaded
@@ -2841,6 +2843,15 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var restTimer = 0;
   var resting = new Set();
   var unanchored = new WeakSet();
+  // Whether the browser keeps rows in place itself where its anchoring is left on.
+  var ANCHORS = typeof CSS !== "undefined" && Boolean(CSS.supports) && CSS.supports("overflow-anchor", "none");
+  // What is followed of each conversation while the browser's anchoring is off, one thing at a time: a row, where it
+  // is kept on the screen, and the position when that was settled. See keepUp.
+  var followers = new WeakMap();
+  // How the bundle finds the rows it may keep in place, which it says at every drawing, and the ones last found.
+  var rowsFrom = new WeakMap();
+  var rowLists = new WeakMap();
+  var ROWS_LOOK_MS = 250;
   var removedHeight = new Map();
   var frameRequested = false;
   var pressed = false;
@@ -2918,6 +2929,12 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // time anything can look, so what was removed counts as well as the height that can be seen. A fall neither explains
   // is a scroll with no input that happened to land next to a removal, such as the browser's find-in-page.
   function compare(el) {
+    // A conversation that is hidden reads as empty and at its top. Taken for where the reader is, that would be what
+    // they are held to, or kept from being put back to their place, once it shows again.
+    if (el.clientHeight === 0) {
+      removedHeight.delete(el);
+      return;
+    }
     // A fling, held or not, is not a position to learn from. The frame after a removal can be the first to see one.
     if (holdAgainstFling(el) || el.scrollTop < FLUNG_ABOVE_TOP) {
       removedHeight.delete(el);
@@ -2987,7 +3004,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   //
   // The browser's own anchoring knows nothing of the room and would move the position for rows it has already made up
   // for, so it is off from when rows above may change until the conversation is at rest. The bundle sets the property
-  // on the conversation itself as the reader starts and stops following the end, so it is set on what is inside.
+  // on the conversation itself as the reader starts and stops following the end, so it is set on what is inside. For
+  // as long as it is off the row at the top of the screen is followed here instead: see keepUp.
   //
   // All of it depends on the rows being put back here, where the room can take them. The bundle says it hands that
   // move over by calling after every drawing of the conversation, from the place it hands it over, so this is known
@@ -2999,7 +3017,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     // The scroll that opened this conversation may be over, with no other to come before the reader's own.
     if (hasRoom(el)) waitForRest(el);
   }
-  window.__agyRowsDrawn = rowsHandedOver;
+  window.__agyRowsDrawn = function (el, rowsOf) {
+    rowsHandedOver(el);
+    if (el && rowsOf) rowsFrom.set(el, rowsOf);
+  };
   // The bundle's own scrollbar reads the position and the height, and the room is most of both. It asks here how much
   // to leave out, so its thumb shows where the reader is among the rows. It only measures once the reader moves or
   // points at the conversation, so whether it will ask is not known when the room is made: a bundle whose scrollbar
@@ -3067,6 +3088,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       roomBox(el).style.overflowAnchor = "none";
     }
     waitForRest(el);
+    standIn(el);
   }
   function anchorAgain(el) {
     unanchored.delete(el);
@@ -3106,7 +3128,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   function atRest() {
     restTimer = 0;
     var now = performance.now();
-    resting.forEach(function (el) {
+    // Gone through as it stood: a conversation put back to wait again is seen at the next turn, not in this one.
+    var waiting = [];
+    resting.forEach(function (el) { waiting.push(el); });
+    waiting.forEach(function (el) {
       // A conversation that has left the page, or is hidden, reads as empty and at its top, which says nothing about
       // its room. It is left as it is until it moves again.
       if (!el.isConnected || !el.clientHeight) {
@@ -3120,6 +3145,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       // back, so the anchoring stays off until they are in. The rest of what rest is for is not held up.
       if (!rowsDue(now)) {
         resting.delete(el);
+        lastLook(el);
         anchorAgain(el);
       }
       keepOffRoom(el);
@@ -3127,6 +3153,13 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       var older = el.querySelector(OLDER_ROWS);
       var want = older && older.getAttribute("aria-disabled") !== "true" && rowsFill(el) ? ROOM : 0;
       if (want === room || (want && room >= ROOM_LOW && room <= ROOM_HIGH) || (roomFailures.get(el) || 0) >= ROOM_FAILURES_MAX) return;
+      // A finger that has rested on the screen for long enough is taken as lifted elsewhere, in case its end went
+      // missing. Not for this write: it would be taken back when the finger moved, long after the frames it is
+      // watched for. It waits until the finger is known to be up.
+      if (touching) {
+        resting.add(el);
+        return;
+      }
       resizeRoom(el, want);
     });
     if (resting.size > 0) restTimer = setTimeout(atRest, REST_MS);
@@ -3349,7 +3382,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       // The browser's anchoring is left on for a conversation that only moves: it keeps the reader's rows in place
       // when something above them changes height, and that move is a scroll event as well. It is switched off where
       // rows above are about to come or go, and for the room's own changes.
-      if (hasRoom(el)) {
+      // The event comes a frame after the move, and a conversation hidden in between reads as at its top.
+      if (hasRoom(el) && el.clientHeight) {
         keepOffRoom(el);
         waitForRest(el);
       }
@@ -3379,8 +3413,11 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // reader thousands of pixels. A fling only nudges the position, so the time between flings adds up to at most
   // TRIM_WAIT_MAX_MS, while the time a finger spends down adds nothing.
   window.__agyDeferTrim = function () {
-    holdAnchoring(lastMoved());
-    return waitForStill(trimWait, "agy-trim-wait", false);
+    var wait = waitForStill(trimWait, "agy-trim-wait", false);
+    // The browser's anchoring is switched off for rows that are about to go. While they are held back it is left
+    // to keep the reader's rows in place when something else above them changes.
+    if (!wait) holdAnchoring(lastMoved());
+    return wait;
   };
 
   // Asked before it adds rows above the reader. With room above the first row they take their height from it and
@@ -3410,9 +3447,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       holdAnchoring(el);
       return false;
     }
-    holdAnchoring(el);
     var atTop = Boolean(el && el.scrollTop <= roomOf(el));
-    return waitForStill(growWait, "agy-grow-wait", atTop);
+    var wait = waitForStill(growWait, "agy-grow-wait", atTop);
+    if (!wait) holdAnchoring(el);
+    return wait;
   };
   function typing() {
     var at = typeof document !== "undefined" && document.activeElement;
@@ -3439,97 +3477,233 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     return wait;
   }
 
+  // With the browser's anchoring off nothing else keeps the reader's rows where they are when something above them
+  // changes height, so for that long the tracker does: it follows a row, and takes what shifts it out of the room.
+  // The row is the one at the top of the screen, as it is for a browser: what changes above that row moves it, and
+  // what changes below it does not. A row further down would be moved by a change the reader is looking at, and one
+  // further up would miss a change between it and the screen. The reader moves on, so the row is chosen again every
+  // frame, from the rows the bundle itself chooses among when it keeps one in place.
+  //
+  // Finding those rows goes through the whole conversation, which takes milliseconds. They are found once after rows
+  // are handed over, and again only when the one followed has gone or the top of the screen is in none of them, no
+  // more often than every ROWS_LOOK_MS.
+  function rowsIn(el, again) {
+    var known = rowLists.get(el);
+    var now = performance.now();
+    if (known && (!again || now - known.at < ROWS_LOOK_MS)) return known.rows;
+    var find = rowsFrom.get(el);
+    var rows = [];
+    // Until the bundle has said how, there are none to find, and none are noted as found.
+    if (!find) return rows;
+    try { rows = Array.prototype.slice.call(find()); } catch (e) {}
+    rowLists.set(el, { rows: rows, at: now });
+    return rows;
+  }
+  // The first row to reach below the top of the screen. It is looked for from the row followed so far, since from one
+  // frame to the next it is that row or one beside it.
+  function rowAtTop(el, from) {
+    var rows = rowsIn(el, false);
+    if (from && !from.isConnected) rows = rowsIn(el, true);
+    var i = from ? rows.indexOf(from) : -1;
+    var top = el.getBoundingClientRect().top;
+    // Nothing for a row that has left the page or is not laid out: it reads as no size, and has no place to measure.
+    function boxOf(k) {
+      var box = rows[k].getBoundingClientRect();
+      return box.width || box.height ? box : null;
+    }
+    var at = -1;
+    var past = true;
+    var k;
+    var next;
+    var box = i >= 0 ? boxOf(i) : null;
+    if (box && box.bottom > top) {
+      // Up, for as long as the row before reaches below the top of the screen too.
+      at = i;
+      for (k = i - 1; k >= 0; k--) {
+        next = boxOf(k);
+        if (!next) continue;
+        if (next.bottom <= top) break;
+        at = k;
+        box = next;
+      }
+      past = box.top > top;
+    } else {
+      // Down, to the first row that does.
+      for (k = Math.max(i, 0); k < rows.length && past; k++) {
+        next = boxOf(k);
+        if (!next) continue;
+        at = k;
+        past = next.bottom <= top;
+      }
+    }
+    // Where the top of the screen is in none of the rows that are known, past either end of them or between two,
+    // there may be a row that is not known. The next frame finds it.
+    if (past) rowsIn(el, true);
+    return at < 0 ? null : rows[at];
+  }
+  // A row that has left the page or is not laid out has no place to measure, and neither has any row of a
+  // conversation that is hidden: everything about them reads as nothing, which is not where the row is. The bundle
+  // leaves such rows out when it chooses the one to keep, and one that becomes so afterwards is given up.
+  function lostRow(f) {
+    if (!f.row || !f.row.isConnected || !f.el.clientHeight) return true;
+    var box = f.row.getBoundingClientRect();
+    return !box.width && !box.height;
+  }
+  function rowsTall(el) { return el.scrollHeight - roomOf(el); }
+  // How far the row is from where it is kept. With room that leaves out how far the reader has scrolled since.
+  function awayOf(f) {
+    var el = f.el;
+    var off = f.row.getBoundingClientRect().top - el.getBoundingClientRect().top - f.offset;
+    if (!f.roomy) return off;
+    var scrolled = el.scrollTop - shiftOf(el) - f.from;
+    // Rows that turn out shorter can leave the position past the end, and the browser cuts it back. That is not the
+    // reader, who cannot be scrolling down beyond the end, so it is made up for with the rest.
+    if (scrolled < 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1) {
+      noteShift(el, scrolled);
+      scrolled = 0;
+    }
+    return off + scrolled;
+  }
+  // The first move is the bundle's own, to half a pixel. A position only goes to whole pixels in WebKit, so asking
+  // again for less than one would ask on every frame and move nothing.
+  function putRow(f, least, roomOnly) {
+    var el = f.el;
+    var off = awayOf(f);
+    if (Math.abs(off) < least) off = 0;
+    var rest = off - takeRoom(el, off);
+    if (rest && !roomOnly) {
+      var top = el.scrollTop;
+      el.scrollTop = top + rest;
+      noteShift(el, el.scrollTop - top);
+    }
+    // Only the first two are told of: see reportKept.
+    if (f.moved.length < 2) f.moved.push(Math.round(off));
+    f.left = el.scrollTop;
+    f.tall = rowsTall(el);
+  }
+  // The row at the top of the screen is the one followed from here. It is placed as far from the one followed until
+  // now as it stands from it, so that what that one was still away by is not lost with it.
+  function turnToTop(f) {
+    var el = f.el;
+    // Nothing of a conversation that is hidden has a place.
+    if (!el.clientHeight) return false;
+    var top = el.getBoundingClientRect().top;
+    var lost = lostRow(f);
+    if (!lost) {
+      var box = f.row.getBoundingClientRect();
+      if (box.top <= top && box.bottom > top) return true;
+    }
+    var next = rowAtTop(el, f.row);
+    if (!next) return !lost;
+    if (next === f.row) return true;
+    var place = next.getBoundingClientRect().top;
+    if (lost) {
+      f.offset = place - top;
+      f.from = el.scrollTop - shiftOf(el);
+    } else {
+      f.offset += place - f.row.getBoundingClientRect().top;
+    }
+    f.row = next;
+    return true;
+  }
+  // One look at what is followed. A reader who is scrolling is only followed with room, and only when the rows have
+  // changed height: a position read in the middle of a fling can be a pixel out, and nothing says it is read in step
+  // with where the rows are.
+  function look(f) {
+    var el = f.el;
+    var movedOn = Math.abs(el.scrollTop - f.left) > 1;
+    if (movedOn && !f.roomy) return false;
+    if (!movedOn || rowsTall(el) !== f.tall) putRow(f, movedOn ? 2 : 1, movedOn);
+    else f.left = el.scrollTop;
+    return true;
+  }
+  // Every frame for as long as a conversation is followed, which with room is for as long as the browser's anchoring
+  // is off: nothing else makes up for what shifts the rows then, however long the fling. Once it is back on the
+  // browser moves the position for a shift, and a row still followed would have the same shift taken out of the room
+  // as well. Where the browser does not anchor, and without room, it is for the first frames after rows arrive.
+  function keepUp(f) {
+    var el = f.el;
+    if (f.roomy && ANCHORS && !unanchored.has(el)) return false;
+    if (lostRow(f) && !(f.roomy && turnToTop(f))) return false;
+    if (!look(f)) return false;
+    if (f.roomy) turnToTop(f);
+    return f.frames-- > 0 || (f.roomy && unanchored.has(el));
+  }
+  function followOn(f) {
+    // Rows handed over since are followed in its place.
+    if (followers.get(f.el) !== f) return;
+    if (keepUp(f)) requestAnimationFrame(function () { followOn(f); });
+    else followers.delete(f.el);
+  }
+  // The anchoring has just been switched off. Where no rows handed over are being followed, the row at the top of
+  // the screen is from here.
+  function standIn(el) {
+    if (followers.has(el)) return;
+    var f = { el: el, row: null, offset: 0, from: 0, left: 0, tall: 0, moved: [], frames: 0, roomy: true };
+    if (!turnToTop(f)) return;
+    followers.set(el, f);
+    requestAnimationFrame(function () { followOn(f); });
+  }
+  // The anchoring is about to be switched back on. What has shifted the row since the last frame is still to be made
+  // up for here: the browser only answers for what changes once it has the conversation.
+  function lastLook(el) {
+    var f = followers.get(el);
+    if (f && f.roomy && !lostRow(f)) look(f);
+  }
+  function reportKept(f, after) {
+    if (!f.moved[0] && !after) return;
+    try { window.dispatchEvent(new CustomEvent("agy-rows-kept", { detail: { moved: f.moved[0], again: after } })); } catch (e) {}
+  }
+
   // The bundle puts the rows on screen back where they were when rows above them come or go, once, as it commits the
   // new rows. A table among them only then finds its width, is drawn again with shorter cells, and nothing puts the
   // rows back a second time: where the browser does not anchor after a script moved the position, as WebKit does not,
-  // they were left 350 px off. So the bundle's move is made here, made again once that second drawing is done, and for
-  // a few frames after.
+  // they were left 350 px off. So the bundle's move is made here, made again once that second drawing is done, and
+  // the row is followed after.
   //
   // Where there is room above the first row the move comes out of that and no position is written, so it is made
   // whatever the reader is doing, and how far they have scrolled since is left out of how far the row has shifted.
   // Without room the position is written: a fling still going when the rows arrive is ended first, or it carries the
   // position back, and the frames after stop at the first one in which anything else moved the conversation.
   window.__agyKeepRows = function (el, row, offset) {
-    var frames = KEEP_ROWS_FRAMES;
-    var moved = [];
-    var left = 0;
-    var tall = 0;
     // Whoever calls has handed the move over, having said so first or not.
     rowsHandedOver(el);
-    var roomy = hasRoom(el);
     keptAt = performance.now();
+    // This row is what is followed of the conversation from here, in place of what was, and the rows found in it
+    // before are not the ones it has now.
+    var f = { el: el, row: row, offset: offset, from: 0, left: 0, tall: 0, moved: [], frames: KEEP_ROWS_FRAMES, roomy: hasRoom(el) };
+    followers.set(el, f);
+    rowLists.delete(el);
     holdAnchoring(el);
-    var from = el.scrollTop - shiftOf(el);
-    // A row that has left the page or is not laid out has no place to measure, and neither has any row of a
-    // conversation that is hidden: everything about them reads as nothing, which is not where the row is. The bundle
-    // leaves such rows out when it chooses the one to keep, and one that becomes so afterwards is given up.
-    function lost() {
-      if (!row.isConnected || !el.clientHeight) return true;
-      var box = row.getBoundingClientRect();
-      return !box.width && !box.height;
+    f.from = el.scrollTop - shiftOf(el);
+    // Where the bundle's row has no place there is nothing of its to put back. With room, a row that has one is
+    // followed in its stead.
+    if (lostRow(f)) {
+      if (f.roomy && turnToTop(f)) requestAnimationFrame(function () { followOn(f); });
+      else followers.delete(el);
+      return;
     }
-    function away() {
-      var off = row.getBoundingClientRect().top - el.getBoundingClientRect().top - offset;
-      if (!roomy) return off;
-      var scrolled = el.scrollTop - shiftOf(el) - from;
-      // Rows that turn out shorter can leave the position past the end, and the browser cuts it back. That is not the
-      // reader, who cannot be scrolling down beyond the end, so it is made up for with the rest.
-      if (scrolled < 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1) {
-        noteShift(el, scrolled);
-        scrolled = 0;
-      }
-      return off + scrolled;
-    }
-    function rowsTall() { return el.scrollHeight - roomOf(el); }
-    // The first move is the bundle's own, to half a pixel. A position only goes to whole pixels in WebKit, so asking
-    // again for less than one would ask on every frame and move nothing.
-    function put(least, roomOnly) {
-      var off = away();
-      if (Math.abs(off) < least) off = 0;
-      var rest = off - takeRoom(el, off);
-      if (rest && !roomOnly) {
-        var top = el.scrollTop;
-        el.scrollTop = top + rest;
-        noteShift(el, el.scrollTop - top);
-      }
-      moved.push(Math.round(off));
-      left = el.scrollTop;
-      tall = rowsTall();
-    }
-    function again() {
-      if (lost()) return;
-      var movedOn = Math.abs(el.scrollTop - left) > 1;
-      if (movedOn && !roomy) return;
-      // A reader who is scrolling is only followed with room, and only when the rows have changed height: a position
-      // read in the middle of a fling can be a pixel out, and nothing says it is read in step with where the rows are.
-      if (!movedOn || rowsTall() !== tall) put(movedOn ? 2 : 1, movedOn);
-      else left = el.scrollTop;
-      if (frames-- > 0) requestAnimationFrame(again);
-    }
-    function report(after) {
-      if (!moved[0] && !after) return;
-      try { window.dispatchEvent(new CustomEvent("agy-rows-kept", { detail: { moved: moved[0], again: after } })); } catch (e) {}
-    }
-    if (lost()) return;
-    var first = away();
+    var first = awayOf(f);
     if (Math.abs(first - roomFor(el, first)) >= KEEP_ROWS_STOP_MIN) stopFling(el, false);
-    put(0.5, false);
+    putRow(f, 0.5, false);
     // No input reaches the page before a microtask, so whatever moved the row since is not the reader.
     Promise.resolve().then(function () {
-      // A row replaced or hidden before the commit is over has no place left to measure.
-      if (lost()) {
-        report("gone");
-        return;
+      var on = true;
+      if (lostRow(f)) {
+        // A row replaced or hidden before the commit is over has no place left to measure.
+        reportKept(f, "gone");
+        on = f.roomy && turnToTop(f);
+      } else if (!f.roomy && Math.abs(el.scrollTop - f.left) > 1) {
+        // Something else in the same commit has moved the conversation since, as the bundle's navigator does when it
+        // jumps to a step: the position is that script's now. With room the row is not put back by the position.
+        if (f.moved[0]) reportKept(f, "taken");
+        on = false;
+      } else {
+        putRow(f, 1, false);
+        reportKept(f, f.moved[1]);
       }
-      // Something else in the same commit has moved the conversation since, as the bundle's navigator does when it
-      // jumps to a step: the position is that script's now. With room the row is not put back by the position.
-      if (!roomy && Math.abs(el.scrollTop - left) > 1) {
-        if (moved[0]) report("taken");
-        return;
-      }
-      put(1, false);
-      report(moved[1]);
-      requestAnimationFrame(again);
+      if (on) requestAnimationFrame(function () { followOn(f); });
+      else followers.delete(el);
     });
   };
 

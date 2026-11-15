@@ -25,7 +25,7 @@ func rowsKeptPatch(t *testing.T) Patch {
 
 func TestRowsKeptPatchHandsTheMoveToTheTracker(t *testing.T) {
 	got := applyOnly(t, "paging-keeps-rows-after-render", v232RowsKept, Options{})
-	want := `componentDidUpdate(a,b,c){a=this.props.viewportRef.current;c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`
+	want := `componentDidUpdate(a,b,c){a=this.props.viewportRef.current;c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a,this.props.getAnchorCandidates),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`
 	if !strings.Contains(got, want) {
 		t.Errorf("got\n%s\nwant it to contain\n%s", got, want)
 	}
@@ -69,7 +69,7 @@ func TestRowsKeptPatchReportsAnUnknownForm(t *testing.T) {
 
 // Runs the patched method. With the tracker it hands over the row and where it was, without it the bundle's own move
 // is made, and an update that kept no row does neither. The tracker is told of every drawing, where it has a hook to
-// be told by.
+// be told by, and with it how the component finds the rows it chooses among.
 func TestRowsKeptPatchRuns(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -84,7 +84,8 @@ const Kept = new Function("B", process.argv[1] + "return n_c;")(B);
 const rect = top => ({ getBoundingClientRect: () => ({ top }) });
 const viewport = Object.assign(rect(100), { scrollTop: 500 });
 const kept = new Kept();
-kept.props = { viewportRef: { current: viewport } };
+const rowsOf = () => [];
+kept.props = { viewportRef: { current: viewport }, getAnchorCandidates: rowsOf };
 const gone = Object.assign(rect(0), { isConnected: false });
 const row = Object.assign(rect(2460), { isConnected: true });
 
@@ -109,10 +110,10 @@ assert.strictEqual(calls.length, 1, "nothing to hand over without a row");
 
 // Every drawing is told to a tracker that asks to be, before the row is handed over and when there is none to hand.
 const drawn = [];
-window.__agyRowsDrawn = el => drawn.push([el, calls.length]);
+window.__agyRowsDrawn = (el, rows) => drawn.push([el, calls.length, rows]);
 kept.componentDidUpdate({}, null, null);
 kept.componentDidUpdate({}, null, [{ element: row, offset: 60 }]);
-assert.deepStrictEqual(drawn, [[viewport, 1], [viewport, 1]]);
+assert.deepStrictEqual(drawn, [[viewport, 1, rowsOf], [viewport, 1, rowsOf]]);
 assert.strictEqual(calls.length, 2);
 `
 	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {
@@ -188,6 +189,22 @@ const kept = () => events.filter(e => e.type === "agy-rows-kept").map(e => e.det
     frame();
     assert.strictEqual(el.scrollTop, 4271, "nothing is put back under a reader who moved");
     assert.strictEqual(frames.length, 0, "and nothing goes on checking");
+  }
+
+  // Without room a row handed over a second time is put where the bundle measured it that time.
+  {
+    const { el, row } = conversation();
+    row.y += 1000;
+    window.__agyKeepRows(el, row, 60);
+    await microtasks();
+    frame();
+    assert.strictEqual(el.scrollTop, 1300);
+    row.y += 30;
+    row.y += 500;
+    window.__agyKeepRows(el, row, 90);
+    await microtasks();
+    assert.strictEqual(el.scrollTop, 1800, "by what the second rows added, and no more");
+    drain();
   }
 
   // A browser that anchors the rows itself has done all of it already.
@@ -506,10 +523,13 @@ Object.defineProperty(global, "performance", { value: { now: () => now } });
 global.matchMedia = () => ({ matches: true });
 const ios = !process.argv[2];
 global.navigator = { userAgent: process.argv[2] || "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)", platform: ios ? "iPhone" : "Linux", maxTouchPoints: 5 };
+// The browser anchors rows itself where its anchoring is left on, unless the case is for one that does not.
+const anchors = !process.env.NO_ANCHORING;
+if (anchors) global.CSS = { supports: property => property === "overflow-anchor" };
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
-// Every conversation is laid out at the start of a frame, and the page hears of a position that was cut back then or
-// since the last one.
+// Every conversation is laid out at the start of a frame, and the page hears of a position that the browser moved then
+// or since the last one.
 const pages = [];
 const frame = () => { pages.forEach(layout => layout(true)); const due = frames; frames = []; due.forEach(fn => fn()); };
 // Time passes a frame at a time, as it does for the page.
@@ -519,7 +539,7 @@ const named = type => events.filter(e => e.type === type).map(e => e.detail);
 const ROOM = 200000;
 
 // A viewport 100 px down the page and 666 px tall. Its rows are 9000 px tall and start below the room, and the row the
-// bundle keeps in place is row.y down them.
+// bundle keeps in place is row.y down them. A case can have something that is not a row laid out under them.
 const conversation = () => {
   const older = { disabled: false, getAttribute: () => String(older.disabled) };
   const names = { "padding-top": "paddingTop", "overflow-anchor": "overflowAnchor" };
@@ -531,14 +551,14 @@ const conversation = () => {
   // and the page hears of one that ends up somewhere it was not. A write that lands where it was asked is not told
   // to the page here.
   let cut = false;
-  const end = () => Math.max(0, el.laid + el.rows - el.screen);
+  const end = () => Math.max(0, el.laid + el.rows + el.below - el.screen);
   const layout = tell => {
     if (el.top > end()) { el.top = end(); cut = true; }
     if (tell && cut) { cut = false; fire("scroll", { target: el }); }
   };
   pages.push(layout);
   const el = {
-    top: 300, rows: 9000, screen: 666, hidden: false, isConnected: true, older, writes: 0,
+    top: 300, rows: 9000, below: 0, screen: 666, hidden: false, isConnected: true, older, writes: 0,
     style: { overflowY: "" },
     matches: () => true, closest: () => el, querySelector: () => older,
     getBoundingClientRect: () => ({ top: 100 }),
@@ -550,7 +570,7 @@ const conversation = () => {
     get laid() { return el.laidOut ? el.room : 0; },
     // A conversation that is hidden has no size, and reads as at its top.
     get clientHeight() { return el.hidden ? 0 : el.screen; },
-    get scrollHeight() { return el.hidden ? 0 : Math.max(el.screen, el.laid + el.rows); },
+    get scrollHeight() { return el.hidden ? 0 : Math.max(el.screen, el.laid + el.rows + el.below); },
     get scrollTop() { if (el.hidden) return 0; layout(false); return el.top; },
     set scrollTop(v) {
       layout(false);
@@ -564,9 +584,10 @@ const conversation = () => {
   const row = {
     isConnected: true, y: 360, laidOut: true,
     getBoundingClientRect: () => {
-      if (el.hidden || !row.laidOut) return { top: 0, width: 0, height: 0 };
+      if (el.hidden || !row.laidOut) return { top: 0, bottom: 0, width: 0, height: 0 };
       layout(false);
-      return { top: 100 + el.laid + row.y - el.top, width: 400, height: 80 };
+      const top = 100 + el.laid + row.y - el.top;
+      return { top, bottom: top + 80, width: 400, height: 80 };
     },
   };
   // Where the row is on the screen, which is what the reader sees.
@@ -576,7 +597,58 @@ const conversation = () => {
   const scrollBy = d => { el.top += d; fire("scroll", { target: el }); };
   const flick = () => { fire("touchstart", onEl([{}])); fire("touchmove", onEl([{}])); fire("touchend", onEl([])); };
   const rowsArrive = (height, offset) => { el.rows += height; row.y += height; window.__agyKeepRows(el, row, offset); };
-  return { el, row, seen, onEl, scrollBy, flick, rowsArrive };
+  // Something above the reader's row changes height with nothing handed over: an image loads, a table is drawn again.
+  // A browser whose anchoring is on moves the position by as much, and the page hears of it a frame later.
+  const grow = by => {
+    el.rows += by;
+    row.y += by;
+    if (anchors && el.anchoring === "auto") { el.top += by; cut = true; }
+  };
+
+  // The rows the bundle chooses among, for the cases that have them: one after the other from the top of the rows,
+  // so one that changes height moves every row after it. el.looks counts how often the page asks for them.
+  const list = [];
+  el.looks = 0;
+  const rowsOf = () => { el.looks++; return list.slice(); };
+  const onPage = r => r.laidOut && r.isConnected;
+  const place = () => { let y = 0; for (const r of list) { r.y = y; if (onPage(r)) y += r.h; } el.rows = y; };
+  const makeRow = h => {
+    const r = { h, y: 0, isConnected: true, laidOut: true,
+      getBoundingClientRect: () => {
+        if (el.hidden || !onPage(r)) return { top: 0, bottom: 0, width: 0, height: 0 };
+        layout(false);
+        const top = 100 + el.laid + r.y - el.top;
+        return { top, bottom: top + r.h, width: 400, height: r.h };
+      } };
+    return r;
+  };
+  const withRows = (n, h) => { for (let k = 0; k < n; k++) list.push(makeRow(h)); place(); };
+  // The first row to reach below the top of the screen, which is what the bundle keeps and what a browser anchors to.
+  const atTop = () => { layout(false); return list.find(r => onPage(r) && el.laid + r.y + r.h > el.top) || null; };
+  const seenOf = r => r.getBoundingClientRect().top - 100;
+  // A row changes height, or goes from the page. A browser whose anchoring is on keeps the row at the top of the
+  // screen where it is, which moves the position when the change is above that row.
+  const change = (r, how) => {
+    const anchor = atTop();
+    const before = anchor ? seenOf(anchor) : null;
+    how(r);
+    place();
+    if (anchors && el.anchoring === "auto" && anchor && onPage(anchor) && seenOf(anchor) !== before) { el.top += seenOf(anchor) - before; cut = true; }
+  };
+  const resize = (r, by) => change(r, x => { x.h += by; });
+  // Older rows arrive above, and the bundle hands over the row it kept, as its patched component does.
+  const prepend = (n, h) => {
+    const kept = atTop();
+    const offset = seenOf(kept);
+    const added = [];
+    for (let k = 0; k < n; k++) added.push(makeRow(h));
+    list.unshift(...added);
+    place();
+    window.__agyRowsDrawn(el, rowsOf);
+    window.__agyKeepRows(el, kept, offset);
+    return added;
+  };
+  return { el, row, seen, onEl, scrollBy, flick, rowsArrive, grow, list, rowsOf, withRows, atTop, seenOf, change, resize, prepend, place };
 };
 // The page is told that rows were taken out of a conversation, as many elements as it says.
 const rowsRemoved = (el, elements) => observers.forEach(fn => fn([{ target: { closest: () => el }, removedNodes: [{ nodeType: 1, textContent: "", getElementsByTagName: () => ({ length: elements }), matches: () => false, querySelectorAll: () => [] }] }]));
@@ -590,6 +662,22 @@ const open = () => {
   c.el.writes = 0;
   return c;
 };
+// The same with the bundle's rows known to the page: thirty of 300 px, and the reader 1,610 px down them, a little
+// way down the sixth.
+const openRows = () => {
+  const c = conversation();
+  c.withRows(30, 300);
+  c.el.top = 1610;
+  window.__agyRowsDrawn(c.el, c.rowsOf);
+  c.scrollBy(0);
+  pass(600);
+  events.length = 0;
+  c.el.writes = 0;
+  c.el.looks = 0;
+  return c;
+};
+// The timers that are due, with no frame drawn first.
+const timersDue = () => { const due = timers.filter(x => x.at <= now); timers = timers.filter(x => x.at > now); due.forEach(x => x.fn()); };
 `
 
 // On iOS the conversation keeps room above its first row, and rows that arrive there take their height out of it, so
@@ -607,7 +695,585 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	const android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36"
+	// An iPhone whose browser does not anchor rows itself, which is every one before scroll anchoring reached iOS.
+	const noAnchoring = "an iPhone that does not anchor"
 	for _, c := range []struct{ name, ua, js string }{
+		// Rows are followed after they arrive for as long as the browser's anchoring is off, and not once it is back on:
+		// from then the browser moves the position for whatever shifts them, and a row still followed would have the
+		// same shift taken out of the room as well.
+		{"a late change with the anchoring back on is the browser's", "", `
+  const { el, seen, scrollBy, rowsArrive, grow } = open();
+  now += 5000;
+  scrollBy(el.room + 2200 - el.top);
+  pass(1000);
+  // The reader is still, 2,200 px from the first row, and the rows the bundle asks for are let in.
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  pass(304);
+  const at = seen();
+  rowsArrive(3000, at);
+  await microtasks();
+  assert.strictEqual(el.room, ROOM - 3000);
+  // The conversation comes to rest a few frames later, with the rows in.
+  pass(160);
+  assert.strictEqual(el.anchoring, "auto");
+  grow(300);
+  for (let k = 0; k < 30; k++) frame();
+  assert.strictEqual(el.room, ROOM - 3000, "what the browser moved the position for is not taken out of the room too");
+  assert.strictEqual(seen(), at);
+  assert.strictEqual(frames.length, 0, "and the rows are no longer followed");`},
+
+		{"a late change with the anchoring off is made up for however late", "", `
+  const { el, seen, scrollBy, flick, rowsArrive, grow } = open();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  let at = seen();
+  rowsArrive(3000, at);
+  await microtasks();
+  // The fling goes on for a second, and an image among the new rows loads 40 frames after they arrived.
+  for (let k = 0; k < 40; k++) { now += 16; scrollBy(-5); frame(); }
+  assert.strictEqual(el.anchoring, "none");
+  at = seen();
+  grow(300);
+  frame();
+  frame();
+  assert.strictEqual(seen(), at, "the room makes up for it while nothing else would");
+  assert.strictEqual(el.room, ROOM - 3300);
+  assert.strictEqual(el.writes, 0);
+  // Rows handed over after these take the following over, and the check for the earlier ones ends.
+  rowsArrive(1000, seen());
+  await microtasks();
+  for (let k = 0; k < 40; k++) { now += 16; scrollBy(-5); frame(); }
+  for (let k = 0; k < 3; k++) frame();
+  assert.strictEqual(frames.length, 1, "one check goes on, for the rows handed over last");
+  pass(600);
+  assert.strictEqual(el.anchoring, "auto");
+  assert.strictEqual(frames.length, 0, "and it ends when the browser's anchoring is back on");`},
+
+		// What is followed is the row at the top of the screen, chosen again as the reader moves, and not the row that
+		// was handed over: that one stands for what is above the screen only while it is at the top of it.
+		{"a change below the top of the screen, above the rows handed over", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const kept = atTop();
+  assert.strictEqual(kept, list[5]);
+  const added = prepend(10, 300);
+  await microtasks();
+  assert.strictEqual(seenOf(kept), -70, "the row handed over is where it was");
+  assert.strictEqual(el.room, ROOM - 3000);
+  // The reader goes on up, 1,500 px into the rows that arrived.
+  for (let k = 0; k < 25; k++) { now += 16; scrollBy(-60); frame(); }
+  assert.strictEqual(el.anchoring, "none");
+  const top = atTop();
+  assert.strictEqual(top, list[10]);
+  const at = seenOf(top);
+  // A row under the top of the screen changes: what is above it stays where it is, as with a browser's anchoring.
+  resize(list[12], 200);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "the rows at the top of the screen have not moved");
+  assert.strictEqual(el.room, ROOM - 3000, "and nothing was taken from the room for it");
+  assert.strictEqual(seenOf(kept), -70 + 1500 + 200, "the row handed over has, and is not what is followed");
+  // The row at the top edge itself: its top stays.
+  resize(top, 60);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at);
+  assert.strictEqual(el.room, ROOM - 3000);
+  // A row above the screen: that is made up for.
+  resize(list[3], -90);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "a change above the screen is made up for");
+  assert.strictEqual(el.room, ROOM - 3000 + 90);
+  assert.strictEqual(el.writes, 0, "with no position written");
+  assert.strictEqual(added.length, 10);`},
+
+		{"a reader who goes far below the rows handed over", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const kept = atTop();
+  prepend(10, 300);
+  await microtasks();
+  // Down 3,000 px in the first frames after the rows arrived.
+  for (let k = 0; k < 6; k++) { now += 16; scrollBy(500); frame(); }
+  assert.strictEqual(el.anchoring, "none");
+  assert.strictEqual(seenOf(kept), -70 - 3000);
+  const top = atTop();
+  assert.strictEqual(top, list[25]);
+  const at = seenOf(top);
+  // Something between the rows handed over and the screen changes, which those rows do not show.
+  resize(list[20], 143);
+  assert.strictEqual(seenOf(kept), -70 - 3000, "the rows handed over do not show it");
+  assert.strictEqual(seenOf(top), at + 143);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "a change between the rows handed over and the screen is made up for");
+  assert.strictEqual(el.room, ROOM - 3000 - 143);
+  // And while the reader is moving.
+  resize(list[18], -80);
+  now += 16; scrollBy(60); frame();
+  assert.strictEqual(seenOf(top), at - 60, "and so is one while the reader moves");
+  assert.strictEqual(el.room, ROOM - 3000 - 143 + 80);
+  assert.strictEqual(el.writes, 0);`},
+
+		// From when the anchoring is switched off there is nothing but the tracker to keep the rows where they are, so
+		// it follows the row at the top of the screen from then, before any rows have been handed over.
+		{"a change while rows that were let in are still to come", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  flick();
+  scrollBy(-40);
+  now += 16; frame();
+  assert.strictEqual(el.looks, 0, "nothing is followed while the browser anchors");
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  assert.strictEqual(el.anchoring, "none");
+  assert.strictEqual(el.looks, 1, "the row at the top of the screen is, from when it does not");
+  const top = atTop();
+  const at = seenOf(top);
+  now += 16; frame();
+  resize(list[2], 100);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "a change above the screen is made up for before the rows arrive");
+  assert.strictEqual(el.room, ROOM - 100);
+  // The rows arrive and are taken from the room as they always are.
+  now += 200;
+  prepend(10, 300);
+  await microtasks();
+  assert.strictEqual(seenOf(top), at);
+  assert.strictEqual(el.room, ROOM - 100 - 3000);
+  // At rest the browser has the conversation back, and nothing is followed any more.
+  pass(600);
+  assert.strictEqual(el.anchoring, "auto");
+  const room = el.room;
+  resize(list[2], 50);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "the browser's doing");
+  assert.strictEqual(el.room, room, "with nothing more taken from the room");
+  // The next rows let in switch it off again, and the row at the top is followed again.
+  pass(600);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  assert.strictEqual(el.anchoring, "none");
+  now += 16; frame();
+  resize(list[2], -50);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "followed again the next time the anchoring goes off");
+  assert.strictEqual(el.room, room + 50);`},
+
+		// The rows that have just arrived are among the rows known from the frame they arrive in.
+		{"a reader among rows that have just arrived", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  now += 16;
+  prepend(10, 300);
+  await microtasks();
+  // Up 2,400 px in eight frames, to where only rows that have just arrived are on the screen.
+  for (let k = 0; k < 8; k++) { now += 16; scrollBy(-300); frame(); }
+  const top = atTop();
+  assert.strictEqual(top, list[7]);
+  const at = seenOf(top);
+  // One of them changes, under the top of the screen and above the first row there was before.
+  resize(list[9], 150);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "the rows at the top of the screen have not moved");
+  assert.strictEqual(el.room, ROOM - 3000);`},
+
+		// Rows can come without being handed over: at the end as a reply is written, and above for a reader who
+		// follows the end. A reader who gets past either end of the rows that are known has them looked for again.
+		{"a reader past the ends of the rows that are known", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, withRows, resize, change, place } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  assert.strictEqual(el.looks, 1);
+  // Five rows are drawn above with nothing handed over. The row at the top of the screen is followed all the same.
+  const top = atTop();
+  const at = seenOf(top);
+  const older = [];
+  change(null, () => { for (let k = 0; k < 5; k++) { withRows(1, 300); older.push(list.pop()); } list.unshift(...older); });
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "rows drawn above are taken from the room without being handed over");
+  assert.strictEqual(el.room, ROOM - 1500);
+  // The reader goes up among them, which takes longer than the quarter of a second between looks.
+  for (let k = 0; k < 25; k++) { now += 16; scrollBy(-90); frame(); }
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const among = atTop();
+  assert.strictEqual(list.indexOf(among), 2, "a row that was not known when the rows were looked for");
+  const from = seenOf(among);
+  assert.strictEqual(el.looks >= 2, true, "the rows were looked for again above the first one known");
+  resize(list[4], 110);
+  now += 16; frame();
+  assert.strictEqual(seenOf(among), from, "a change under the top of the screen moves nothing there");
+  assert.strictEqual(el.room, ROOM - 1500);
+  // Six rows are written at the end, and the reader goes down among those.
+  withRows(6, 300);
+  const end = list.length - 6;
+  for (let k = 0; k < 50; k++) { now += 16; scrollBy(Math.min(400, el.laid + list[end + 2].y + 40 - el.top)); frame(); }
+  assert.strictEqual(list.indexOf(atTop()), end + 2);
+  assert.strictEqual(el.anchoring, "none");
+  const low = seenOf(list[end + 2]);
+  const room = el.room;
+  resize(list[end + 1], 90);
+  now += 16; frame();
+  assert.strictEqual(seenOf(list[end + 2]), low, "a change among rows that were written since is made up for");
+  assert.strictEqual(el.room, room - 90);`},
+
+		{"a row handed over that loses its place before the commit is over", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize, change } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const kept = atTop();
+  prepend(10, 300);
+  change(kept, x => { x.laidOut = false; });
+  await microtasks();
+  assert.deepStrictEqual(named("agy-rows-kept").pop(), { moved: 3000, again: "gone" });
+  const top = atTop();
+  const at = seenOf(top);
+  now += 16; frame();
+  resize(list[3], 80);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "the row at the top of the screen is followed from there");
+  assert.strictEqual(el.writes, 0);`},
+
+		{"a reader stopped at the first row is followed from there", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, resize } = openRows();
+  flick();
+  scrollBy(-1700);
+  assert.strictEqual(el.room, el.top, "the room is given up as far as the reader");
+  assert.strictEqual(el.anchoring, "none");
+  const top = atTop();
+  assert.strictEqual(top, list[0]);
+  now += 16; frame();
+  // Nothing is above the first row, and a change to it or below it leaves it where it is.
+  resize(list[0], 70);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), 0);
+  assert.strictEqual(el.room, el.top);`},
+
+		// The anchoring comes back on at rest. A change that landed since the last frame is still the tracker's: it
+		// would stop following because the anchoring is on, and the browser only answers for what comes after.
+		{"a change in the frame the anchoring comes back on", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  prepend(10, 300);
+  await microtasks();
+  const top = atTop();
+  const at = seenOf(top);
+  for (let k = 0; k < 10; k++) { now += 16; frame(); }
+  assert.strictEqual(el.anchoring, "none");
+  // A row above changes, and the rest comes due before the next frame is drawn.
+  resize(list[4], 90);
+  now += 600;
+  timersDue();
+  assert.strictEqual(el.anchoring, "auto", "the conversation is at rest, and the browser has it back");
+  assert.strictEqual(seenOf(top), at, "what changed before that is made up for");
+  frame();
+  assert.strictEqual(seenOf(top), at);
+  resize(list[4], 30);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "and what changes after is the browser's, once");`},
+
+		// Finding the bundle's rows goes through the whole conversation, so it is done once for each batch and not in
+		// every frame, and not at all for a reader who stays within the row that was handed over.
+		{"the bundle's rows are looked for once for each batch", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize, change } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  assert.strictEqual(el.looks, 1, "the rows are looked for when the anchoring goes off");
+  for (let k = 0; k < 5; k++) { now += 16; scrollBy(10); frame(); }
+  assert.strictEqual(el.looks, 1, "and not again for a reader who stays within the row at the top");
+  now += 100;
+  prepend(10, 300);
+  await microtasks();
+  for (let k = 0; k < 5; k++) { now += 16; scrollBy(10); frame(); }
+  assert.strictEqual(el.looks, 1, "nor for the rows handed over while the reader is still within their row");
+  for (let k = 0; k < 40; k++) { now += 16; scrollBy(-60); frame(); }
+  assert.strictEqual(el.looks, 2, "one look for a batch, for a reader who crosses many rows");
+  assert.strictEqual(el.anchoring, "none");
+  // A row that has gone from the page is not in what the page is told next, and the page asks.
+  const top = atTop();
+  change(top, x => { x.isConnected = false; });
+  list.splice(list.indexOf(top), 1);
+  now += 300; frame();
+  assert.strictEqual(el.looks, 3, "the rows are looked for again when the one followed has gone");
+  const next = atTop();
+  const from = seenOf(next);
+  resize(list[1], 40);
+  now += 16; frame();
+  assert.strictEqual(seenOf(next), from, "and the row now at the top is followed");
+  // A reader who stays past the last row, with something that is not a row filling the screen: the rows are looked
+  // for again in case there are more, but not in every frame.
+  el.below = 2000;
+  const looked = el.looks;
+  for (let k = 0; k < 75; k++) { now += 16; scrollBy(400); frame(); }
+  assert.strictEqual(atTop(), null, "no row reaches the screen");
+  assert.strictEqual(el.anchoring, "none");
+  assert.strictEqual(el.looks > looked, true, "looked for again past the last row known");
+  assert.strictEqual(el.looks <= looked + 6, true, "but not more often than every quarter of a second: " + (el.looks - looked));`},
+
+		{"a conversation that is hidden is not looked through", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  prepend(10, 300);
+  await microtasks();
+  for (let k = 0; k < 10; k++) { now += 16; scrollBy(-60); frame(); }
+  const looked = el.looks;
+  const room = el.room;
+  el.hidden = true;
+  // The bundle goes on asking about rows for it, every tenth of a second.
+  for (let k = 0; k < 20; k++) { now += 100; window.__agyDeferGrow(); frame(); }
+  assert.strictEqual(el.looks, looked, "its rows are not looked for");
+  assert.strictEqual(el.room, room, "and nothing is made of what they read as");`},
+
+		// What is followed is forgotten when it is given up, so that the next time the anchoring goes off the row at the
+		// top of the screen is followed again.
+		{"a row handed over that has no place, before the bundle's rows are known", "", `
+  for (const when of ["as it is handed over", "before the commit is over"]) {
+    const c = conversation();
+    c.withRows(30, 300);
+    c.el.top = 1610;
+    window.__agyRowsDrawn(c.el);
+    c.scrollBy(0);
+    pass(600);
+    const { el, list, seenOf, atTop, scrollBy, flick, resize, rowsOf } = c;
+    assert.strictEqual(el.room, ROOM);
+    const lost = { isConnected: when !== "as it is handed over", laidOut: true, getBoundingClientRect: () => (lost.isConnected ? { top: 150, bottom: 450, width: 400, height: 300 } : { top: 0, bottom: 0, width: 0, height: 0 }) };
+    flick();
+    scrollBy(-40);
+    window.__agyKeepRows(el, lost, 50);
+    lost.isConnected = false;
+    await microtasks();
+    for (let k = 0; k < 3; k++) { now += 16; frame(); }
+    // The conversation comes to rest, the bundle says where its rows are, and rows are let in again.
+    pass(900);
+    assert.strictEqual(el.anchoring, "auto", when);
+    window.__agyRowsDrawn(el, rowsOf);
+    now += 6000;
+    assert.strictEqual(window.__agyDeferGrow(), false, when);
+    assert.strictEqual(el.anchoring, "none", when);
+    const top = atTop();
+    const at = seenOf(top);
+    const room = el.room;
+    now += 16; frame();
+    resize(list[2], 64);
+    now += 16; frame();
+    assert.strictEqual(seenOf(top), at, "the row at the top of the screen is followed, " + when);
+    assert.strictEqual(el.room, room - 64, when);
+    pass(6000);
+  }`},
+
+		{"a row that loses its place as the conversation comes to rest", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, change } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const kept = atTop();
+  prepend(10, 300);
+  await microtasks();
+  for (let k = 0; k < 10; k++) { now += 16; frame(); }
+  const room = el.room;
+  const top = el.top;
+  // The row that is followed stops being laid out, and the rest comes due before the next frame is drawn.
+  kept.laidOut = false;
+  now += 600;
+  timersDue();
+  assert.strictEqual(el.anchoring, "auto");
+  assert.strictEqual(el.room, room, "a row that reads as nothing is not measured in the last look");
+  assert.strictEqual(el.top, top);
+  assert.strictEqual(el.writes, 0);`},
+
+		{"rows that have no place are passed over", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize, change } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  prepend(10, 300);
+  await microtasks();
+  // Two rows above the reader are not laid out, as a collapsed part of a turn is not.
+  change(list[13], x => { x.laidOut = false; });
+  change(list[12], x => { x.laidOut = false; });
+  now += 16; frame();
+  const room = el.room;
+  assert.strictEqual(room, ROOM - 3000 + 600, "their height is given back to the room");
+  for (let k = 0; k < 20; k++) { now += 16; scrollBy(-60); frame(); }
+  const top = atTop();
+  assert.strictEqual(top, list[9], "the reader is past them");
+  const at = seenOf(top);
+  resize(list[5], 77);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at);
+  assert.strictEqual(el.room, room - 77);
+  // The row at the top is the one followed, and not the last one before the rows that have no place.
+  resize(list[11], 55);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "a change under the top of the screen moves nothing there");
+  assert.strictEqual(el.room, room - 77);
+  // The row that is followed stops being laid out: another is, from where it stands, and nothing is made of it.
+  change(top, x => { x.laidOut = false; });
+  now += 16; frame();
+  const next = atTop();
+  const from = seenOf(next);
+  for (let k = 0; k < 5; k++) { now += 16; frame(); }
+  assert.strictEqual(seenOf(next), from, "no drift from a row that could not be measured");
+  resize(list[5], -30);
+  now += 16; frame();
+  assert.strictEqual(seenOf(next), from, "and the next row is followed");`},
+
+		{"a row handed over that has no place, with the bundle's rows known", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, resize, rowsOf } = openRows();
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  now += 100;
+  const gone = { isConnected: false, getBoundingClientRect: () => ({ top: 0, bottom: 0, width: 0, height: 0 }) };
+  window.__agyRowsDrawn(el, rowsOf);
+  window.__agyKeepRows(el, gone, 0);
+  await microtasks();
+  const top = atTop();
+  const at = seenOf(top);
+  now += 16; frame();
+  resize(list[1], 120);
+  now += 16; frame();
+  assert.strictEqual(seenOf(top), at, "the row at the top of the screen is followed in its stead");
+  assert.strictEqual(el.room, ROOM - 120);`},
+
+		{"where the browser does not anchor rows the first frames are followed at rest too", noAnchoring, `
+  const { el, seen, scrollBy, rowsArrive, grow } = open();
+  now += 5000;
+  scrollBy(el.room + 2200 - el.top);
+  pass(1000);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  pass(304);
+  const at = seen();
+  rowsArrive(3000, at);
+  await microtasks();
+  pass(160);
+  assert.strictEqual(el.anchoring, "auto");
+  grow(300);
+  frame();
+  frame();
+  assert.strictEqual(seen(), at, "a shift in the frames after the rows arrived is made up for, as nothing else would");
+  assert.strictEqual(el.room, ROOM - 3300);`},
+
+		// The room given up to a reader who got into it moves the rows that are being followed, and is not taken back
+		// for them.
+		{"rows followed while the reader reaches the room", "", `
+  const { el, seen, scrollBy, flick, rowsArrive } = open();
+  flick();
+  scrollBy(el.room + 100 - el.top);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  rowsArrive(500, seen());
+  await microtasks();
+  now += 600;
+  scrollBy(-700);
+  assert.strictEqual(el.room, el.top, "the reader is 100 px into the room, and it is given up to them");
+  frame();
+  frame();
+  assert.strictEqual(el.room, el.top, "which the rows being followed do not take back");`},
+
+		// With no room left a shift during a fling has nowhere to come from, and the position is not written for it under
+		// a reader who is moving.
+		{"a shift with the room used up and the reader moving", "", `
+  const { el, row, seen, scrollBy, flick, rowsArrive } = open();
+  flick();
+  scrollBy(-40);
+  rowsArrive(ROOM, seen());
+  await microtasks();
+  assert.strictEqual(el.room, 0);
+  assert.strictEqual(el.writes, 0);
+  scrollBy(-50);
+  frame();
+  el.rows += 300;
+  row.y += 300;
+  scrollBy(-50);
+  frame();
+  assert.strictEqual(el.writes, 0, "nothing is written while the reader scrolls");`},
+
+		// Rows the bundle is told to hold back leave the browser's anchoring on, which keeps the reader's rows in place
+		// if something else above them changes meanwhile. It goes off when they are let through.
+		{"rows held back leave the browser's anchoring on", "", `
+  const c = open();
+  fire("touchstart", c.onEl([{}]));
+  fire("touchmove", c.onEl([{}]));
+  c.scrollBy(-40);
+  assert.strictEqual(window.__agyDeferTrim(), true, "rows are not dropped under a finger");
+  assert.strictEqual(c.el.anchoring, "auto", "and the anchoring stays on while they wait");
+  fire("touchend", c.onEl([]));
+  pass(1000);
+  assert.strictEqual(window.__agyDeferTrim(), false);
+  assert.strictEqual(c.el.anchoring, "none", "it goes off when they are let go");
+  // The same for rows to be added where there is no room for them yet.
+  const g = conversation();
+  g.scrollBy(0);
+  fire("touchstart", g.onEl([{}]));
+  fire("touchmove", g.onEl([{}]));
+  g.scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), true);
+  assert.strictEqual(g.el.anchoring, "auto");
+  fire("touchend", g.onEl([]));`},
+
+		// The write that makes the room waits for a conversation that is really at rest: no finger on it, however long
+		// it has been still, no pointer held, and no fling being ended.
+		{"the room's write waits for a conversation at rest", "", `
+  const c = conversation();
+  window.__agyRowsDrawn(c.el);
+  fire("touchstart", c.onEl([{}]));
+  c.scrollBy(0);
+  pass(12000);
+  assert.strictEqual(c.el.room, 0, "nothing is written under a finger, however long it has been still");
+  assert.strictEqual(c.el.writes, 0);
+  fire("touchend", c.onEl([]));
+  pass(600);
+  assert.strictEqual(c.el.room, ROOM, "the room is made once the finger is up");
+  // A finger that has just come down is no rest either: the browser's anchoring stays off under it.
+  c.flick();
+  c.scrollBy(-40);
+  c.rowsArrive(1000, c.seen());
+  await microtasks();
+  fire("touchstart", c.onEl([{}]));
+  pass(2000);
+  assert.strictEqual(c.el.anchoring, "none", "nothing is taken for rest with a finger down");
+  fire("touchend", c.onEl([]));
+  pass(600);
+  assert.strictEqual(c.el.anchoring, "auto");
+
+  const p = conversation();
+  p.scrollBy(0);
+  fire("pointerdown", p.onEl());
+  pass(2000);
+  assert.strictEqual(p.el.room, 0, "nor while a pointer is held on the conversation");
+  fire("pointerup", {});
+  pass(600);
+  assert.strictEqual(p.el.room, ROOM);
+
+  // A jump nobody asked for is found when rows are taken out, with no scroll event to say the conversation moved.
+  // The reader is put back and the fling ended, which takes the overflow away for two frames.
+  const s = conversation();
+  s.scrollBy(0);
+  pass(368);
+  events.length = 0;
+  s.el.top += 6000;
+  rowsRemoved(s.el, 10);
+  pass(32);
+  assert.strictEqual(named("agy-fling-hold").length, 1);
+  assert.strictEqual(s.el.top, 300);
+  assert.strictEqual(s.el.room, 0, "nor while a fling is being ended");
+  pass(600);
+  assert.strictEqual(s.el.room, ROOM);
+  assert.strictEqual(s.el.top, ROOM + 300);
+  // The hold is still on, and goes on from where the reader's rows now are.
+  s.el.top = ROOM - 4000;
+  fire("scroll", { target: s.el });
+  assert.strictEqual(s.el.top, ROOM + 300, "a hold made before the room is kept at the same rows after it");
+  assert.strictEqual(s.el.room, ROOM);`},
+
 		// Another phone's fling moves with the position, so it has no room and the position is written as before.
 		{"another phone has no room", android, `
   const { el, seen, scrollBy, flick, rowsArrive } = conversation();
@@ -911,6 +1577,20 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(h.el.room, ROOM, "a hidden conversation keeps its room");
   assert.strictEqual(h.el.top, ROOM + 260);
   assert.strictEqual(h.el.anchoring, "auto");
+  // A scroll event is told a frame after the move, and the conversation can be hidden by then. Nothing is learnt
+  // from it: WebKit shows the conversation again at the very top, and the reader is put back where they were.
+  // Here a script moves the conversation 40 px, which a hidden one seems to have got to: it reads as at its top, and
+  // so does the furthest it can go.
+  window.__agyScrolledByScript(h.el, h.el.top - 40, false);
+  h.el.hidden = true;
+  fire("scroll", { target: h.el });
+  h.el.hidden = false;
+  assert.strictEqual(h.el.room, ROOM, "also when a scroll event arrives after it was hidden");
+  h.el.top = 0;
+  fire("scroll", { target: h.el });
+  assert.strictEqual(h.el.top, ROOM + 260, "and the reader is where they were when it shows again");
+  assert.strictEqual(h.el.room, ROOM);
+  pass(2000);
   const n = conversation();
   n.scrollBy(0);
   n.el.hidden = true;
@@ -1270,10 +1950,15 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			harness := roomPage + "(async () => {" + c.js + "\n})().catch(e => { console.error(e); process.exit(1); });\n"
 			args := []string{"-e", harness, scriptPath}
-			if c.ua != "" {
-				args = append(args, c.ua)
+			cmd := exec.Command(node, args...)
+			switch c.ua {
+			case "":
+			case noAnchoring:
+				cmd.Env = append(os.Environ(), "NO_ANCHORING=1")
+			default:
+				cmd = exec.Command(node, append(args, c.ua)...)
 			}
-			if out, err := exec.Command(node, args...).CombinedOutput(); err != nil {
+			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
 		})

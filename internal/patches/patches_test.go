@@ -213,7 +213,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
 		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else if(Z.startIndex<oa.startIndex&&window.__agyDeferGrow?.())K(100);else{`,
-		`c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`,
+		`c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a,this.props.getAnchorCandidates),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,

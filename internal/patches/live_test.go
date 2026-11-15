@@ -31,6 +31,10 @@ var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0
 // it creates there. On iOS scroll-input-tracker keeps room above the rows as padding on it.
 var viewportInnerRe = regexp.MustCompile(`"data-testid":\s*"autoscroll-viewport"[^;]{0,300}?\},\s*[a-zA-Z0-9_$.]+\(\s*"div",\s*\{\s*className:\s*"mx-auto w-full"`)
 
+// rowsFromPropRe matches the component that keeps a row in place reading the rows it chooses among from the prop its
+// patched method hands to scroll-input-tracker, which follows the row at the top of the screen among them.
+var rowsFromPropRe = regexp.MustCompile(`getSnapshotBeforeUpdate\([a-zA-Z0-9_$]+\)\s*\{[^{}]{0,300}?\.getAnchorCandidates\b`)
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -124,6 +128,11 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// patches that go with the room each say what of the bundle they need, so the loop above reports those.
 	if regexpMatch(pagingRowsKeptRe, mainJS) && !regexpMatch(viewportInnerRe, mainJS) {
 		t.Error("the conversation's viewport no longer holds one element with everything in it; the scroll tracker sets the room above the rows as padding on that element, and gives the room up where it finds none")
+	}
+	// With the anchoring off the scroll tracker follows the row at the top of the screen, which it finds among the rows
+	// the component chooses from. The patched method hands it the prop they come from.
+	if regexpMatch(pagingRowsKeptRe, mainJS) && !regexpMatch(rowsFromPropRe, mainJS) {
+		t.Error("the component that keeps a row in place no longer reads its rows from a getAnchorCandidates prop; the scroll tracker is handed that prop, and without it follows only the row it was handed, wherever the reader has gone")
 	}
 	if bytes.Contains(mainJS, []byte("innerRadiusPx")) && !(bytes.Contains(mainJS, []byte("Load older messages")) && bytes.Contains(mainJS, []byte("No more older messages"))) {
 		t.Error("the conversation's paging is there but not the button that says whether there are older messages, which the scroll tracker reads")
