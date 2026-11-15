@@ -434,7 +434,7 @@ func TestTraceRecordsRowsKeptAndGrowWaits(t *testing.T) {
 
 // On iOS the conversation keeps room above its first row, and rows that arrive there take their height out of it, so
 // the position is never written while the reader scrolls. The conversation here is laid out as the page's is: the room,
-// then the rows.
+// then the rows, with a position past its end cut back to the end.
 func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -466,33 +466,59 @@ const ios = !process.argv[2];
 global.navigator = { userAgent: process.argv[2] || "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)", platform: ios ? "iPhone" : "Linux", maxTouchPoints: 5 };
 new Function(fs.readFileSync(process.argv[1], "utf8"))();
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
-const frame = () => { const due = frames; frames = []; due.forEach(fn => fn()); };
+// Every conversation is laid out at the start of a frame, and the page hears of a position that was cut back then or
+// since the last one.
+const pages = [];
+const frame = () => { pages.forEach(layout => layout(true)); const due = frames; frames = []; due.forEach(fn => fn()); };
 // Time passes a frame at a time, as it does for the page.
 const pass = ms => { for (const end = now + ms; now < end;) { now += 16; frame(); const due = timers.filter(x => x.at <= now); timers = timers.filter(x => x.at > now); due.forEach(x => x.fn()); } };
 const microtasks = () => new Promise(resolve => setImmediate(resolve));
 const named = type => events.filter(e => e.type === type).map(e => e.detail);
 const ROOM = 200000;
 
-// A viewport 100 px down the page. Its rows are 9000 px tall and start below the room, and the row the bundle keeps
-// in place is row.y down them.
+// A viewport 100 px down the page and 666 px tall. Its rows are 9000 px tall and start below the room, which is the
+// padding of the one element inside it, and the row the bundle keeps in place is row.y down them.
 const conversation = () => {
-  const vars = {};
   const older = { disabled: false, getAttribute: () => String(older.disabled) };
+  const names = { "padding-top": "paddingTop", "overflow-anchor": "overflowAnchor" };
+  const box = {
+    style: { paddingTop: "", overflowAnchor: "", removeProperty: name => { box.style[names[name]] = ""; } },
+    get offsetHeight() { return el.hidden ? 0 : el.laid + el.rows; },
+  };
+  // A position past the end of the conversation is cut back to it, as a browser cuts it when it lays the page out,
+  // and the page hears of one that ends up somewhere it was not. A write that lands where it was asked is not told
+  // to the page here.
+  let cut = false;
+  const end = () => Math.max(0, el.laid + el.rows - el.screen);
+  const layout = tell => {
+    if (el.top > end()) { el.top = end(); cut = true; }
+    if (tell && cut) { cut = false; fire("scroll", { target: el }); }
+  };
+  pages.push(layout);
   const el = {
-    top: 300, rows: 9000, clientHeight: 666, isConnected: true, older, writes: 0,
-    style: { overflowY: "", setProperty: (k, v) => { vars[k] = v; }, removeProperty: k => { delete vars[k]; }, getPropertyValue: k => vars[k] || "" },
+    top: 300, rows: 9000, screen: 666, hidden: false, isConnected: true, older, writes: 0,
+    style: { overflowY: "" },
     matches: () => true, closest: () => el, querySelector: () => older,
     getBoundingClientRect: () => ({ top: 100 }),
-    get room() { return parseFloat(vars["--agy-top-room"]) || 0; },
-    get anchoring() { return vars["--agy-top-anchor"] || "auto"; },
-    // What the page lays out of the room: all of it, unless a test takes the rule away.
+    firstElementChild: box,
+    get room() { return parseFloat(box.style.paddingTop) || 0; },
+    get anchoring() { return box.style.overflowAnchor || "auto"; },
+    // What the page lays out of the room: all of it, unless a test has the padding count for nothing.
     laidOut: true,
-    firstElementChild: { get offsetHeight() { return (el.laidOut ? el.room : 0) + el.rows; } },
-    get scrollHeight() { return Math.max(el.clientHeight, (el.laidOut ? el.room : 0) + el.rows); },
-    get scrollTop() { return el.top; },
-    set scrollTop(v) { el.writes++; el.top = v; },
+    get laid() { return el.laidOut ? el.room : 0; },
+    // A conversation that is hidden has no size, and reads as at its top.
+    get clientHeight() { return el.hidden ? 0 : el.screen; },
+    get scrollHeight() { return el.hidden ? 0 : Math.max(el.screen, el.laid + el.rows); },
+    get scrollTop() { if (el.hidden) return 0; layout(false); return el.top; },
+    set scrollTop(v) {
+      layout(false);
+      const to = Math.min(Math.max(0, v), end());
+      if (to !== v && to !== el.top) cut = true;
+      el.writes++;
+      el.top = to;
+    },
   };
-  const row = { isConnected: true, y: 360, getBoundingClientRect: () => ({ top: 100 + (el.laidOut ? el.room : 0) + row.y - el.top }) };
+  const row = { isConnected: true, y: 360, getBoundingClientRect: () => { layout(false); return { top: 100 + el.laid + row.y - el.top }; } };
   // Where the row is on the screen, which is what the reader sees.
   const seen = () => row.getBoundingClientRect().top - 100;
   const onEl = touches => ({ target: { closest: () => el }, touches });
@@ -531,7 +557,6 @@ const conversation = () => {
     pass(1000);
     old.flick();
     old.scrollBy(-40);
-    assert.strictEqual(styles.length, 0, "no rule is added to the page");
     assert.strictEqual(old.el.room, 0, "no room is made");
     assert.strictEqual(old.el.anchoring, "auto", "the browser's anchoring is left on");
     assert.strictEqual(window.__agyDeferGrow(), false, "and its rows are not held back, fling or no fling");
@@ -544,14 +569,11 @@ const conversation = () => {
     // One that hands it over says so the first time it draws the conversation. The scroll that opened the conversation
     // is over by then, and the room is made without waiting for another.
     window.__agyRowsDrawn(old.el);
-    assert.ok(styles[0].textContent.includes("--agy-top-room") && styles[0].textContent.includes("overflow-anchor"), "the page is given the room's rule");
-    assert.ok(!styles[0].textContent.includes("scrollbar"), "and the scrollbar is left showing");
     assert.strictEqual(old.el.room, 0);
     pass(416);
     assert.strictEqual(old.el.room, ROOM, "room is made at the next rest");
     assert.strictEqual(old.el.top, ROOM + 260);
-    window.__agyRowsDrawn(old.el);
-    assert.strictEqual(styles.length, 1, "the rule is added once");
+    assert.strictEqual(old.el.style.setProperty, undefined, "as padding inside the conversation, with nothing set on the conversation itself");
     old.el.isConnected = false;
     events.length = 0;
     now += 10000;
@@ -688,7 +710,7 @@ const conversation = () => {
   pass(600);
 
   // With little room left rows wait for the conversation to stop, as they did before there was any.
-  c.el.style.setProperty("--agy-top-room", "0px");
+  c.el.isConnected = false;
   {
     const d = conversation();
     d.scrollBy(0);
@@ -719,8 +741,92 @@ const conversation = () => {
     assert.strictEqual(d.seen(), at);
   }
 
+  // Rows that do not fill the screen get no room. The position that goes with it would be past the end of the
+  // conversation, and the browser would cut it back to the end, which is inside the room.
+  now += 10000;
+  {
+    const s = conversation();
+    s.el.rows = 452;
+    s.el.top = 0;
+    s.row.y = 60;
+    events.length = 0;
+    s.scrollBy(0);
+    pass(2000);
+    assert.strictEqual(s.el.room, 0, "no room above rows shorter than the screen");
+    assert.strictEqual(s.el.top, 0);
+    assert.strictEqual(s.el.writes, 0);
+    assert.deepStrictEqual(named("agy-room"), []);
+    // The bundle goes on loading older rows while the first one is on screen. They are put back by a write, the
+    // conversation being still, and once the rows fill the screen the room is made.
+    assert.strictEqual(window.__agyDeferGrow(), false);
+    s.rowsArrive(3000, s.seen());
+    await microtasks();
+    pass(100);
+    assert.strictEqual(s.el.top, 3452 - 666, "as far down the new rows as the end allows");
+    pass(1000);
+    assert.strictEqual(s.el.room, ROOM, "room once the rows fill the screen");
+    assert.strictEqual(s.el.top, ROOM + 3452 - 666);
+    assert.deepStrictEqual(named("agy-room"), [{ what: "top", by: ROOM }]);
+    s.el.isConnected = false;
+  }
+
+  // The keyboard closes and the screen is taller than the rows are. The end of the conversation is then inside the
+  // room. Given up only as far as the reader, the room would have the end inside it again, and again after that, so
+  // all of it goes at once.
+  now += 10000;
+  {
+    const k = conversation();
+    k.el.rows = 700;
+    k.el.top = 34;
+    k.scrollBy(0);
+    pass(600);
+    assert.strictEqual(k.el.room, ROOM);
+    assert.strictEqual(k.el.top, ROOM + 34);
+    events.length = 0;
+    k.el.writes = 0;
+    k.el.screen = 874;
+    pass(2000);
+    assert.strictEqual(k.el.room, 0, "no room is left above rows the screen has outgrown");
+    assert.strictEqual(k.el.top, 0);
+    assert.deepStrictEqual(named("agy-room"), [{ what: "stop", by: 174 }], "and it went in one step");
+    assert.strictEqual(k.el.writes, 0);
+    k.el.isConnected = false;
+  }
+
+  // A conversation that is hidden reads as empty and at its top, which says nothing about its room. One hidden before
+  // it came to rest keeps the room it had, for the position the browser gives it back when it shows again, and the
+  // page goes on making room for others.
+  now += 10000;
+  {
+    const h = conversation();
+    h.scrollBy(0);
+    pass(600);
+    assert.strictEqual(h.el.room, ROOM);
+    h.flick();
+    h.scrollBy(-40);
+    h.el.hidden = true;
+    pass(1000);
+    h.el.hidden = false;
+    assert.strictEqual(h.el.room, ROOM, "a hidden conversation keeps its room");
+    assert.strictEqual(h.el.top, ROOM + 260);
+    assert.strictEqual(h.el.anchoring, "auto");
+    const n = conversation();
+    n.scrollBy(0);
+    n.el.hidden = true;
+    pass(1000);
+    n.el.hidden = false;
+    assert.strictEqual(n.el.room, 0, "and one hidden before it had any is given none while it is");
+    const next = conversation();
+    next.scrollBy(0);
+    pass(416);
+    assert.strictEqual(next.el.room, ROOM, "the page still makes room for the next one");
+    for (const gone of [h, n, next]) gone.el.isConnected = false;
+  }
+  assert.strictEqual(styles.length, 0, "nothing is added to the page for any of this");
+
   // A finger can land as the room is filled, and iOS then puts the old position back. The room goes back to what it was,
   // so the rows are where that position has them. After the second time it is left alone.
+  now += 10000;
   {
     const d = conversation();
     d.scrollBy(0);
@@ -755,9 +861,9 @@ const conversation = () => {
 		t.Fatalf("harness failed on Android: %v\n%s", err, out)
 	}
 
-	// The two ways the room can turn out not to be there, each in a page of its own since the room is given up for the
-	// whole page: a conversation that leaves the page just after its room was filled, and a bundle whose markup the
-	// room's rule no longer fits.
+	// The ways the room can turn out not to be there, in a page of their own since one of them has the room given up
+	// for the whole page: a conversation that leaves the page or is hidden just after its room was filled, and a bundle
+	// whose markup does not grow by the padding the room is.
 	gone := strings.Replace(harness, "(async () => {", `(async () => {
   if (ios) {
     const d = conversation();
@@ -775,6 +881,13 @@ const conversation = () => {
     pass(416);
     assert.strictEqual(next.el.room, ROOM, "and the next one still gets its room");
     assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "top"]);
+    // Nor is one that is hidden in those frames.
+    next.el.hidden = true;
+    for (let k = 0; k < 12; k++) frame();
+    next.el.hidden = false;
+    assert.strictEqual(next.el.room, ROOM, "a conversation that was hidden is not one iOS moved back either");
+    assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "top"]);
+    next.el.isConnected = false;
 
     const e = conversation();
     e.el.laidOut = false;
@@ -803,24 +916,25 @@ const conversation = () => {
 	}
 }
 
-// One long scroll is one episode, and its 120 samples are used up in the first two seconds. What the page did after
-// that is kept as events, short ones, until the episode is as large as still goes in one request.
-func TestDebugTracerKeepsEventsAfterItsSamples(t *testing.T) {
+// A page for the phone tracer to run in: one conversation with room kept above its rows, a clock the test moves, and what
+// the tracer sends kept in posted. tick runs the tracer's sampler, which a page runs every 150 ms.
+func debugTracerPage(t *testing.T) string {
+	t.Helper()
 	js := strings.TrimPrefix(mobileDebug, `<script id="agy-debug">`)
 	src, err := json.Marshal(strings.TrimSuffix(js, `</script>`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runNode(t, `"use strict";
+	return `"use strict";
 const assert = require("assert");
 let now = 1000;
 let frames = [];
+let room = 200000;
 const hooks = {};
 const posted = [];
-const style = { "--agy-top-room": "200000px" };
+const samplers = [];
 const viewport = {
   scrollTop: 203000, scrollHeight: 209000, clientHeight: 704, className: "h-full", tagName: "DIV",
-  style: { getPropertyValue: k => style[k] || "" },
   getAttribute: k => (k === "data-testid" ? "autoscroll-viewport" : null),
   getBoundingClientRect: () => ({ top: 0, bottom: 704, left: 0, width: 400, height: 704 }),
   contains: () => false,
@@ -840,10 +954,20 @@ const win = {
   matchMedia: q => ({ matches: q === "(pointer: coarse)" }),
   addEventListener: (name, fn) => { (hooks[name] = hooks[name] || []).push(fn); },
   innerWidth: 400, innerHeight: 800, scrollY: 0, devicePixelRatio: 3,
+  // The scroll tracker says how much room it keeps above the conversation's rows.
+  __agyTopRoom: el => (el === viewport ? room : 0),
 };
-const run = new Function("window", "setInterval", "document", "navigator", "screen", "performance", "fetch", "requestAnimationFrame", `+string(src)+`);
-run(win, () => 0, doc, { userAgent: "test", standalone: true }, { width: 400, height: 800 }, { now: () => now }, (url, init) => { posted.push(init.body); }, fn => { frames.push(fn); return frames.length; });
+const run = new Function("window", "setInterval", "document", "navigator", "screen", "performance", "fetch", "requestAnimationFrame", ` + string(src) + `);
+run(win, fn => { samplers.push(fn); return samplers.length; }, doc, { userAgent: "test", standalone: true }, { width: 400, height: 800 }, { now: () => now }, (url, init) => { posted.push(init.body); }, fn => { frames.push(fn); return frames.length; });
 const fire = (name, detail) => hooks[name].forEach(fn => fn({ detail }));
+const tick = () => { now += 150; samplers.forEach(fn => fn()); };
+`
+}
+
+// One long scroll is one episode, and its 120 samples are used up in the first two seconds. What the page did after
+// that is kept as events, short ones, until the episode is as large as still goes in one request.
+func TestDebugTracerKeepsEventsAfterItsSamples(t *testing.T) {
+	runNode(t, debugTracerPage(t)+`
 const frame = () => { now += 16; viewport.scrollTop -= 7; const due = frames; frames = []; due.forEach(fn => fn()); };
 
 // Rows arrive every second or so and the reader goes on scrolling: every frame is a sample until there are 120.
@@ -871,6 +995,44 @@ assert.ok(brief.every(l => !l.includes("ev=raf")), "no frame is kept after the s
 const longest = Math.max(...brief.map(l => l.length + 1));
 assert.ok(brief.length > 100 && brief.length < 903, "events are kept for a good while, and then they stop too: " + brief.length);
 assert.ok(posted[0].length >= 56000 && posted[0].length < 56000 + longest, "at a size that still goes in one request: " + posted[0].length);
+`)
+}
+
+// The tracer samples the conversation for moves no event tells of. Room being filled or given up moves the position
+// by as much as the room changed, with the reader where they were among the rows, and is not one of them.
+func TestDebugTracerLeavesTheRoomOutOfAJump(t *testing.T) {
+	runNode(t, debugTracerPage(t)+`
+const frame = () => { now += 16; const due = frames; frames = []; due.forEach(fn => fn()); };
+const settle = () => { for (let k = 0; k < 200; k++) frame(); };
+const triggers = () => posted.map(body => /trigger=(\S+)/.exec(body)[1].replace(/\+\d+$/, ""));
+// Long after any input, with the reader 3,000 px down 9,000 px of rows.
+now += 60000;
+tick();
+// The room is given up at rest, and filled again: the position and the height change by as much as it did.
+room = 0; viewport.scrollTop -= 200000; viewport.scrollHeight -= 200000;
+tick();
+settle();
+room = 200000; viewport.scrollTop += 200000; viewport.scrollHeight += 200000;
+tick();
+settle();
+assert.deepStrictEqual(triggers(), [], "neither is a move of the reader's");
+// A reader who went up into the room has it given up above them, which leaves the position as it was.
+viewport.scrollTop = 199950;
+tick();
+settle();
+assert.deepStrictEqual(triggers(), ["st-drop"], "the reader's own 3,050 px, long after any input");
+room = 199950; viewport.scrollHeight -= 50;
+tick();
+settle();
+assert.deepStrictEqual(triggers(), ["st-drop"], "the 50 px of room given up is nothing more");
+// The position alone moving is what it was before there was room: a drop, and further than a finger goes, a jump.
+viewport.scrollTop -= 200;
+tick();
+settle();
+viewport.scrollTop += 6000;
+tick();
+settle();
+assert.deepStrictEqual(triggers(), ["st-drop", "st-drop", "jump"]);
 `)
 }
 

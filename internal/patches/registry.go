@@ -2968,25 +2968,22 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // the position is the same number: nothing is written, and there is nothing for a fling or a finger to take back.
   // Rows dropped above the reader give their height back the same way.
   //
+  // The room is padding above everything in the conversation, set on the one element the bundle puts inside it. Set
+  // as a custom property on the conversation for a rule to read, it had every node in the conversation styled again
+  // at each change, which is a quarter of a second for fifty thousand nodes and happens several times for each batch
+  // of rows.
+  //
   // The browser's own anchoring knows nothing of the room and would move the position for rows it has already made up
   // for, so it is off from when rows above may change until the conversation is at rest. The bundle sets the property
   // on the conversation itself as the reader starts and stops following the end, so it is set on what is inside.
   //
   // All of it depends on the rows being put back here, where the room can take them. The bundle says it hands that
   // move over by calling after every drawing of the conversation, from the place it hands it over, so this is known
-  // before the first rows arrive. Until then, and for a bundle that never calls, the page is as it was: no rule, no
-  // room, and no rows held back for want of it.
+  // before the first rows arrive. Until then, and for a bundle that never calls, the page is as it was: no room, and
+  // no rows held back for want of it.
   function rowsHandedOver(el) {
     if (keepsRows) return;
     keepsRows = true;
-    if (!IOS) return;
-    if (typeof document !== "undefined" && document.createElement) {
-      var roomStyle = document.createElement("style");
-      roomStyle.id = "agy-top-room";
-      roomStyle.textContent = VIEWPORT + '>div:first-child{overflow-anchor:var(--agy-top-anchor,auto)}' +
-        VIEWPORT + '>div:first-child::before{content:"";display:block;height:var(--agy-top-room,0px)}';
-      (document.head || document.documentElement).appendChild(roomStyle);
-    }
     // The scroll that opened this conversation may be over, with no other to come before the reader's own.
     if (hasRoom(el)) waitForRest(el);
   }
@@ -2997,13 +2994,24 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // With room for them, rows are asked for from further away than the bundle's 600 px: a flick at 4,000 px a second
   // covers this in the 0.5 s a phone takes to draw them, with a little to spare.
   window.__agyGrowRadius = IOS ? 2400 : 0;
-  function hasRoom(el) { return IOS && keepsRows && roomLaidOut && Boolean(el && el.style && el.style.setProperty); }
+  function roomBox(el) {
+    var box = el && el.firstElementChild;
+    return box && box.style ? box : null;
+  }
+  function hasRoom(el) { return IOS && keepsRows && roomLaidOut && Boolean(roomBox(el)); }
   function roomOf(el) { return rooms.get(el) || 0; }
   function setRoom(el, px) {
-    px = Math.max(0, px);
+    var box = roomBox(el);
+    px = box ? Math.max(0, px) : 0;
     rooms.set(el, px);
-    el.style.setProperty("--agy-top-room", px + "px");
+    if (!box) return;
+    // Taken off when there is none, which leaves a padding the bundle may give that element as it was.
+    if (px) box.style.paddingTop = px + "px";
+    else box.style.removeProperty("padding-top");
   }
+  // Whether there are more rows than fill the screen. Fewer cannot hold a position under the room: the furthest the
+  // conversation then goes is inside it.
+  function rowsFill(el) { return el.scrollHeight - el.clientHeight > roomOf(el); }
   function shiftOf(el) { return shifts.get(el) || 0; }
   function noteShift(el, by) { shifts.set(el, shiftOf(el) + by); }
   function roomEvent(what, by) {
@@ -3024,9 +3032,14 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (!hasRoom(el)) return;
     if (!unanchored.has(el)) {
       unanchored.add(el);
-      el.style.setProperty("--agy-top-anchor", "none");
+      roomBox(el).style.overflowAnchor = "none";
     }
     waitForRest(el);
+  }
+  function anchorAgain(el) {
+    unanchored.delete(el);
+    var box = roomBox(el);
+    if (box) box.style.removeProperty("overflow-anchor");
   }
 
   // The room holds no rows, so a reader is not left looking at it. One who gets there ahead of the rows has reached the
@@ -3039,14 +3052,18 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var now = performance.now();
     if (left >= room || fingerDown(now)) return;
     if (growLetInAt > keptAt && now - growLetInAt < GRACE_MS && room - left < GRACE_PX && moving(now)) return;
-    setRoom(el, left);
-    noteShift(el, left - room);
+    // Rows that do not fill the screen leave the end of the conversation inside the room. Giving the room up as far as
+    // the reader then only moves that end, and the reader with it, to be found in the room again. All of it goes.
+    var keep = rowsFill(el) ? left : 0;
+    setRoom(el, keep);
+    noteShift(el, keep - room);
     stopFling(el, false);
     roomEvent("stop", room - left);
   }
 
   // At rest is the one time a position can be written, so that is when the room is filled back up, or given up once
-  // the conversation has no older rows left to need it.
+  // the conversation has no older rows left to need it. Rows that do not fill the screen get none: the position
+  // written for it would be cut back to the end of the conversation, which is then inside the room.
   function waitForRest(el) {
     resting.add(el);
     if (!restTimer) restTimer = setTimeout(atRest, REST_MS);
@@ -3055,18 +3072,20 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     restTimer = 0;
     var now = performance.now();
     resting.forEach(function (el) {
-      if (!el.isConnected) {
+      // A conversation that has left the page, or is hidden, reads as empty and at its top, which says nothing about
+      // its room. It is left as it is until it moves again.
+      if (!el.isConnected || !el.clientHeight) {
         resting.delete(el);
+        anchorAgain(el);
         return;
       }
       if (fingerDown(now) || pressed || stopping.has(el) || now - movedAt < REST_MS || framesSinceMove < STILL_FRAMES || el.scrollTop < 0) return;
       resting.delete(el);
-      unanchored.delete(el);
-      el.style.removeProperty("--agy-top-anchor");
+      anchorAgain(el);
       keepOffRoom(el);
       var room = roomOf(el);
       var older = el.querySelector(OLDER_ROWS);
-      var want = older && older.getAttribute("aria-disabled") !== "true" ? ROOM : 0;
+      var want = older && older.getAttribute("aria-disabled") !== "true" && rowsFill(el) ? ROOM : 0;
       if (want === room || (want && room >= ROOM_LOW && room <= ROOM_HIGH) || roomFailures >= ROOM_FAILURES_MAX) return;
       resizeRoom(el, want);
     });
@@ -3077,8 +3096,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // instant this is written, and iOS then puts back a position that is now tens of thousands of pixels from the same
   // rows. The frames after are watched for that, and the room is put back as it was. Twice, and it is left alone.
   //
-  // The room is a rule over the bundle's markup. Where the conversation is no taller for it the markup has changed,
-  // and the room is given up for good: rows would take their height from something that is not there.
+  // The room is padding on an element of the bundle's markup. Where that element is not taller by as much for it, the
+  // markup is not what this was written for, and the room is given up for good: rows would take their height from
+  // something that is not there.
   function resizeRoom(el, want) {
     var by = want - roomOf(el);
     var was = el.scrollTop;
@@ -3101,8 +3121,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (Math.abs(by) < ROWS_MOVE_MIN) return;
     var frames = ROOM_CHECK_FRAMES;
     requestAnimationFrame(function check() {
-      // A conversation that has left the page reads as at its top, which is not iOS taking the position back.
-      if (!el.isConnected) return;
+      // A conversation that has left the page, or is hidden, reads as at its top, which is not iOS taking the position
+      // back.
+      if (!el.isConnected || !el.clientHeight) return;
       var top = el.scrollTop;
       if (Math.abs(top - was) < Math.abs(top - set)) {
         setRoom(el, roomOf(el) - by);
@@ -3565,6 +3586,12 @@ const mobileDebug = `<script id="agy-debug">
     return out.length ? out.join(" | ") : "-";
   }
 
+  // The room the scroll tracker keeps above a conversation's first row on iOS, which is part of the conversation's
+  // position and of its height.
+  function topRoom(el) {
+    return window.__agyTopRoom ? window.__agyTopRoom(el) || 0 : 0;
+  }
+
   // Which element actually holds the messages is not obvious from the class names,
   // and picking the wrong one is why a chat can stay scrolled away from its last
   // message. List every scroller that has something to scroll.
@@ -3579,8 +3606,7 @@ const mobileDebug = `<script id="agy-debug">
         (el.getAttribute("data-testid") || el.tagName.toLowerCase() +
           "." + String(el.className || "").split(/\s+/)[0]) +
         ":st" + n(el.scrollTop) + "/sh" + el.scrollHeight + "/ch" + el.clientHeight +
-        // The room the scroll tracker keeps above the first row, which is part of both numbers before it.
-        (el.style.getPropertyValue("--agy-top-room") ? "/room" + n(parseFloat(el.style.getPropertyValue("--agy-top-room"))) : ""));
+        (topRoom(el) ? "/room" + n(topRoom(el)) : ""));
     }
     return out.length ? out.join(" ") : "-";
   }
@@ -3589,8 +3615,8 @@ const mobileDebug = `<script id="agy-debug">
   function conversation() {
     var el = one('[data-testid="autoscroll-viewport"]');
     if (!el) return "-";
-    var room = el.style.getPropertyValue("--agy-top-room");
-    return "autoscroll-viewport:st" + n(el.scrollTop) + "/sh" + el.scrollHeight + "/ch" + el.clientHeight + (room ? "/room" + n(parseFloat(room)) : "");
+    var room = topRoom(el);
+    return "autoscroll-viewport:st" + n(el.scrollTop) + "/sh" + el.scrollHeight + "/ch" + el.clientHeight + (room ? "/room" + n(room) : "");
   }
 
   function stickyOffset() {
@@ -3724,7 +3750,10 @@ const mobileDebug = `<script id="agy-debug">
   setInterval(function () {
     var el = one('[data-testid="autoscroll-viewport"]');
     if (!el) { prevEl = null; anchor = null; return; }
-    var top = el.scrollTop, height = el.scrollHeight;
+    // Where the reader is among the rows. The room above them is filled and given up with the position moved by as
+    // much, which is no move of the reader's.
+    var room = topRoom(el);
+    var top = el.scrollTop - room, height = el.scrollHeight - room;
     var rect = el.getBoundingClientRect();
     var idleMs = performance.now() - lastInputAt;
     var trigger = "";
@@ -3743,7 +3772,7 @@ const mobileDebug = `<script id="agy-debug">
     }
     // Too far for one sample to be a finger on the conversation, so this is recorded even right after a touch, with
     // how long ago that touch was. The position bound is the one the scroll tracker holds against.
-    if (!trigger && el === prevEl && (Math.abs(top - prevTop) > 3000 || top < -1000)) trigger = "jump+" + Math.round(idleMs);
+    if (!trigger && el === prevEl && (Math.abs(top - prevTop) > 3000 || el.scrollTop < -1000)) trigger = "jump+" + Math.round(idleMs);
     if (trigger) begin(trigger, 1500);
     var hit = document.elementFromPoint(rect.left + rect.width / 2 - 100, rect.top + rect.height / 2);
     anchor = hit && el.contains(hit) ? hit : null;

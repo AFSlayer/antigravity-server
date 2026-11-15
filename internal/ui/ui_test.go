@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -381,7 +382,11 @@ func TestSignInBehindReverseProxyAndDebugClose(t *testing.T) {
 
 // A trace file that fills up is kept beside the new one, once: emptying it lost the minutes that were being looked for.
 func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "mobile-debug.log")
+	folder := filepath.Join(t.TempDir(), "traces")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(folder, "mobile-debug.log")
 	dbg, err := NewDebug(logPath)
 	if err != nil {
 		t.Fatal(err)
@@ -390,15 +395,18 @@ func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
 	dbg.maxFile = 20
 	mux := http.NewServeMux()
 	dbg.WithSameOrigin(nil, "https://agy.example.com").Register(mux)
-	post := func(body string) {
-		t.Helper()
+	try := func(body string) int {
 		req := httptest.NewRequest(http.MethodPost, DebugLogPath, strings.NewReader(body))
 		req.Host = "agy.example.com"
 		req.Header.Set("Origin", "https://agy.example.com")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNoContent {
-			t.Fatalf("posting %q: status %d", body, rec.Code)
+		return rec.Code
+	}
+	post := func(body string) {
+		t.Helper()
+		if code := try(body); code != http.StatusNoContent {
+			t.Fatalf("posting %q: status %d", body, code)
 		}
 	}
 	read := func(path string) string {
@@ -445,5 +453,33 @@ func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
 	post("seventh")
 	if got := read(logPath); got != "sixth\nseventh\n" {
 		t.Errorf("and written to again, got %q", got)
+	}
+
+	// The folder goes away with the file full, so no file can be started. A trace is refused while that lasts, and
+	// taken again once a file opens, without a restart.
+	post("eighth, which takes it over the limit once more")
+	// Windows does not let a folder go while a file in it is open, so there the file is closed first, which is how a
+	// start that failed leaves it anyway.
+	if runtime.GOOS == "windows" {
+		dbg.mu.Lock()
+		_ = dbg.file.Close()
+		dbg.file = nil
+		dbg.mu.Unlock()
+	}
+	if err := os.RemoveAll(folder); err != nil {
+		t.Fatal(err)
+	}
+	if code := try("ninth"); code != http.StatusInternalServerError {
+		t.Errorf("a trace with nowhere to go: status %d, want %d", code, http.StatusInternalServerError)
+	}
+	if code := try("tenth"); code != http.StatusInternalServerError {
+		t.Errorf("and the next one: status %d, want %d", code, http.StatusInternalServerError)
+	}
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	post("eleventh")
+	if got := read(logPath); got != "eleventh\n" {
+		t.Errorf("a file that opens again is written to, got %q", got)
 	}
 }

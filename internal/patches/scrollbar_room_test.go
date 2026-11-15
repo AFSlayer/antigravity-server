@@ -160,14 +160,14 @@ new Function(fs.readFileSync(process.argv[1], "utf8"))();
 const fire = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
 const pass = ms => { for (const end = now + ms; now < end;) { now += 16; const f = frames; frames = []; f.forEach(fn => fn()); const due = timers.filter(x => x.at <= now); timers = timers.filter(x => x.at > now); due.forEach(x => x.fn()); } };
 
-const vars = {};
 const older = { getAttribute: () => "false" };
+const box = { style: { paddingTop: "", overflowAnchor: "", removeProperty: () => {} }, get offsetHeight() { return el.room + el.rows; } };
 const el = {
   top: 3000, rows: 9000, clientHeight: 704, isConnected: true,
-  style: { overflowY: "", setProperty: (k, v) => { vars[k] = v; }, removeProperty: k => { delete vars[k]; } },
+  style: { overflowY: "" },
   matches: () => true, closest: () => el, querySelector: () => older,
-  get room() { return parseFloat(vars["--agy-top-room"]) || 0; },
-  firstElementChild: { get offsetHeight() { return el.room + el.rows; } },
+  get room() { return parseFloat(box.style.paddingTop) || 0; },
+  firstElementChild: box,
   get scrollHeight() { return el.room + el.rows; },
   get scrollTop() { return el.top; },
   set scrollTop(v) { el.top = Math.round(Math.min(el.scrollHeight - el.clientHeight, Math.max(0, v))); },

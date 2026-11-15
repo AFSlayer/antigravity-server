@@ -37,7 +37,7 @@ type Debug struct {
 // NewDebug opens path for appending.
 func NewDebug(path string) (*Debug, error) {
 	d := &Debug{path: path, maxFile: debugMaxFile}
-	if err := d.open(); err != nil {
+	if err := d.open(false); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -71,8 +71,12 @@ func (d *Debug) Close() error {
 	return err
 }
 
-func (d *Debug) open() error {
-	file, err := os.OpenFile(d.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+func (d *Debug) open(truncate bool) error {
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if truncate {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	}
+	file, err := os.OpenFile(d.path, flags, 0o600)
 	if err != nil {
 		return err
 	}
@@ -92,19 +96,17 @@ func (d *Debug) open() error {
 // file instead lost the minutes that were being looked for: a trace is read when something went wrong, and that is
 // often what filled it. Where the full one cannot be moved aside it is emptied after all, so that a trace never
 // takes more than twice the limit.
+//
+// The full one is closed before it is moved, because Windows does not rename a file that is open, and it is emptied
+// by opening it again, because a file opened for appending cannot be cut short there. If neither can be done there
+// is no file until one opens: collect tries again for the next trace.
 func (d *Debug) rotate() error {
+	if d.file != nil {
+		_ = d.file.Close()
+		d.file = nil
+	}
 	err := os.Rename(d.path, d.path+".1")
-	if err == nil || os.IsNotExist(err) {
-		return d.open()
-	}
-	if d.file == nil {
-		return err
-	}
-	if err := d.file.Truncate(0); err != nil {
-		return err
-	}
-	d.written = 0
-	return nil
+	return d.open(err != nil && !os.IsNotExist(err))
 }
 
 func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
@@ -127,9 +129,15 @@ func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.closed || d.file == nil {
+	if d.closed {
 		http.Error(w, "closed", http.StatusServiceUnavailable)
 		return
+	}
+	if d.file == nil {
+		if err := d.open(false); err != nil {
+			http.Error(w, "cannot write", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// The traces are verbose by design; starting a new file keeps a long session
