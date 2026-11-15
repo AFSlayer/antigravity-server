@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -263,6 +264,23 @@ const kept = () => events.filter(e => e.type === "agy-rows-kept").map(e => e.det
     assert.strictEqual(el.scrollTop, 1200, "a jump made in the same commit is left where it went");
     assert.strictEqual(frames.length, 0, "and the row is not looked at again");
     assert.deepStrictEqual(kept(), [{ moved: 4401, again: "taken" }]);
+  }
+
+  // Near the end the second drawing can leave the position past the end, where the browser cuts it back. That is not
+  // another script's jump, and the row is put back where it was.
+  {
+    events.length = 0;
+    const { el, row } = conversation();
+    row.y += 1000;
+    window.__agyKeepRows(el, row, 60);
+    assert.strictEqual(el.scrollTop, 1300);
+    row.y -= 350;
+    el.scrollTop -= 140;
+    el.scrollHeight = el.scrollTop + el.clientHeight;
+    await microtasks();
+    assert.strictEqual(el.scrollTop, 950, "the row is put back, though the position was cut back to the end");
+    assert.deepStrictEqual(kept(), [{ moved: 1000, again: -210 }]);
+    drain();
   }
 
   // A row that stops being laid out in the frames after, or a conversation that is hidden, reads as nothing. Moving
@@ -1673,6 +1691,186 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   for (let k = 0; k < 30; k++) frame();
   assert.strictEqual(c.seen(), at);`},
 
+		// What gets shorter under the top of the screen brings the rows above it down when the position is cut back, in
+		// the commit as at any other time. Room taken for that would shorten the conversation by as much again.
+		{"rows redrawn shorter under the top of the screen near the end", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  flick();
+  for (let k = 0; k < 200 && el.top < end() - 200; k++) { now += 16; scrollBy(Math.min(400, end() - 200 - el.top)); frame(); }
+  pass(1000);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  flick();
+  scrollBy(-10);
+  const kept = atTop();
+  const at = seenOf(kept);
+  prepend(10, 300);
+  assert.strictEqual(seenOf(kept), at);
+  assert.strictEqual(el.room, ROOM - 3000);
+  // A row on the screen is drawn again 350 px shorter before the commit is over, with the reader 210 px from the end.
+  resize(list[list.indexOf(kept) + 1], -290);
+  resize(list[list.indexOf(kept) + 2], -60);
+  await microtasks();
+  assert.strictEqual(end() - el.top, 0, "the reader is at the end");
+  assert.strictEqual(seenOf(kept), at + 140, "the rows above came down by what the position was cut back");
+  assert.strictEqual(el.room, ROOM - 3000, "and no room is taken for that");
+  for (let k = 0; k < 30; k++) { now += 16; frame(); }
+  assert.strictEqual(el.room, ROOM - 3000);
+  assert.strictEqual(el.writes, 0);`},
+
+		// At the end of the conversation the reader is where the end puts them. Whatever gets shorter there, above the
+		// screen or under it, the browser cuts the position back, and nothing the room does can undo that: room given
+		// takes the reader off the end, and room taken shortens the conversation again by as much.
+		{"a reader who has gone down to the end, and rows above drawn again shorter", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, prepend, resize } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  flick();
+  scrollBy(-40);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  prepend(10, 300);
+  await microtasks();
+  // The reader goes down to the end within the same run of scrolling, so the conversation never rests.
+  for (let k = 0; k < 200 && el.top < end(); k++) { now += 16; scrollBy(Math.min(400, end() - el.top)); frame(); }
+  assert.strictEqual(el.top, end(), "at the end");
+  assert.strictEqual(el.anchoring, "none", "still within one run of scrolling");
+  const top = atTop();
+  const at = seenOf(top);
+  const room = el.room;
+  // A row above the screen is drawn again 137 px shorter. The browser cuts the position back to the new end.
+  resize(list[3], -137);
+  for (let k = 0; k < 4; k++) { now += 16; frame(); }
+  assert.strictEqual(seenOf(top), at, "the rows on the screen have not moved");
+  assert.strictEqual(el.room, room, "no room is given for a position the browser cut back");
+  assert.strictEqual(end() - el.top, 0, "and the reader is still at the end");`},
+
+		{"a reader who follows the end while rows above are dropped", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, withRows, change } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  // The reader follows the end of a reply that is being written: no finger, and the bundle keeps them at the end.
+  flick();
+  for (let k = 0; k < 200 && el.top < end(); k++) { now += 16; scrollBy(Math.min(400, end() - el.top)); frame(); }
+  now += 20000;
+  pass(1000);
+  assert.strictEqual(el.top, end());
+  assert.strictEqual(el.anchoring, "auto");
+  el.writes = 0;
+  const stream = n => { for (let k = 0; k < n; k++) { now += 16; withRows(1, 180); scrollBy(end() - el.top); frame(); now += 16; frame(); } };
+  stream(5);
+  // The bundle asks whether rows far above may be dropped, and drops them. For a reader who follows the end it hands
+  // nothing over. It does so twice, with the reply going on between and never 400 ms from one row to the next.
+  for (const drop of ["first", "second"]) {
+    assert.strictEqual(window.__agyDeferTrim(), false);
+    assert.strictEqual(el.anchoring, "none");
+    const top = atTop();
+    const at = seenOf(top);
+    const room = el.room;
+    change(null, () => { list.splice(0, 5).forEach(r => { r.isConnected = false; }); });
+    for (let k = 0; k < 2; k++) { now += 16; frame(); }
+    assert.strictEqual(seenOf(top), at, "the rows on the screen have not moved, " + drop);
+    assert.strictEqual(el.room, room, "no room is given, " + drop);
+    assert.strictEqual(end() - el.top, 0, "the reader is at the end, " + drop);
+    stream(12);
+    assert.strictEqual(el.anchoring, "none", "the conversation has not come to rest");
+    assert.strictEqual(end() - el.top, 0);
+  }
+  pass(1000);
+  assert.strictEqual(el.anchoring, "auto");
+  assert.strictEqual(end() - el.top, 0, "and is still there at rest");
+  assert.strictEqual(el.writes, 0);`},
+
+		{"a reader brought to the end by what gets shorter under the screen", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, resize } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  // The reader is 100 px above the end, and the bundle is told it may bring rows in: the anchoring goes off.
+  now += 20000;
+  flick();
+  for (let k = 0; k < 200 && el.top < end() - 100; k++) { now += 16; scrollBy(Math.min(400, end() - 100 - el.top)); frame(); }
+  pass(1000);
+  assert.strictEqual(el.anchoring, "auto");
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  flick();
+  assert.strictEqual(el.anchoring, "none");
+  now += 16; frame();
+  // The reader goes up 300 px.
+  for (let k = 0; k < 6; k++) { now += 16; scrollBy(-50); frame(); }
+  const top = atTop();
+  const at = seenOf(top);
+  const room = el.room;
+  el.writes = 0;
+  // Something under the screen is drawn again 500 px shorter, as a block that folds away, and the browser cuts the
+  // position back to the new end: the rows on the screen come down 100 px, as they do without the tracker.
+  resize(list[list.length - 1], -250);
+  resize(list[list.length - 2], -250);
+  for (let k = 0; k < 60; k++) {
+    now += 16; frame();
+    assert.strictEqual(el.room, room, "no room is taken, frame " + k);
+    assert.strictEqual(seenOf(top), at + 100);
+  }
+  assert.strictEqual(end() - el.top, 0);
+  assert.strictEqual(el.writes, 0, "and no position is written");
+  // The rows that were let in never come, and once they are no longer waited for the conversation is at rest.
+  pass(6000);
+  assert.strictEqual(el.anchoring, "auto", "the conversation comes to rest");
+  assert.strictEqual(el.room, room);`},
+
+		{"a reader at the end when the last row gets shorter", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, resize } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  flick();
+  for (let k = 0; k < 200 && el.top < end(); k++) { now += 16; scrollBy(Math.min(400, end() - el.top)); frame(); }
+  now += 20000;
+  pass(1000);
+  assert.strictEqual(el.top, end());
+  assert.strictEqual(el.anchoring, "auto");
+  assert.strictEqual(el.room, ROOM);
+  // The bundle asks whether it may bring rows in above, and is told it may: the anchoring goes off.
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  assert.strictEqual(el.anchoring, "none");
+  now += 16; frame();
+  const top = atTop();
+  const at = seenOf(top);
+  el.writes = 0;
+  // The last row is drawn again 100 px shorter, as when a progress line goes away. The browser keeps the reader at
+  // the end, which lowers every row on the screen by 100 px. Nothing can put them back: there is no more below.
+  resize(list[list.length - 1], -100);
+  for (let k = 0; k < 120; k++) {
+    now += 16; frame();
+    assert.strictEqual(el.room, ROOM, "the room is as it was, frame " + k);
+  }
+  assert.strictEqual(seenOf(top), at + 100);
+  assert.strictEqual(el.top, end());
+  assert.strictEqual(el.writes, 0, "and no position is written");
+  // The rows are followed from where the end left them: a reader who then goes up and stops finds nothing made up
+  // for late.
+  flick();
+  for (let k = 0; k < 5; k++) { now += 16; scrollBy(-40); frame(); }
+  for (let k = 0; k < 5; k++) { now += 16; frame(); }
+  assert.strictEqual(seenOf(top), at + 100 + 200, "the rows move by the reader's own scrolling and no more");
+  assert.strictEqual(el.room, ROOM);`},
+
+		// Rows dropped above a reader who is near the end and not following it are handed over. What they took leaves
+		// the position past the end, the browser cuts it back, and the bundle's move puts the rows where they were.
+		{"rows dropped above a reader near the end", "", `
+  const { el, list, seenOf, atTop, scrollBy, flick, place, rowsOf } = openRows();
+  const end = () => el.laid + el.rows + el.below - el.screen;
+  flick();
+  for (let k = 0; k < 200 && el.top < end() - 50; k++) { now += 16; scrollBy(Math.min(400, end() - 50 - el.top)); frame(); }
+  now += 20000;
+  pass(1000);
+  assert.strictEqual(end() - el.top, 50);
+  assert.strictEqual(window.__agyDeferTrim(), false);
+  const kept = atTop();
+  const at = seenOf(kept);
+  list.splice(0, 5).forEach(r => { r.isConnected = false; });
+  place();
+  window.__agyRowsDrawn(el, rowsOf);
+  window.__agyKeepRows(el, kept, at);
+  await microtasks();
+  assert.strictEqual(seenOf(kept), at, "the row is where it was");
+  assert.strictEqual(end() - el.top, 50, "and the reader as far from the end as before");
+  assert.strictEqual(el.room, ROOM + 50, "by the 50 px the cut left the rows higher");
+  assert.strictEqual(el.writes, 0);`},
+
 		// A finger can land as the room is filled, and iOS then puts the old position back. The room goes back to what it
 		// was, so the rows are where that position has them. After the second time it is left alone.
 		{"the room's own write is taken back", "", `
@@ -1726,7 +1924,8 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(next.el.room, ROOM, "and the next one still gets its room");
   assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "top"]);`},
 
-		// A bundle whose markup does not grow by the padding the room is: the room is given up for the page.
+		// A conversation whose markup does not grow by the padding the room is: its room is given up for good, and
+		// another conversation on the page is tried on its own.
 		{"markup the room does not fit", "", `
   const e = conversation();
   e.el.laidOut = false;
@@ -1745,10 +1944,13 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(e.el.style.overflowY, "hidden");
   assert.strictEqual(e.seen(), at);
   assert.strictEqual(window.__agyTopRoom(e.el), 0, "and the scrollbar is told there is none");
+  pass(1000);
+  assert.strictEqual(e.el.room, 0, "nor is it tried again for that conversation");
+  assert.strictEqual(named("agy-room").filter(x => x.what === "none").length, 1);
   const later = conversation();
   later.scrollBy(0);
   pass(1000);
-  assert.strictEqual(later.el.room, 0, "nor is it tried again on that page");`},
+  assert.strictEqual(later.el.room, ROOM, "another conversation, which does lay it out, has its room");`},
 
 		// An iPhone has been seen moving a conversation a long way with nothing asking it to, and the tracker puts the
 		// reader back. What counts as a long way is a share of the rows, which the room is no part of.
@@ -1962,6 +2164,162 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
 				t.Fatalf("%v\n%s", err, out)
 			}
 		})
+	}
+}
+
+// roomWalk walks the page at random, a seed for each walk. The reader scrolls, goes to the end and follows it while a
+// reply is written, rows are let in and handed over with some drawn again shorter before the commit is over, rows are
+// dropped above with and without being handed over, rows change height or stop being laid out above the screen, on
+// it and under it, and the conversation rests. After every step the row that was at the top of the screen is where
+// a browser that anchored to it would have left it, with what the end of the conversation changes about that: see
+// expected. Four idle frames then have to leave the room and the position as they were.
+const roomWalk = `
+  const seed = Number(process.env.WALK_SEED);
+  const steps = Number(process.env.WALK_STEPS);
+  let s = seed * 2654435761 % 4294967296;
+  const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  const pick = (a, b) => Math.floor(a + rnd() * (b - a + 1));
+  const { el, list, seenOf, atTop, scrollBy, flick, withRows, prepend, change, place, rowsOf } = openRows();
+  const among = () => el.top - el.laid;
+  const last = () => Math.max(0, el.rows + el.below - el.screen);
+  const frames = n => { for (let k = 0; k < n; k++) { now += 16; frame(); } };
+  // The reader goes somewhere among the rows, a finger down first and no further than a fling in each frame.
+  const go = to => { flick(); for (let k = 0; k < 600 && Math.abs(among() - to) >= 1; k++) { now += 16; scrollBy(Math.max(-400, Math.min(400, to - among()))); frame(); } };
+  const onPage = r => r.laidOut && r.isConnected;
+  const trail = [];
+  // Where the row is expected among the rows. A browser that anchors to it moves the position by what changed above
+  // it, as far as the conversation goes. With the anchoring off the tracker does the same out of the room, except at
+  // the end: a position the change left at or past the end stays where the browser cut it to, unless the change is
+  // one the bundle handed over.
+  const expected = (kind, off, a0, moved) => {
+    if (kind === "change" && off && a0 >= last() - 1) return Math.min(a0, last());
+    return Math.max(0, Math.min(last(), a0 + moved));
+  };
+  for (let i = 0; i < steps; i++) {
+    const r = rnd();
+    const top = atTop();
+    const y0 = top.y;
+    const a0 = among();
+    const off = el.anchoring === "none";
+    const atEnd = a0 >= last() - 1;
+    let kind = "";
+    let what = "";
+    if (r < 0.22) {
+      const d = rnd() < 0.15 ? pick(1500, 6000) : pick(-450, 300);
+      go(Math.max(260, Math.min(last(), a0 + d)));
+      what = "scroll " + d;
+    } else if (r < 0.30) {
+      go(last());
+      what = "to the end";
+    } else if (r < 0.48) {
+      if (a0 > 2400) { frames(2); what = "rows not wanted"; kind = "idle"; }
+      else if (window.__agyDeferGrow()) { frames(6); what = "rows held"; kind = "idle"; }
+      else {
+        frames(pick(0, 12));
+        const added = prepend(pick(3, 20), pick(60, 240));
+        if (rnd() < 0.6) { added.slice(0, pick(1, 3)).forEach(row => { row.h = pick(20, 50); }); place(); }
+        await microtasks();
+        what = "rows in " + added.length;
+        kind = "commit";
+      }
+    } else if (r < 0.58) {
+      let n = 0, tall = 0;
+      while (n < list.length && tall + list[n].h < a0 - 3000) { tall += list[n].h; n++; }
+      if (!n) { frames(2); what = "nothing to drop"; kind = "idle"; }
+      else if (window.__agyDeferTrim()) { frames(16); what = "drop held"; kind = "idle"; }
+      else if (atEnd) {
+        // A reader who follows the end has nothing handed over.
+        frames(pick(0, 3));
+        change(null, () => { list.splice(0, n).forEach(row => { row.isConnected = false; }); });
+        what = "dropped " + n + " under a reader who follows the end";
+        kind = "change";
+      } else {
+        frames(pick(0, 3));
+        const at = seenOf(top);
+        list.splice(0, n).forEach(row => { row.isConnected = false; });
+        place();
+        window.__agyRowsDrawn(el, rowsOf);
+        window.__agyKeepRows(el, top, at);
+        await microtasks();
+        what = "dropped " + n;
+        kind = "commit";
+      }
+    } else if (r < 0.78) {
+      const near = list.filter(row => row.y + row.h > a0 - 6000 && row.y < a0 + el.screen + 2500);
+      const row = near[pick(0, near.length - 1)];
+      const where = !onPage(row) ? "that was not laid out" : row.y + row.h <= a0 ? "above the screen" : row.y >= a0 + el.screen ? "under the screen" : row === top ? "at the top edge" : "on the screen";
+      if (!onPage(row)) change(row, x => { x.laidOut = true; });
+      else if (rnd() < 0.2 && row !== top) change(row, x => { x.laidOut = false; });
+      else change(row, x => { x.h = pick(40, 400); });
+      what = "a row " + where + " changes";
+      kind = "change";
+      // The conversation can come to rest before a frame has seen the change.
+      if (rnd() < 0.25) { now += 600; timersDue(); what += ", and the rest comes due before a frame"; }
+    } else if (r < 0.86) {
+      if (!atEnd) { frames(2); what = "no reply"; kind = "idle"; }
+      else {
+        // A reply is written at the end, and the bundle keeps the reader there.
+        const n = pick(1, 8);
+        for (let k = 0; k < n; k++) { now += 16; withRows(1, pick(40, 200)); scrollBy(last() - among()); frame(); }
+        what = "a reply of " + n + " rows";
+      }
+    } else if (r < 0.94) {
+      frames(pick(1, 30));
+      what = "frames";
+      kind = "idle";
+    } else {
+      pass(pick(450, 1500));
+      what = "rest";
+      kind = "idle";
+    }
+    trail.push(what + (off ? " (anchoring off)" : ""));
+    const told = " | seed " + seed + ", step " + i + ": " + trail.slice(-6).join(" > ");
+    if (kind) {
+      frames(3);
+      if (onPage(top)) {
+        const want = top.y - expected(kind, off, a0, top.y - y0);
+        assert.ok(Math.abs(seenOf(top) - want) <= 2, "the row at the top of the screen is at " + seenOf(top) + ", and a browser would have left it at " + want + told);
+      }
+    }
+    const room = el.room;
+    const at = el.top;
+    frames(4);
+    assert.strictEqual(el.room, room, "the room goes on changing with nothing happening" + told);
+    assert.strictEqual(el.top, at, "the position goes on changing with nothing happening" + told);
+    assert.ok(el.room >= 0 && Number.isFinite(el.room), "the room is " + el.room + told);
+  }`
+
+// On a page of its own for each seed, as an iPhone and as an Android phone, which has no room and leaves everything
+// to the browser.
+func TestRandomWalksLeaveTheRowAtTheTopWhereABrowserWould(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := scrollInputTracker
+	script = script[strings.Index(script, ">")+1:]
+	script = script[:strings.LastIndex(script, "</script>")]
+	scriptPath := filepath.Join(t.TempDir(), "tracker.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	harness := roomPage + "(async () => {" + roomWalk + "\n})().catch(e => { console.error(e); process.exit(1); });\n"
+	const android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36"
+	for _, c := range []struct {
+		name, ua string
+		walks    int
+	}{{"iPhone", "", 120}, {"Android", android, 30}} {
+		for seed := 1; seed <= c.walks; seed++ {
+			args := []string{"-e", harness, scriptPath}
+			if c.ua != "" {
+				args = append(args, c.ua)
+			}
+			cmd := exec.Command(node, args...)
+			cmd.Env = append(os.Environ(), "WALK_SEED="+strconv.Itoa(seed), "WALK_STEPS=80")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("%s, walk %d: %v\n%s", c.name, seed, err, out)
+			}
+		}
 	}
 }
 

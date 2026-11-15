@@ -2833,7 +2833,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // being put back counts a move made for another one.
   var shifts = new WeakMap();
   var roomFailures = new WeakMap();
-  var roomLaidOut = true;
+  // Conversations whose markup did not lay the room out when it was made: see resizeRoom.
+  var roomless = new WeakSet();
   // The write that last filled or cut each room, for as long as it is watched for being taken back.
   var roomWrites = new WeakMap();
   // Whether the bundle hands the move that keeps its rows in place to __agyKeepRows. One that makes the move itself,
@@ -3033,7 +3034,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var box = el && el.firstElementChild;
     return box && box.style ? box : null;
   }
-  function hasRoom(el) { return IOS && keepsRows && roomLaidOut && Boolean(roomBox(el)); }
+  function hasRoom(el) { return IOS && keepsRows && Boolean(roomBox(el)) && !roomless.has(el); }
   function roomOf(el) { return rooms.get(el) || 0; }
   function setRoom(el, px) {
     var box = roomBox(el);
@@ -3171,8 +3172,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // back as it was. Twice for a conversation, and its room is left alone.
   //
   // The room is padding on an element of the bundle's markup. Where that element is not taller by as much for it, the
-  // markup is not what this was written for, and the room is given up for good: rows would take their height from
-  // something that is not there.
+  // markup is not what this was written for, and that conversation's room is given up for good: rows would take
+  // their height from something that is not there.
   function resizeRoom(el, want) {
     var by = want - roomOf(el);
     var was = el.scrollTop;
@@ -3182,7 +3183,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     setRoom(el, want);
     if (!inner || Math.abs(inner.offsetHeight - tall - by) > 2) {
       setRoom(el, 0);
-      roomLaidOut = false;
+      roomless.add(el);
       roomEvent("none", by);
       return;
     }
@@ -3550,25 +3551,45 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     return !box.width && !box.height;
   }
   function rowsTall(el) { return el.scrollHeight - roomOf(el); }
-  // How far the row is from where it is kept. With room that leaves out how far the reader has scrolled since.
-  function awayOf(f) {
+  // Whether the position has fallen to the end since the last look. Nobody scrolls up and arrives at the end: something
+  // got shorter, which left the position past the end, and the browser cut it back.
+  function cutBack(f) {
+    var el = f.el;
+    return el.scrollHeight - el.clientHeight - el.scrollTop <= 1 && el.scrollTop < f.left;
+  }
+  // How far the row is from where it is kept, as far as room can put it back. With room that leaves out how far the
+  // reader has scrolled since, and what room cannot put back is given up: the row is kept where that leaves it.
+  //
+  // The end of the conversation is where it cannot. A reader there is where the end puts them: something that gets
+  // shorter leaves the position past the end, the browser cuts it back, and every row on the screen comes down. Room
+  // taken for that shortens the conversation again, the position is cut back again by as much, and the rows are
+  // where they were, to be taken for in every frame after. So rows that have come down are put back only as far as
+  // the conversation goes on under the screen. Room given at the end takes the reader off it, and for one who
+  // follows the end as a reply is written, a cut and the bundle's own move to the end can come between two looks
+  // and not be told apart. So at the end nothing is put back at all.
+  //
+  // Except in the commit that hands rows over, where nothing but the browser can have moved the position since the
+  // move was made: no input reaches the page before a microtask. There a position that has fallen to the end was
+  // cut back, which is not the reader's doing, and rows that the cut left higher are put back where they were.
+  function awayOf(f, inCommit) {
     var el = f.el;
     var off = f.row.getBoundingClientRect().top - el.getBoundingClientRect().top - f.offset;
     if (!f.roomy) return off;
-    var scrolled = el.scrollTop - shiftOf(el) - f.from;
-    // Rows that turn out shorter can leave the position past the end, and the browser cuts it back. That is not the
-    // reader, who cannot be scrolling down beyond the end, so it is made up for with the rest.
-    if (scrolled < 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1) {
-      noteShift(el, scrolled);
-      scrolled = 0;
-    }
-    return off + scrolled;
+    var top = el.scrollTop;
+    // Nothing is under the screen for a position that a bounce has carried past the end, either.
+    var below = Math.max(0, el.scrollHeight - el.clientHeight - top);
+    var atEnd = below <= 1;
+    if (cutBack(f)) noteShift(el, top - f.left);
+    var away = off + top - shiftOf(el) - f.from;
+    var back = atEnd && !inCommit ? 0 : Math.min(away, below);
+    f.offset += away - back;
+    return back;
   }
   // The first move is the bundle's own, to half a pixel. A position only goes to whole pixels in WebKit, so asking
   // again for less than one would ask on every frame and move nothing.
-  function putRow(f, least, roomOnly) {
+  function putRow(f, least, roomOnly, inCommit) {
     var el = f.el;
-    var off = awayOf(f);
+    var off = awayOf(f, inCommit);
     if (Math.abs(off) < least) off = 0;
     var rest = off - takeRoom(el, off);
     if (rest && !roomOnly) {
@@ -3683,9 +3704,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       else followers.delete(el);
       return;
     }
-    var first = awayOf(f);
+    var first = awayOf(f, true);
     if (Math.abs(first - roomFor(el, first)) >= KEEP_ROWS_STOP_MIN) stopFling(el, false);
-    putRow(f, 0.5, false);
+    putRow(f, 0.5, false, true);
     // No input reaches the page before a microtask, so whatever moved the row since is not the reader.
     Promise.resolve().then(function () {
       var on = true;
@@ -3693,13 +3714,14 @@ const scrollInputTracker = `<script id="agy-scroll-input">
         // A row replaced or hidden before the commit is over has no place left to measure.
         reportKept(f, "gone");
         on = f.roomy && turnToTop(f);
-      } else if (!f.roomy && Math.abs(el.scrollTop - f.left) > 1) {
+      } else if (!f.roomy && Math.abs(el.scrollTop - f.left) > 1 && !cutBack(f)) {
         // Something else in the same commit has moved the conversation since, as the bundle's navigator does when it
         // jumps to a step: the position is that script's now. With room the row is not put back by the position.
+        // A position the browser cut back to the end is nobody's jump, and the row is put back as ever.
         if (f.moved[0]) reportKept(f, "taken");
         on = false;
       } else {
-        putRow(f, 1, false);
+        putRow(f, 1, false, true);
         reportKept(f, f.moved[1]);
       }
       if (on) requestAnimationFrame(function () { followOn(f); });
