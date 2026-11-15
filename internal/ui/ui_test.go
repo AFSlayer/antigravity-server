@@ -429,4 +429,21 @@ func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
 	if got := read(logPath); got != "third\nfourth\n" {
 		t.Errorf("a file under the limit is added to, got %q", got)
 	}
+
+	// Something in the way of the kept file: the full one is emptied instead, as it was before any was kept.
+	if err := os.Remove(logPath + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(logPath+".1", "in-the-way"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	post("fifth, which takes it over the limit again")
+	post("sixth")
+	if got := read(logPath); got != "sixth\n" {
+		t.Errorf("a full file that cannot be kept is emptied, got %q", got)
+	}
+	post("seventh")
+	if got := read(logPath); got != "sixth\nseventh\n" {
+		t.Errorf("and written to again, got %q", got)
+	}
 }

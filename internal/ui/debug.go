@@ -90,12 +90,21 @@ func (d *Debug) open() error {
 
 // rotate starts a new file and keeps the full one beside it as path.1, in place of the one kept before. Emptying the
 // file instead lost the minutes that were being looked for: a trace is read when something went wrong, and that is
-// often what filled it.
+// often what filled it. Where the full one cannot be moved aside it is emptied after all, so that a trace never
+// takes more than twice the limit.
 func (d *Debug) rotate() error {
-	if err := os.Rename(d.path, d.path+".1"); err != nil && !os.IsNotExist(err) {
+	err := os.Rename(d.path, d.path+".1")
+	if err == nil || os.IsNotExist(err) {
+		return d.open()
+	}
+	if d.file == nil {
 		return err
 	}
-	return d.open()
+	if err := d.file.Truncate(0); err != nil {
+		return err
+	}
+	d.written = 0
+	return nil
 }
 
 func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {

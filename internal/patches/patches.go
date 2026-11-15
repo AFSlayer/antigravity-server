@@ -99,6 +99,12 @@ type Patch struct {
 	// while Find or FindRe fails to match, Apply reports StatusMissing instead of
 	// StatusNotNeeded so minifier drift is caught immediately.
 	Precondition func(body []byte) bool
+	// Requires names a patch listed earlier for the same target that this one
+	// builds on: its rewrite is only right where the other was made. Where the
+	// other did not apply, whatever the reason, this one is not tried and is
+	// reported as StatusNotNeeded, with the other named in Result.Without. The
+	// other's own status says why.
+	Requires string
 	// Enabled gates the patch on configuration; nil means always enabled.
 	Enabled func(Options) bool
 }
@@ -130,7 +136,8 @@ const (
 	StatusMissing
 	// StatusDisabled means configuration turned the patch off.
 	StatusDisabled
-	// StatusNotNeeded means the anchor was absent because upstream already addressed it.
+	// StatusNotNeeded means the anchor was absent because upstream already addressed it,
+	// or that the patch builds on another that did not apply.
 	StatusNotNeeded
 )
 
@@ -154,6 +161,9 @@ type Result struct {
 	Target   Target
 	Status   Status
 	Required bool
+	// Without names the patch this one builds on, when that one not having
+	// applied is why this one was not needed.
+	Without string
 }
 
 // Report is the set of results from one Apply call.
@@ -187,6 +197,7 @@ func (r Report) Missing() []Result {
 func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 	var report Report
 	var head []string
+	applied := map[string]bool{}
 
 	for _, p := range All() {
 		if p.Target != target {
@@ -197,6 +208,13 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 
 		if !p.enabled(opts) {
 			res.Status = StatusDisabled
+			report = append(report, res)
+			continue
+		}
+
+		if p.Requires != "" && !applied[p.Requires] {
+			res.Status = StatusNotNeeded
+			res.Without = p.Requires
 			report = append(report, res)
 			continue
 		}
@@ -238,6 +256,9 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 			}
 		}
 
+		if res.Status == StatusApplied {
+			applied[p.ID] = true
+		}
 		report = append(report, res)
 	}
 
@@ -264,7 +285,7 @@ func submatches(body []byte, loc []int) [][]byte {
 // appended to the /main.js URL so the bundle URL changes the moment the patches
 // or version change. It does not cover language server updates; the proxy's
 // ETag revalidation is what keeps browsers from running a stale bundle.
-const patchSetRevision = "2026-11-14-r13"
+const patchSetRevision = "2026-11-15-r11"
 
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()
@@ -286,6 +307,8 @@ func CacheKey(version string, opts Options) string {
 		h.Write([]byte(p.ID))
 		h.Write([]byte{0})
 		h.Write([]byte(p.replacement(opts)))
+		h.Write([]byte{0})
+		h.Write([]byte(p.Requires))
 		h.Write([]byte{0})
 	}
 

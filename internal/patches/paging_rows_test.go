@@ -1,6 +1,7 @@
 package patches
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,7 @@ func rowsKeptPatch(t *testing.T) Patch {
 
 func TestRowsKeptPatchHandsTheMoveToTheTracker(t *testing.T) {
 	got := applyOnly(t, "paging-keeps-rows-after-render", v232RowsKept, Options{})
-	want := `componentDidUpdate(a,b,c){a=this.props.viewportRef.current;c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?a&&c&&window.__agyKeepRows(a,c.element,c.offset):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`
+	want := `componentDidUpdate(a,b,c){a=this.props.viewportRef.current;c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`
 	if !strings.Contains(got, want) {
 		t.Errorf("got\n%s\nwant it to contain\n%s", got, want)
 	}
@@ -67,7 +68,8 @@ func TestRowsKeptPatchReportsAnUnknownForm(t *testing.T) {
 }
 
 // Runs the patched method. With the tracker it hands over the row and where it was, without it the bundle's own move
-// is made, and an update that kept no row does neither.
+// is made, and an update that kept no row does neither. The tracker is told of every drawing, where it has a hook to
+// be told by.
 func TestRowsKeptPatchRuns(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -104,6 +106,14 @@ assert.strictEqual(viewport.scrollTop, 2800, "the bundle's own move is not made 
 kept.componentDidUpdate({}, null, null);
 kept.componentDidUpdate({}, null, [{ element: gone, offset: 0 }]);
 assert.strictEqual(calls.length, 1, "nothing to hand over without a row");
+
+// Every drawing is told to a tracker that asks to be, before the row is handed over and when there is none to hand.
+const drawn = [];
+window.__agyRowsDrawn = el => drawn.push([el, calls.length]);
+kept.componentDidUpdate({}, null, null);
+kept.componentDidUpdate({}, null, [{ element: row, offset: 60 }]);
+assert.deepStrictEqual(drawn, [[viewport, 1], [viewport, 1]]);
+assert.strictEqual(calls.length, 2);
 `
 	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {
 		t.Fatalf("harness failed: %v\n%s", err, out)
@@ -288,7 +298,8 @@ const kept = () => events.filter(e => e.type === "agy-rows-kept").map(e => e.det
 }
 
 // Rows added above the reader wait for the conversation to stop moving, as rows dropped there do, except that a fling
-// at the top of the conversation has nowhere left to go.
+// at the top of the conversation has nowhere left to go. That is for a bundle that hands the tracker the move that
+// keeps the rows in place: one that makes it itself is not held back.
 func TestGrowWaitsForStillOrTheTop(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -322,6 +333,19 @@ const el = { scrollTop: 3000, scrollHeight: 9000, clientHeight: 666, isConnected
 const onEl = touches => ({ target: { closest: () => el }, touches });
 const ios = !process.argv[2];
 
+// A bundle that moves the position for its rows itself adds them when it always did, finger down or not.
+fire("touchstart", onEl([{}]));
+fire("touchmove", onEl([{}]));
+el.scrollTop = 2900;
+fire("scroll", { target: el });
+assert.strictEqual(window.__agyDeferGrow(), false, "nothing is held back for a bundle that does not hand its move over");
+fire("touchend", onEl([]));
+assert.deepStrictEqual(waits, []);
+now += 20000;
+el.scrollTop = 3000;
+
+// One that hands the move over says so each time it draws the conversation, and is answered from then on.
+window.__agyRowsDrawn(el);
 fire("scroll", { target: el });
 now += 5000;
 assert.strictEqual(window.__agyDeferGrow(), false, "a still conversation takes its rows at once");
@@ -461,11 +485,14 @@ const conversation = () => {
     getBoundingClientRect: () => ({ top: 100 }),
     get room() { return parseFloat(vars["--agy-top-room"]) || 0; },
     get anchoring() { return vars["--agy-top-anchor"] || "auto"; },
-    get scrollHeight() { return el.room + el.rows; },
+    // What the page lays out of the room: all of it, unless a test takes the rule away.
+    laidOut: true,
+    firstElementChild: { get offsetHeight() { return (el.laidOut ? el.room : 0) + el.rows; } },
+    get scrollHeight() { return Math.max(el.clientHeight, (el.laidOut ? el.room : 0) + el.rows); },
     get scrollTop() { return el.top; },
     set scrollTop(v) { el.writes++; el.top = v; },
   };
-  const row = { isConnected: true, y: 360, getBoundingClientRect: () => ({ top: 100 + el.room + row.y - el.top }) };
+  const row = { isConnected: true, y: 360, getBoundingClientRect: () => ({ top: 100 + (el.laidOut ? el.room : 0) + row.y - el.top }) };
   // Where the row is on the screen, which is what the reader sees.
   const seen = () => row.getBoundingClientRect().top - 100;
   const onEl = touches => ({ target: { closest: () => el }, touches });
@@ -480,6 +507,7 @@ const conversation = () => {
   if (!ios) {
     // Another phone's fling moves with the position, so it has no room and the position is written as before.
     const { el, row, seen, scrollBy, flick, rowsArrive } = conversation();
+    window.__agyRowsDrawn(el);
     scrollBy(0);
     pass(1000);
     assert.strictEqual(el.room, 0, "no room elsewhere");
@@ -493,9 +521,41 @@ const conversation = () => {
     assert.strictEqual(seen(), at);
     return;
   }
-  assert.ok(styles[0].textContent.includes("--agy-top-room") && styles[0].textContent.includes("overflow-anchor"), "the page is given the room's rule");
-  assert.ok(!styles[0].textContent.includes("scrollbar"), "and the scrollbar is left showing");
   assert.strictEqual(window.__agyGrowRadius, 2400, "rows are asked for from further away");
+
+  // A bundle that moves the position for its rows itself, as those before 2.32 do, would move it for rows the room had
+  // made up for. It never says it hands that move over, and the page is left as it was for it.
+  {
+    const old = conversation();
+    old.scrollBy(0);
+    pass(1000);
+    old.flick();
+    old.scrollBy(-40);
+    assert.strictEqual(styles.length, 0, "no rule is added to the page");
+    assert.strictEqual(old.el.room, 0, "no room is made");
+    assert.strictEqual(old.el.anchoring, "auto", "the browser's anchoring is left on");
+    assert.strictEqual(window.__agyDeferGrow(), false, "and its rows are not held back, fling or no fling");
+    assert.strictEqual(window.__agyTopRoom(old.el), 0, "its scrollbar is told of no room");
+    pass(1000);
+    assert.strictEqual(old.el.room, 0);
+    assert.strictEqual(old.el.writes, 0);
+    assert.deepStrictEqual(["agy-room", "agy-grow-wait", "agy-fling-stop"].map(type => named(type).length), [0, 0, 0]);
+
+    // One that hands it over says so the first time it draws the conversation. The scroll that opened the conversation
+    // is over by then, and the room is made without waiting for another.
+    window.__agyRowsDrawn(old.el);
+    assert.ok(styles[0].textContent.includes("--agy-top-room") && styles[0].textContent.includes("overflow-anchor"), "the page is given the room's rule");
+    assert.ok(!styles[0].textContent.includes("scrollbar"), "and the scrollbar is left showing");
+    assert.strictEqual(old.el.room, 0);
+    pass(416);
+    assert.strictEqual(old.el.room, ROOM, "room is made at the next rest");
+    assert.strictEqual(old.el.top, ROOM + 260);
+    window.__agyRowsDrawn(old.el);
+    assert.strictEqual(styles.length, 1, "the rule is added once");
+    old.el.isConnected = false;
+    events.length = 0;
+    now += 10000;
+  }
 
   // The conversation opens and comes to rest: the room is made, with the position moved by as much.
   const c = conversation();
@@ -694,32 +754,202 @@ const conversation = () => {
 	if out, err := exec.Command(node, "-e", harness, scriptPath, android).CombinedOutput(); err != nil {
 		t.Fatalf("harness failed on Android: %v\n%s", err, out)
 	}
+
+	// The two ways the room can turn out not to be there, each in a page of its own since the room is given up for the
+	// whole page: a conversation that leaves the page just after its room was filled, and a bundle whose markup the
+	// room's rule no longer fits.
+	gone := strings.Replace(harness, "(async () => {", `(async () => {
+  if (ios) {
+    const d = conversation();
+    window.__agyRowsDrawn(d.el);
+    d.scrollBy(0);
+    pass(416);
+    assert.strictEqual(d.el.room, ROOM);
+    // The conversation is closed in the next frame, and reads as at its top from then on.
+    d.el.isConnected = false;
+    d.el.top = 0;
+    for (let k = 0; k < 12; k++) frame();
+    assert.strictEqual(d.el.room, ROOM, "a conversation that left the page is not one iOS moved back");
+    const next = conversation();
+    next.scrollBy(0);
+    pass(416);
+    assert.strictEqual(next.el.room, ROOM, "and the next one still gets its room");
+    assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "top"]);
+
+    const e = conversation();
+    e.el.laidOut = false;
+    e.scrollBy(0);
+    pass(416);
+    assert.strictEqual(e.el.room, 0, "a room the page does not lay out is given up");
+    assert.strictEqual(e.el.top, 300, "with the position left where it was");
+    assert.deepStrictEqual(named("agy-room").pop(), { what: "none", by: ROOM });
+    // From then on rows are put back by writing the position, with a fling ended first, as before there was room.
+    e.flick();
+    e.scrollBy(-40);
+    const at = e.seen();
+    e.rowsArrive(4401, at);
+    assert.strictEqual(e.el.top, 260 + 4401);
+    assert.strictEqual(e.el.style.overflowY, "hidden");
+    assert.strictEqual(e.seen(), at);
+    assert.strictEqual(window.__agyTopRoom(e.el), 0, "and the scrollbar is told there is none");
+    const later = conversation();
+    later.scrollBy(0);
+    pass(1000);
+    assert.strictEqual(later.el.room, 0, "nor is it tried again on that page");
+    process.exit(0);
+  }`, 1)
+	if out, err := exec.Command(node, "-e", gone, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("harness failed for a room that is not there: %v\n%s", err, out)
+	}
+}
+
+// One long scroll is one episode, and its 120 samples are used up in the first two seconds. What the page did after
+// that is kept as events, short ones, until the episode is as large as still goes in one request.
+func TestDebugTracerKeepsEventsAfterItsSamples(t *testing.T) {
+	js := strings.TrimPrefix(mobileDebug, `<script id="agy-debug">`)
+	src, err := json.Marshal(strings.TrimSuffix(js, `</script>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runNode(t, `"use strict";
+const assert = require("assert");
+let now = 1000;
+let frames = [];
+const hooks = {};
+const posted = [];
+const style = { "--agy-top-room": "200000px" };
+const viewport = {
+  scrollTop: 203000, scrollHeight: 209000, clientHeight: 704, className: "h-full", tagName: "DIV",
+  style: { getPropertyValue: k => style[k] || "" },
+  getAttribute: k => (k === "data-testid" ? "autoscroll-viewport" : null),
+  getBoundingClientRect: () => ({ top: 0, bottom: 704, left: 0, width: 400, height: 704 }),
+  contains: () => false,
+};
+const root = { clientHeight: 800, scrollHeight: 800, scrollTop: 0, style: { getPropertyValue: () => "" }, appendChild: el => { el.parentNode = root; }, removeChild: () => {} };
+const doc = {
+  documentElement: root, body: {},
+  querySelector: sel => (sel === '[data-testid="autoscroll-viewport"]' ? viewport : null),
+  querySelectorAll: sel => (sel === "body *" ? [viewport] : []),
+  createElement: () => ({ style: {} }),
+  elementFromPoint: () => null,
+};
+global.getComputedStyle = () => ({ overflowY: "auto", paddingTop: "0px", paddingRight: "0px", paddingBottom: "0px", paddingLeft: "0px" });
+global.location = { pathname: "/" };
+const win = {
+  visualViewport: { width: 400, height: 800, offsetTop: 0, offsetLeft: 0, pageTop: 0, scale: 1, addEventListener: () => {} },
+  matchMedia: q => ({ matches: q === "(pointer: coarse)" }),
+  addEventListener: (name, fn) => { (hooks[name] = hooks[name] || []).push(fn); },
+  innerWidth: 400, innerHeight: 800, scrollY: 0, devicePixelRatio: 3,
+};
+const run = new Function("window", "setInterval", "document", "navigator", "screen", "performance", "fetch", "requestAnimationFrame", `+string(src)+`);
+run(win, () => 0, doc, { userAgent: "test", standalone: true }, { width: 400, height: 800 }, { now: () => now }, (url, init) => { posted.push(init.body); }, fn => { frames.push(fn); return frames.length; });
+const fire = (name, detail) => hooks[name].forEach(fn => fn({ detail }));
+const frame = () => { now += 16; viewport.scrollTop -= 7; const due = frames; frames = []; due.forEach(fn => fn()); };
+
+// Rows arrive every second or so and the reader goes on scrolling: every frame is a sample until there are 120.
+fire("agy-rows-kept", { moved: 2267, again: 0 });
+for (let k = 1; k <= 150; k++) { frame(); if (k % 50 === 0) fire("agy-rows-kept", { moved: 126, again: 0 }); }
+// From there the frames are left out and what happens is kept, in a line with the conversation's own numbers.
+fire("agy-room", { what: "stop", by: 310 });
+fire("agy-rows-kept", { moved: 4174, again: -176 });
+for (let k = 0; k < 40; k++) frame();
+// A scroll that goes on for minutes stops being recorded before the request would be too large to send.
+for (let k = 0; k < 900; k++) { now += 300; fire("agy-rows-kept", { moved: 100 + k, again: 0 }); frame(); }
+now += 5000;
+frame();
+assert.strictEqual(posted.length, 1, "one long scroll is one episode");
+const lines = posted[0].trimEnd().split("\n");
+assert.ok(lines[0].startsWith("=== ") && lines[0].includes("trigger=rows-kept:2267,0"));
+const full = lines.slice(1).filter(l => l.includes(" vv="));
+const brief = lines.slice(1).filter(l => !l.includes(" vv="));
+assert.strictEqual(full.length, 120, "the samples stop at 120");
+assert.ok(full[5].includes("ev=raf") && full[5].includes("scrollers=[autoscroll-viewport:st" + (203000 - 5 * 7) + "/sh209000/ch704/room200000]"), full[5]);
+assert.ok(brief[0].includes("ev=rows-kept:126,0 "), "the rows that arrive after the samples are full: " + brief[0]);
+assert.ok(/^  t= *\d+ ev=room-stop:310 +scrollers=\[autoscroll-viewport:st\d+\/sh209000\/ch704\/room200000\]$/.test(brief[1]), brief[1]);
+assert.ok(brief[2].includes("ev=rows-kept:4174,-176 "), brief[2]);
+assert.ok(brief.every(l => !l.includes("ev=raf")), "no frame is kept after the samples are full");
+const longest = Math.max(...brief.map(l => l.length + 1));
+assert.ok(brief.length > 100 && brief.length < 903, "events are kept for a good while, and then they stop too: " + brief.length);
+assert.ok(posted[0].length >= 56000 && posted[0].length < 56000 + longest, "at a size that still goes in one request: " + posted[0].length);
+`)
 }
 
 // The distance the bundle asks for older rows at, as 2.32 has it.
 const v232PagingConfig = `var O2a={startIndex:-50},R2a={expansion:{minBatchSize:15,multiplier:.5,maxBatchSize:50},timing:{throttleMs:100,retryDelayMs:1E3,oppositeDirectionCooldownMs:1E3},trigger:{innerRadiusPx:600,contractionSafetyPx:8E3,outerRadiusPx:1.5E4}};`
 
-// The scroll tracker's distance is used where it gives one, and the bundle's own where it gives none.
+// The scroll tracker's distance is used where it gives one, and the bundle's own where it gives none. Only a bundle
+// that hands the tracker the move that keeps its rows in place is changed at all.
 func TestRowsAreAskedForFromFurtherAwayOnIOS(t *testing.T) {
-	got := applyOnly(t, "paging-loads-rows-ahead", v232PagingConfig, Options{})
+	got, status := applyWithStatus(t, "paging-loads-rows-ahead", v232PagingConfig+v232RowsKept, Options{})
 	want := `trigger:{innerRadiusPx:(window.__agyGrowRadius||600),contractionSafetyPx:8E3,outerRadiusPx:1.5E4}}`
-	if !strings.Contains(got, want) {
-		t.Errorf("got\n%s\nwant it to contain\n%s", got, want)
+	if status != StatusApplied || !strings.Contains(got, want) {
+		t.Errorf("status %v, got\n%s\nwant it to contain\n%s", status, got, want)
 	}
 	if !strings.Contains(got, `expansion:{minBatchSize:15,multiplier:.5,maxBatchSize:50}`) {
 		t.Error("the rest of the configuration was changed")
 	}
 	// The minifier wraps lines after commas, colons and braces, and writes a round number its own way.
 	wrapped := "trigger:\n{innerRadiusPx:\n6E2,\ncontractionSafetyPx:8E3"
-	if out := applyOnly(t, "paging-loads-rows-ahead", wrapped, Options{}); !strings.Contains(out, "(window.__agyGrowRadius||6E2)") {
+	if out := applyOnly(t, "paging-loads-rows-ahead", wrapped+v232RowsKept, Options{}); !strings.Contains(out, "(window.__agyGrowRadius||6E2)") {
 		t.Errorf("a wrapped configuration was not matched: %s", out)
 	}
 	// A bundle that names the distance some other way is reported, and one without this paging needs nothing.
 	renamed := strings.Replace(v232PagingConfig, "trigger:{innerRadiusPx:600,", "trigger:{contractionSafetyPx:8E3,innerRadiusPx:600,", 1)
-	if _, status := applyWithStatus(t, "paging-loads-rows-ahead", renamed, Options{}); status != StatusMissing {
+	if _, status := applyWithStatus(t, "paging-loads-rows-ahead", renamed+v232RowsKept, Options{}); status != StatusMissing {
 		t.Errorf("a changed configuration: status %v, want %v", status, StatusMissing)
 	}
 	if _, status := applyWithStatus(t, "paging-loads-rows-ahead", `var a={startIndex:-50};`, Options{}); status != StatusNotNeeded {
 		t.Errorf("a bundle without the configuration: status %v, want %v", status, StatusNotNeeded)
+	}
+}
+
+// The bundles before 2.32 have the same paging, the same scrollbar and the same button for older messages, and move the
+// position for their rows themselves. Rows asked for sooner would reach them in the middle of a fling, and room they
+// do not take rows from would only stand above the conversation. So what is built on the hand-over is left out where
+// there is none: with a bundle that has no such component, with one whose component this does not match, and when the
+// hand-over is switched off.
+func TestPatchesBuiltOnTheHandOverNeedIt(t *testing.T) {
+	older := v232PagingConfig + v232ScrollbarMeasure + v232ScrollbarClick + ";" + v232ScrollbarTimeline + v232ScrollbarTrack
+	changed := strings.Replace(v232RowsKept, "Math.abs(c)>=.5&&(a.scrollTop+=c)", "a.scrollBy(0,c)", 1)
+	built := []string{"paging-loads-rows-ahead", "scrollbar-measures-rows", "scrollbar-click-lands-in-rows", "scrollbar-thumb-by-script"}
+	for _, c := range []struct {
+		name, src string
+		opts      Options
+		handOver  Status
+		want      Status
+	}{
+		{"a bundle before 2.32", older, Options{}, StatusNotNeeded, StatusNotNeeded},
+		{"a component in another form", older + changed, Options{}, StatusMissing, StatusNotNeeded},
+		{"the hand-over switched off", older + v232RowsKept, Options{Disabled: map[string]bool{"paging-keeps-rows-after-render": true}}, StatusDisabled, StatusNotNeeded},
+		{"2.32", older + v232RowsKept, Options{}, StatusApplied, StatusApplied},
+	} {
+		out, report := Apply(MainJS, []byte(c.src), c.opts)
+		got := map[string]Result{}
+		for _, r := range report {
+			got[r.ID] = r
+		}
+		if got["paging-keeps-rows-after-render"].Status != c.handOver {
+			t.Errorf("%s: the hand-over is %v, want %v", c.name, got["paging-keeps-rows-after-render"].Status, c.handOver)
+		}
+		// Doctor says which patch each one went without.
+		without := ""
+		if c.want == StatusNotNeeded {
+			without = "paging-keeps-rows-after-render"
+		}
+		for _, id := range built {
+			if got[id].Status != c.want || got[id].Without != without {
+				t.Errorf("%s: %s is %v without %q, want %v without %q", c.name, id, got[id].Status, got[id].Without, c.want, without)
+			}
+		}
+		if untouched := strings.HasPrefix(string(out), older); untouched != (c.want != StatusApplied) {
+			t.Errorf("%s: the paging and the scrollbar left as they were: %v", c.name, untouched)
+		}
+	}
+	for _, p := range All() {
+		for _, id := range built {
+			if p.ID == id && p.Requires != "paging-keeps-rows-after-render" {
+				t.Errorf("%s does not say it needs the hand-over", id)
+			}
+		}
 	}
 }

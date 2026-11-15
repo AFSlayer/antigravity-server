@@ -127,7 +127,7 @@ var (
 	pagingRowsKeptRe                      = regexp.MustCompile(`(componentDidUpdate\([a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\)\{([a-zA-Z0-9_$]+)=\s*this\.props\.viewportRef\.current;\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\?\.find\(\(\{element:\s*[a-zA-Z0-9_$]+\}\s*\)=>\s*[a-zA-Z0-9_$]+\.isConnected\);\s*)([a-zA-Z0-9_$]+&&\s*[a-zA-Z0-9_$]+&&\s*\([a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.element\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.offset,\s*Math\.abs\([a-zA-Z0-9_$]+\)>=\s*\.5&&\s*\([a-zA-Z0-9_$]+\.scrollTop\+=\s*[a-zA-Z0-9_$]+\)\))\}`)
 	scrollbarMeasureRe                    = regexp.MustCompile(`(var\s+([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\?\s*([a-zA-Z0-9_$]+)\.scrollLeft:\s*[a-zA-Z0-9_$]+\.scrollTop,\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+\.scrollWidth:\s*[a-zA-Z0-9_$]+\.scrollHeight,\s*[a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+\.clientWidth:\s*[a-zA-Z0-9_$]+\.clientHeight;\s*[a-zA-Z0-9_$]+\.pos=\s*[a-zA-Z0-9_$]+;\s*[a-zA-Z0-9_$]+\.scrollLength=\s*[a-zA-Z0-9_$]+;\s*[a-zA-Z0-9_$]+\.clientLength=\s*[a-zA-Z0-9_$]+;)`)
 	scrollbarTrackClickRe                 = regexp.MustCompile(`(Math\.min\(\s*[a-zA-Z0-9_$]+,\s*Math\.max\(\s*0,\s*[a-zA-Z0-9_$]+-\s*[a-zA-Z0-9_$]+/2\)\)/\s*[a-zA-Z0-9_$]+\*\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*)([a-zA-Z0-9_$]+)`)
-	scrollbarTimelineRe                   = regexp.MustCompile(`(function\s+[a-zA-Z0-9_$]+\(\)\{var\s+[a-zA-Z0-9_$]+=\s*globalThis\.ScrollTimeline;\s*return\s+typeof\s+[a-zA-Z0-9_$]+==="function")(\?\s*[a-zA-Z0-9_$]+:null\})`)
+	scrollbarTimelineRe                   = regexp.MustCompile(`(function\s+[a-zA-Z0-9_$]+\(\)\{var\s+[a-zA-Z0-9_$]+=\s*globalThis\.ScrollTimeline;\s*return\s+typeof\s+[a-zA-Z0-9_$]+===\s*"function")(\?\s*[a-zA-Z0-9_$]+:\s*null\})`)
 	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+(?:\.current)?)\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
 	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:\s*"ping"\s*\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for \d+ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)(\d+(?:E\d+)?)(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*\d+(?:E\d+)?\s*\)\s*\})`)
@@ -1026,14 +1026,17 @@ func All() []Patch {
 		// A second after older rows load above the reader, the bundle drops the rows far above them and moves the position
 		// up by what it dropped, usually while the reader is still scrolling up. On an iPhone the position then runs back
 		// down the conversation by 300 to 1000 px, and a finger still down drags on from where it was. An update that only
-		// drops rows from the top waits, retried until the conversation is still. One that adds rows above waits the same
-		// way: since 2.32 the bundle asks for them 600 px before the top, in the middle of a fling, and the reader lands
-		// as far up the new rows as they are tall. It is asked about more often, because a reader who has stopped is
-		// waiting for those rows. Optional because the paging code is not known to be in every supported bundle; the live
-		// bundle test reports it missing where the paging code is.
+		// drops rows from the top waits, retried until the conversation is still. One that adds rows above is put to the
+		// scroll tracker as well: since 2.32 the bundle asks for them in the middle of a fling, and a position moved for
+		// them then is taken back, so the reader lands as far up the new rows as they are tall. The tracker lets them in
+		// when it has room above the first row to put them in, and otherwise has them wait the same way. It is asked
+		// about those more often, because a reader who has stopped may be waiting for them. It only has an answer for a
+		// bundle that hands it the move that keeps the rows in place, which is the next patch: a bundle before 2.32 is
+		// asked nothing new by this, and adds its rows when it always did. Optional because the paging code is not known
+		// to be in every supported bundle; the live bundle test reports it missing where the paging code is.
 		{
 			ID:       "paging-trim-waits-for-still",
-			Desc:     "On iOS, add or drop rows above the reader only once the conversation has stopped moving",
+			Desc:     "On iOS, hold rows the bundle would add or drop above the reader until the scroll tracker lets them through",
 			Target:   MainJS,
 			Kind:     Regexp,
 			FindRe:   pagingTrimWaitsRe,
@@ -1044,8 +1047,10 @@ func All() []Patch {
 		// change, and relies on the browser's scroll anchoring for anything that shifts them after that. Tables do: each
 		// finds its width in a layout effect and is drawn again with shorter cells. WebKit does not anchor after a script
 		// moved the position, so on an iPhone the rows ended up to 350 px off. The move is handed to the scroll tracker,
-		// which makes it again once that drawing is done. Bundles before 2.32 have no such component, and one that has it
-		// in a form this does not match is reported.
+		// which makes it again once that drawing is done. The tracker is also told of every drawing, rows moved or not:
+		// being told is how it knows, before the first rows arrive, that the move is its own to make, and only then does
+		// it keep room for them on iOS. Bundles before 2.32 have no such component and go on moving the position
+		// themselves, and one that has it in a form this does not match is reported.
 		{
 			ID:       "paging-keeps-rows-after-render",
 			Desc:     "Keep the rows on screen in place when older rows load, through the second drawing of their tables",
@@ -1056,12 +1061,14 @@ func All() []Patch {
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("getAnchorCandidates")) && bytes.Contains(b, []byte("getSnapshotBeforeUpdate"))
 			},
-			Replace: `${1}window.__agyKeepRows?${2}&&${3}&&window.__agyKeepRows(${2},${3}.element,${3}.offset):${4}}`,
+			Replace: `${1}window.__agyKeepRows?(window.__agyRowsDrawn?.(${2}),${2}&&${3}&&window.__agyKeepRows(${2},${3}.element,${3}.offset)):${4}}`,
 		},
 		// The bundle asks for older rows once the first row is within 600 px of the screen. Drawing them takes a phone
 		// 0.3 to 0.5 s, and a flick covers that distance sooner, so the reader arrived at the top of what was loaded
 		// before the rows did. On iOS the scroll tracker keeps room for rows to arrive in during a fling, and asks for
-		// them from further away. Elsewhere, and without the tracker, the bundle's own distance stays.
+		// them from further away. Elsewhere, and without the tracker, the bundle's own distance stays. So it does in a
+		// bundle that moves the position for its rows itself: asked for sooner, they would arrive in the middle of a
+		// fling more often, with nowhere to go but a position that is taken back.
 		{
 			ID:       "paging-loads-rows-ahead",
 			Desc:     "On iOS, ask for older rows while the reader is still some way from the first one loaded",
@@ -1069,6 +1076,7 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   pagingGrowRadiusRe,
 			Optional: true,
+			Requires: "paging-keeps-rows-after-render",
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("innerRadiusPx")) && bytes.Contains(b, []byte("contractionSafetyPx"))
 			},
@@ -1091,7 +1099,8 @@ func All() []Patch {
 		// room was filled back up. It is told how much room there is and leaves it out, so the thumb is as tall as the
 		// rows are, where the reader is among them, and a click on its track lands among them too. Its thumb is moved by
 		// a scroll timeline where the browser has one, which runs the whole range and cannot leave any out, so with room
-		// to leave out it is moved by script as it is elsewhere. Without the tracker, and off iOS, nothing changes.
+		// to leave out it is moved by script as it is elsewhere. Without the tracker, and off iOS, nothing changes. Nor
+		// is any of it done to a bundle that does not hand over the move the room depends on, which gets no room.
 		{
 			ID:       "scrollbar-measures-rows",
 			Desc:     "Leave the room kept above the conversation out of what its scrollbar shows",
@@ -1099,6 +1108,7 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   scrollbarMeasureRe,
 			Optional: true,
+			Requires: "paging-keeps-rows-after-render",
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("data-overlay-scrollbar-track"))
 			},
@@ -1111,6 +1121,7 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   scrollbarTrackClickRe,
 			Optional: true,
+			Requires: "paging-keeps-rows-after-render",
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("data-overlay-scrollbar-track"))
 			},
@@ -1123,6 +1134,7 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   scrollbarTimelineRe,
 			Optional: true,
+			Requires: "paging-keeps-rows-after-render",
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("data-overlay-scrollbar-track")) && bytes.Contains(b, []byte("globalThis.ScrollTimeline"))
 			},
@@ -2809,6 +2821,11 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // being put back counts a move made for another one.
   var shifts = new WeakMap();
   var roomFailures = 0;
+  var roomLaidOut = true;
+  // Whether the bundle hands the move that keeps its rows in place to __agyKeepRows. One that makes the move itself,
+  // as every bundle before 2.32 does, would move the position for rows the room had already made up for: it gets no
+  // room, and its rows are not held back. See rowsHandedOver.
+  var keepsRows = false;
   var restTimer = 0;
   var resting = new Set();
   var unanchored = new WeakSet();
@@ -2954,20 +2971,33 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // The browser's own anchoring knows nothing of the room and would move the position for rows it has already made up
   // for, so it is off from when rows above may change until the conversation is at rest. The bundle sets the property
   // on the conversation itself as the reader starts and stops following the end, so it is set on what is inside.
-  if (IOS && typeof document !== "undefined" && document.createElement) {
-    var roomStyle = document.createElement("style");
-    roomStyle.id = "agy-top-room";
-    roomStyle.textContent = VIEWPORT + '>div:first-child{overflow-anchor:var(--agy-top-anchor,auto)}' +
-      VIEWPORT + '>div:first-child::before{content:"";display:block;height:var(--agy-top-room,0px)}';
-    (document.head || document.documentElement).appendChild(roomStyle);
+  //
+  // All of it depends on the rows being put back here, where the room can take them. The bundle says it hands that
+  // move over by calling after every drawing of the conversation, from the place it hands it over, so this is known
+  // before the first rows arrive. Until then, and for a bundle that never calls, the page is as it was: no rule, no
+  // room, and no rows held back for want of it.
+  function rowsHandedOver(el) {
+    if (keepsRows) return;
+    keepsRows = true;
+    if (!IOS) return;
+    if (typeof document !== "undefined" && document.createElement) {
+      var roomStyle = document.createElement("style");
+      roomStyle.id = "agy-top-room";
+      roomStyle.textContent = VIEWPORT + '>div:first-child{overflow-anchor:var(--agy-top-anchor,auto)}' +
+        VIEWPORT + '>div:first-child::before{content:"";display:block;height:var(--agy-top-room,0px)}';
+      (document.head || document.documentElement).appendChild(roomStyle);
+    }
+    // The scroll that opened this conversation may be over, with no other to come before the reader's own.
+    if (hasRoom(el)) waitForRest(el);
   }
+  window.__agyRowsDrawn = rowsHandedOver;
   // The bundle's own scrollbar reads the position and the height, and the room is most of both. It asks here how much
   // to leave out, so its thumb shows where the reader is among the rows.
   if (IOS) window.__agyTopRoom = function (el) { return roomOf(el); };
   // With room for them, rows are asked for from further away than the bundle's 600 px: a flick at 4,000 px a second
   // covers this in the 0.5 s a phone takes to draw them, with a little to spare.
   window.__agyGrowRadius = IOS ? 2400 : 0;
-  function hasRoom(el) { return IOS && Boolean(el && el.style && el.style.setProperty); }
+  function hasRoom(el) { return IOS && keepsRows && roomLaidOut && Boolean(el && el.style && el.style.setProperty); }
   function roomOf(el) { return rooms.get(el) || 0; }
   function setRoom(el, px) {
     px = Math.max(0, px);
@@ -3046,10 +3076,22 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // The room and the position change by the same amount, so nothing on screen moves. A finger can still land in the
   // instant this is written, and iOS then puts back a position that is now tens of thousands of pixels from the same
   // rows. The frames after are watched for that, and the room is put back as it was. Twice, and it is left alone.
+  //
+  // The room is a rule over the bundle's markup. Where the conversation is no taller for it the markup has changed,
+  // and the room is given up for good: rows would take their height from something that is not there.
   function resizeRoom(el, want) {
     var by = want - roomOf(el);
     var was = el.scrollTop;
+    // What is inside the conversation, since the conversation itself is never shorter than the screen.
+    var inner = el.firstElementChild;
+    var tall = inner ? inner.offsetHeight : 0;
     setRoom(el, want);
+    if (!inner || Math.abs(inner.offsetHeight - tall - by) > 2) {
+      setRoom(el, 0);
+      roomLaidOut = false;
+      roomEvent("none", by);
+      return;
+    }
     el.scrollTop = was + by;
     var set = el.scrollTop;
     noteShift(el, set - was);
@@ -3059,6 +3101,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     if (Math.abs(by) < ROWS_MOVE_MIN) return;
     var frames = ROOM_CHECK_FRAMES;
     requestAnimationFrame(function check() {
+      // A conversation that has left the page reads as at its top, which is not iOS taking the position back.
+      if (!el.isConnected) return;
       var top = el.scrollTop;
       if (Math.abs(top - was) < Math.abs(top - set)) {
         setRoom(el, roomOf(el) - by);
@@ -3241,13 +3285,19 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     return waitForStill(trimWait, "agy-trim-wait", false);
   };
 
-  // Asked before it adds rows above the reader, which moves the position down by what it adds. Since 2.32 the bundle
-  // asks 600 px before the top instead of 150, with the fling still at speed, and the fling carries on from where it
-  // was: the reader lands that far up the new rows, and a move under ROWS_MOVE_MIN does not even end it. So these rows
-  // wait as well. A fling that has reached the top has nowhere left to go, and the rows that arrive end its bounce.
-  // With room above the first row there is nothing to wait for: the rows take their height from it, whatever the
-  // conversation is doing. The top a fling can reach is then the first row, where the room ends.
+  // Asked before it adds rows above the reader. With room above the first row they take their height from it and
+  // nothing is written, so the conversation's moving is no reason to wait: near the screen they are let in at once,
+  // and further off once it is idle, since drawing them holds the page.
+  //
+  // Without that much room the position has to move down by what they add. Since 2.32 the bundle asks with the fling
+  // still at speed, and the fling carries on from where it was: the reader lands that far up the new rows, and a move
+  // under ROWS_MOVE_MIN does not even end it. So then they wait as dropped rows do, except that a fling which has
+  // reached the first row has nowhere left to go, and the rows that arrive end its bounce.
+  //
+  // A bundle that puts its rows back itself is asked as well. It adds them when it likes, as it did before it was
+  // asked: the rows cannot be made to arrive any better for it by having them wait.
   window.__agyDeferGrow = function () {
+    if (!keepsRows) return false;
     var el = movedEl && movedEl.isConnected ? movedEl : null;
     var now = performance.now();
     if (el && roomOf(el) >= ROOM_NEED) {
@@ -3302,8 +3352,10 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     var frames = KEEP_ROWS_FRAMES;
     var moved = [];
     var left = 0;
-    var roomy = hasRoom(el);
     var tall = 0;
+    // Whoever calls has handed the move over, having said so first or not.
+    rowsHandedOver(el);
+    var roomy = hasRoom(el);
     keptAt = performance.now();
     holdAnchoring(el);
     var from = el.scrollTop - shiftOf(el);
@@ -3337,9 +3389,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       else left = el.scrollTop;
       if (frames-- > 0) requestAnimationFrame(again);
     }
-    function report(again) {
-      if (!moved[0] && !again) return;
-      try { window.dispatchEvent(new CustomEvent("agy-rows-kept", { detail: { moved: moved[0], again: again } })); } catch (e) {}
+    function report(after) {
+      if (!moved[0] && !after) return;
+      try { window.dispatchEvent(new CustomEvent("agy-rows-kept", { detail: { moved: moved[0], again: after } })); } catch (e) {}
     }
     var first = away();
     if (Math.abs(first - roomFor(el, first)) >= KEEP_ROWS_STOP_MIN) stopFling(el, false);
@@ -3573,25 +3625,34 @@ const mobileDebug = `<script id="agy-debug">
   }
 
   var lines = null;
+  // How many characters the episode has come to, and how many it may come to before its events stop being kept.
+  var size = 0;
+  var EVENTS_UP_TO = 56000;
   var startedAt = 0;
   var deadline = 0;
   var raf = 0;
   var last = "";
 
+  function keep(line) {
+    lines.push(line);
+    size += line.length + 1;
+  }
+
   function push(ev) {
     // Safari drops a keepalive body over 64KB, so stay well inside one request. A full episode also skips the
     // state, which reads the whole page's layout. A long scroll fills one in two seconds, and what the page did after
-    // that is in its events, so those go on being kept, with the conversation's numbers alone.
+    // that is in its events, so those go on being kept, with the conversation's numbers alone, while the episode is
+    // short of EVENTS_UP_TO. Its samples come to about 41,000 characters, which leaves room for some 150 events.
     if (lines.length > 120) {
-      if (ev !== "raf" && lines.length <= 320) {
-        lines.push("  t=" + pad(n(performance.now() - startedAt), 5) + " ev=" + padR(ev, 13) + " scrollers=[" + conversation() + "]");
+      if (ev !== "raf" && size < EVENTS_UP_TO) {
+        keep("  t=" + pad(n(performance.now() - startedAt), 5) + " ev=" + padR(ev, 13) + " scrollers=[" + conversation() + "]");
       }
       return;
     }
     var s = state();
     if (ev === "raf" && s === last) return;
     last = s;
-    lines.push("  t=" + pad(n(performance.now() - startedAt), 5) + " ev=" + padR(ev, 13) + " " + s);
+    keep("  t=" + pad(n(performance.now() - startedAt), 5) + " ev=" + padR(ev, 13) + " " + s);
   }
 
   function flush() {
@@ -3620,10 +3681,11 @@ const mobileDebug = `<script id="agy-debug">
   function begin(ev, ms) {
     if (!lines) {
       lines = [];
+      size = 0;
       startedAt = performance.now();
       last = "";
       episodes++;
-      lines.push(
+      keep(
         "=== " + new Date().toISOString() +
         " session=" + session + " ep=" + episodes + " trigger=" + ev +
         " standalone=" + (navigator.standalone === true) +
@@ -3703,7 +3765,8 @@ const mobileDebug = `<script id="agy-debug">
     begin("rows-kept" + (e.detail ? ":" + e.detail.moved + "," + e.detail.again : ""), 1500);
   });
   // The room above the first row filled back up or given up at rest (top), that undone because the position was taken
-  // back (back), and a reader who reached the room stopped at the first row (stop), each with how many pixels.
+  // back (back), a reader who reached the room stopped at the first row (stop), and the room given up for good because
+  // the page does not lay it out (none), each with how many pixels.
   window.addEventListener("agy-room", function (e) {
     begin("room-" + (e.detail ? e.detail.what + ":" + e.detail.by : ""), 1500);
   });

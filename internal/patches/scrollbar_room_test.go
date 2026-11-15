@@ -14,6 +14,9 @@ const (
 	v232ScrollbarClick    = `ea>0&&(ta=Math.min(ea,Math.max(0,ta-ra/2))/ea*pa,h?oa.scrollLeft=ta:oa.scrollTop=ta,A.pos=h?oa.scrollLeft:oa.scrollTop,Z(!0))`
 	v232ScrollbarTimeline = `function TQb(){var a=globalThis.ScrollTimeline;return typeof a==="function"?a:null}`
 	v232ScrollbarTrack    = `B.createElement("div",{ref:l,"data-testid":"overlay-scrollbar","data-overlay-scrollbar-track":""});`
+	// What else of the bundle these patches go by: the scrollbar's track, and the component that hands the tracker the
+	// move that keeps the rows in place. Without that there is no room for a scrollbar to leave out.
+	v232RoomBundle = v232ScrollbarTrack + v232RowsKept
 )
 
 func TestScrollbarPatchesLeaveTheRoomOut(t *testing.T) {
@@ -26,25 +29,43 @@ func TestScrollbarPatchesLeaveTheRoomOut(t *testing.T) {
 			`function TQb(){var a=globalThis.ScrollTimeline;return typeof a==="function"&&!window.__agyTopRoom?a:null}`},
 	}
 	for _, c := range cases {
-		got := applyOnly(t, c.id, c.src+v232ScrollbarTrack, Options{})
+		got := applyOnly(t, c.id, c.src+v232RoomBundle, Options{})
 		if !strings.Contains(got, c.want) {
 			t.Errorf("%s: got\n%s\nwant it to contain\n%s", c.id, got, c.want)
 		}
-		// The minifier wraps lines after commas, semicolons and operators.
-		wrapped := strings.NewReplacer(",", ",\n", ";", ";\n", "?", "?\n", "=", "=\n").Replace(c.src)
-		if c.id == "scrollbar-thumb-by-script" {
-			wrapped = strings.Replace(c.src, ";return", ";\nreturn", 1)
-		}
-		compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
-		if out := applyOnly(t, c.id, wrapped+v232ScrollbarTrack, Options{}); !strings.Contains(compact(out), compact(c.want)) {
-			t.Errorf("%s: a wrapped source was not matched:\n%s", c.id, out)
-		}
 		// A bundle with the scrollbar in some other form is reported, and one without it needs nothing.
-		if _, status := applyWithStatus(t, c.id, "var x=1;"+v232ScrollbarTrack+`var y=globalThis.ScrollTimeline;`, Options{}); status != StatusMissing {
+		if _, status := applyWithStatus(t, c.id, "var x=1;"+v232RoomBundle+`var y=globalThis.ScrollTimeline;`, Options{}); status != StatusMissing {
 			t.Errorf("%s: a changed scrollbar: status %v, want %v", c.id, status, StatusMissing)
 		}
 		if _, status := applyWithStatus(t, c.id, "var x=1;", Options{}); status != StatusNotNeeded {
 			t.Errorf("%s: a bundle without the scrollbar: status %v, want %v", c.id, status, StatusNotNeeded)
+		}
+	}
+}
+
+// A release breaks the bundle's long lines in different places. Each of these applies the same way with a line break
+// wherever the minifier could put one.
+func TestRoomPatchesMatchALineBreakAtAnyToken(t *testing.T) {
+	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for _, c := range []struct{ id, src string }{
+		{"paging-loads-rows-ahead", v232PagingConfig},
+		{"scrollbar-measures-rows", v232ScrollbarMeasure},
+		{"scrollbar-click-lands-in-rows", v232ScrollbarClick + ";"},
+		{"scrollbar-thumb-by-script", v232ScrollbarTimeline},
+	} {
+		base, status := applyWithStatus(t, c.id, c.src+v232RoomBundle, Options{})
+		if status != StatusApplied {
+			t.Fatalf("%s: the patch did not apply: %v", c.id, status)
+		}
+		positions := lineBreakPositions(c.src)
+		if len(positions) < 5 {
+			t.Fatalf("%s: only %d break positions", c.id, len(positions))
+		}
+		for _, pos := range positions {
+			broken := c.src[:pos] + "\n" + c.src[pos:]
+			if out, status := applyWithStatus(t, c.id, broken+v232RoomBundle, Options{}); status != StatusApplied || compact(out) != compact(base) {
+				t.Errorf("%s: a line break at offset %d is not matched: %q", c.id, pos, c.src[max(0, pos-30):min(len(c.src), pos+30)])
+			}
 		}
 	}
 }
@@ -55,11 +76,11 @@ func TestScrollbarShowsWhereTheReaderIsAmongTheRows(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed")
 	}
-	measure := applyOnly(t, "scrollbar-measures-rows", v232ScrollbarMeasure+v232ScrollbarTrack, Options{})
+	measure := applyOnly(t, "scrollbar-measures-rows", v232ScrollbarMeasure+v232RoomBundle, Options{})
 	measure = measure[:strings.Index(measure, "if(!(ra>0")]
-	click := applyOnly(t, "scrollbar-click-lands-in-rows", v232ScrollbarClick+v232ScrollbarTrack, Options{})
+	click := applyOnly(t, "scrollbar-click-lands-in-rows", v232ScrollbarClick+v232RoomBundle, Options{})
 	click = click[:strings.Index(click, ",A.pos=h?")] + ")"
-	timeline := applyOnly(t, "scrollbar-thumb-by-script", v232ScrollbarTimeline+v232ScrollbarTrack, Options{})
+	timeline := applyOnly(t, "scrollbar-thumb-by-script", v232ScrollbarTimeline+v232RoomBundle, Options{})
 	timeline = timeline[:strings.Index(timeline, "B.createElement")]
 	harness := `
 const assert = require("assert");
@@ -146,10 +167,12 @@ const el = {
   style: { overflowY: "", setProperty: (k, v) => { vars[k] = v; }, removeProperty: k => { delete vars[k]; } },
   matches: () => true, closest: () => el, querySelector: () => older,
   get room() { return parseFloat(vars["--agy-top-room"]) || 0; },
+  firstElementChild: { get offsetHeight() { return el.room + el.rows; } },
   get scrollHeight() { return el.room + el.rows; },
   get scrollTop() { return el.top; },
   set scrollTop(v) { el.top = Math.round(Math.min(el.scrollHeight - el.clientHeight, Math.max(0, v))); },
 };
+window.__agyRowsDrawn(el);
 fire("scroll", { target: el });
 pass(600);
 if (!ios) {

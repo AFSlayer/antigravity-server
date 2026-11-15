@@ -213,7 +213,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
 		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else if(Z.startIndex<oa.startIndex&&window.__agyDeferGrow?.())K(100);else{`,
-		`c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?a&&c&&window.__agyKeepRows(a,c.element,c.offset):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`,
+		`c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
@@ -460,6 +460,7 @@ func TestCacheKeyChangesWithPatchSet(t *testing.T) {
 
 func TestEveryPatchIsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
+	targets := map[string]Target{}
 
 	for _, p := range All() {
 		if p.ID == "" {
@@ -469,7 +470,12 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 		if seen[p.ID] {
 			t.Errorf("%s: duplicate patch ID", p.ID)
 		}
+		// Apply goes down the list once, so a patch can only build on one that came before it for the same document.
+		if target, listed := targets[p.Requires]; p.Requires != "" && (!listed || target != p.Target) {
+			t.Errorf("%s: requires %q, which is not listed before it for %s", p.ID, p.Requires, p.Target)
+		}
 		seen[p.ID] = true
+		targets[p.ID] = p.Target
 
 		if p.Desc == "" {
 			t.Errorf("%s: needs a user-facing Desc", p.ID)
