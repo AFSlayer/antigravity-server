@@ -378,3 +378,55 @@ func TestSignInBehindReverseProxyAndDebugClose(t *testing.T) {
 		t.Fatalf("Debug.file must remain nil after Close()")
 	}
 }
+
+// A trace file that fills up is kept beside the new one, once: emptying it lost the minutes that were being looked for.
+func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "mobile-debug.log")
+	dbg, err := NewDebug(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbg.Close()
+	dbg.maxFile = 20
+	mux := http.NewServeMux()
+	dbg.WithSameOrigin(nil, "https://agy.example.com").Register(mux)
+	post := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, DebugLogPath, strings.NewReader(body))
+		req.Host = "agy.example.com"
+		req.Header.Set("Origin", "https://agy.example.com")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("posting %q: status %d", body, rec.Code)
+		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	post("first episode, long enough to fill it")
+	post("second episode, also over the limit")
+	if got := read(logPath + ".1"); got != "first episode, long enough to fill it\n" {
+		t.Errorf("the full file was not kept: %q", got)
+	}
+	if got := read(logPath); got != "second episode, also over the limit\n" {
+		t.Errorf("the new file holds %q", got)
+	}
+	post("third")
+	if got := read(logPath + ".1"); got != "second episode, also over the limit\n" {
+		t.Errorf("only the last full file is kept, got %q", got)
+	}
+	if got := read(logPath); got != "third\n" {
+		t.Errorf("the new file holds %q", got)
+	}
+	post("fourth")
+	if got := read(logPath); got != "third\nfourth\n" {
+		t.Errorf("a file under the limit is added to, got %q", got)
+	}
+}

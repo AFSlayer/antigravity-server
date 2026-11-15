@@ -1420,9 +1420,9 @@ process.exit(0);
 	}
 }
 
-// Runs the bundle's paging decision as patched. Only an update that moves the window's start down waits, and only when
-// the tracker says so; growing the window, an update that keeps its start, and a page without the tracker go ahead.
-func TestPagingTrimWaitsOnlyForATopDrop(t *testing.T) {
+// Runs the bundle's paging decision as patched. An update that moves the window's start waits, down or up, and only
+// when the tracker says so for that direction; an update that keeps its start and a page without the tracker go ahead.
+func TestPagingWaitsOnlyForRowsAboveTheReader(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -1440,21 +1440,26 @@ func TestPagingTrimWaitsOnlyForATopDrop(t *testing.T) {
 	}
 	harness := `
 const assert = require("assert");
-const decide = (from, to, defer, cooldown) => new Function("oa", "Z", "defer", "cooldown", ` + "`" + `
+const decide = (from, to, defer, cooldown, grow) => new Function("oa", "Z", "defer", "cooldown", "grow", ` + "`" + `
   var calls = [], ma, ba, pa, ka;
   var g = { timing: { oppositeDirectionCooldownMs: 1000, retryDelayMs: 1000 } };
   var N = () => cooldown, K = ms => calls.push("retry " + ms), request = () => calls.push("request");
-  globalThis.window = defer === undefined ? {} : { __agyDeferTrim: () => defer };
+  globalThis.window = defer === undefined ? {} : { __agyDeferTrim: () => defer, __agyDeferGrow: () => grow };
   ` + "` + process.argv[1] + `" + `
-  return calls.join(",");` + "`" + `)(from, to, defer, cooldown);
+  return calls.join(",");` + "`" + `)(from, to, defer, cooldown, grow);
 const at = (start, end) => ({ startIndex: start, endIndexExclusive: end });
 assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, false), "retry 250", "a drop from the top waits");
 assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), false, false), "request", "and goes once the tracker allows");
+assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), false, false, true), "request", "whatever it says about rows being added");
 assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), undefined, false), "request", "a page without the tracker goes ahead");
-assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false), "request", "loading older rows never waits");
-assert.strictEqual(decide(at(3400, 3570), at(3400, 3570), true, false), "request", "keeping the start never waits");
-assert.strictEqual(decide(at(3400, 3500), at(3470, 3550), true, false), "request", "an update that also loads rows below never waits");
-assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, true), "retry 1000", "the bundle's own cooldown is kept");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false, true), "retry 100", "older rows wait as well, asked about more often");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, false, false), "request", "and load once the tracker allows, whatever it says about a drop");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), undefined, false), "request", "or at once without the tracker");
+assert.strictEqual(decide(at(3400, 3500), at(3330, 3550), false, false, true), "retry 100", "also when rows below load with them");
+assert.strictEqual(decide(at(3400, 3570), at(3400, 3570), true, false, true), "request", "keeping the start never waits");
+assert.strictEqual(decide(at(3400, 3500), at(3400, 3550), true, false, true), "request", "nor do rows loading below alone");
+assert.strictEqual(decide(at(3400, 3500), at(3470, 3550), true, false), "request", "an update that also loads rows below does not wait to drop");
+assert.strictEqual(decide(at(3400, 3570), at(3330, 3570), true, true, true), "retry 1000", "the bundle's own cooldown is kept");
 assert.strictEqual(decide(at(3400, 3570), at(3470, 3570), true, true), "", "and a drop in its cooldown is skipped as before");
 `
 	if out, err := exec.Command(node, "-e", harness, patched).CombinedOutput(); err != nil {

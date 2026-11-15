@@ -30,13 +30,14 @@ type Debug struct {
 	mu      sync.Mutex
 	file    *os.File
 	written int64
+	maxFile int64
 	closed  bool
 }
 
 // NewDebug opens path for appending.
 func NewDebug(path string) (*Debug, error) {
-	d := &Debug{path: path}
-	if err := d.open(false); err != nil {
+	d := &Debug{path: path, maxFile: debugMaxFile}
+	if err := d.open(); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -70,12 +71,8 @@ func (d *Debug) Close() error {
 	return err
 }
 
-func (d *Debug) open(truncate bool) error {
-	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	if truncate {
-		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	}
-	file, err := os.OpenFile(d.path, flags, 0o600)
+func (d *Debug) open() error {
+	file, err := os.OpenFile(d.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -89,6 +86,16 @@ func (d *Debug) open(truncate bool) error {
 		d.written = info.Size()
 	}
 	return nil
+}
+
+// rotate starts a new file and keeps the full one beside it as path.1, in place of the one kept before. Emptying the
+// file instead lost the minutes that were being looked for: a trace is read when something went wrong, and that is
+// often what filled it.
+func (d *Debug) rotate() error {
+	if err := os.Rename(d.path, d.path+".1"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return d.open()
 }
 
 func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
@@ -116,10 +123,10 @@ func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The traces are verbose by design; recycling the file keeps a long session
+	// The traces are verbose by design; starting a new file keeps a long session
 	// from filling the disk.
-	if d.written > debugMaxFile {
-		if err := d.open(true); err != nil {
+	if d.written > d.maxFile {
+		if err := d.rotate(); err != nil {
 			http.Error(w, "cannot write", http.StatusInternalServerError)
 			return
 		}

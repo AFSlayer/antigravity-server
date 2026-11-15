@@ -115,6 +115,26 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Error("paging-trim-waits-for-still: the paging code is there but its update decision was not found; rows above drop while the reader scrolls")
 	}
 
+	// paging-loads-rows-ahead is optional for bundles without that paging code, and would leave an iPhone asking for
+	// rows from 600 px away without a word.
+	if bytes.Contains(mainJS, []byte("innerRadiusPx")) && !regexpMatch(pagingGrowRadiusRe, mainJS) {
+		t.Error("paging-loads-rows-ahead: the paging code is there but the distance it asks for rows at was not found")
+	}
+
+	// The three scrollbar patches for the room kept above the conversation are optional for bundles without the overlay
+	// scrollbar, and one that draws it some other way would show a thumb stuck at the bottom on an iPhone without a word.
+	if bytes.Contains(mainJS, []byte("data-overlay-scrollbar-track")) {
+		if !regexpMatch(scrollbarMeasureRe, mainJS) {
+			t.Error("scrollbar-measures-rows: the overlay scrollbar is there but where it measures the conversation was not found")
+		}
+		if !regexpMatch(scrollbarTrackClickRe, mainJS) {
+			t.Error("scrollbar-click-lands-in-rows: the overlay scrollbar is there but its track click was not found")
+		}
+		if bytes.Contains(mainJS, []byte("globalThis.ScrollTimeline")) && !regexpMatch(scrollbarTimelineRe, mainJS) {
+			t.Error("scrollbar-thumb-by-script: the overlay scrollbar uses a scroll timeline in a form that was not found")
+		}
+	}
+
 	// user-status-keep-on-error is optional for 2.28 and earlier, which did not clear userStatus in catch. A newer
 	// bundle whose UserStatusSync rewraps without matching would silently wipe loaded models on transient socket drops.
 	if !regexpMatch(userStatusKeepOnErrorRe, mainJS) && !regexpMatch(userStatusNoResetOnErrorRe, mainJS) {
