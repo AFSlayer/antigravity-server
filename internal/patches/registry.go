@@ -2808,6 +2808,8 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   var REST_MS = 400;
   var ROOM_CHECK_FRAMES = 8;
   var ROOM_FAILURES_MAX = 2;
+  // A fling has been seen to cover 343 px in a 13 ms frame. Twice that pace is no fling.
+  var THROW_PX_PER_MS = 50;
   // Drawing rows holds the page for 0.1 to 0.5 s at a time, which a reader in the middle of a flick or of typing feels,
   // so rows further than GROW_NEAR above the screen are only let in while the conversation is idle, and no sooner than
   // GROW_PACE_MS after the last ones. Nearer than that a flick is there in a quarter of a second, and they are let in
@@ -2828,7 +2830,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // How far each conversation has been moved by anything here rather than by its reader, summed, so that every row
   // being put back counts a move made for another one.
   var shifts = new WeakMap();
-  var roomFailures = 0;
+  var roomFailures = new WeakMap();
   var roomLaidOut = true;
   // The write that last filled or cut each room, for as long as it is watched for being taken back.
   var roomWrites = new WeakMap();
@@ -2999,7 +3001,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   }
   window.__agyRowsDrawn = rowsHandedOver;
   // The bundle's own scrollbar reads the position and the height, and the room is most of both. It asks here how much
-  // to leave out, so its thumb shows where the reader is among the rows.
+  // to leave out, so its thumb shows where the reader is among the rows. It only measures once the reader moves or
+  // points at the conversation, so whether it will ask is not known when the room is made: a bundle whose scrollbar
+  // no longer asks is found by doctor and by the live bundle test, not here.
   if (IOS) window.__agyTopRoom = function (el) { return roomOf(el); };
   // With room for them, rows are asked for from further away than the bundle's 600 px: a flick at 4,000 px a second
   // covers this in the 0.5 s a phone takes to draw them, with a little to spare.
@@ -3083,6 +3087,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     // Rows that do not fill the screen leave the end of the conversation inside the room. Giving the room up as far as
     // the reader then only moves that end, and the reader with it, to be found in the room again. All of it goes.
     var keep = rowsFill(el) ? left : 0;
+    holdAnchoring(el);
     setRoom(el, keep);
     noteShift(el, keep - room);
     roomChanged(el, keep - room);
@@ -3121,7 +3126,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       var room = roomOf(el);
       var older = el.querySelector(OLDER_ROWS);
       var want = older && older.getAttribute("aria-disabled") !== "true" && rowsFill(el) ? ROOM : 0;
-      if (want === room || (want && room >= ROOM_LOW && room <= ROOM_HIGH) || roomFailures >= ROOM_FAILURES_MAX) return;
+      if (want === room || (want && room >= ROOM_LOW && room <= ROOM_HIGH) || (roomFailures.get(el) || 0) >= ROOM_FAILURES_MAX) return;
       resizeRoom(el, want);
     });
     if (resting.size > 0) restTimer = setTimeout(atRest, REST_MS);
@@ -3130,7 +3135,7 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // The room and the position change by the same amount, so nothing on screen moves. A finger can still land in the
   // instant this is written, and iOS then puts back a position that is now tens of thousands of pixels from the same
   // rows. The frames after are watched for that, and so is the scroll event that tells of it, and the room is put
-  // back as it was. Twice, and it is left alone.
+  // back as it was. Twice for a conversation, and its room is left alone.
   //
   // The room is padding on an element of the bundle's markup. Where that element is not taller by as much for it, the
   // markup is not what this was written for, and the room is given up for good: rows would take their height from
@@ -3153,9 +3158,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     noteShift(el, set - was);
     roomChanged(el, by);
     roomEvent("top", by);
-    // A change this small is no further than a finger moves the conversation in the same frames.
-    if (Math.abs(by) < ROWS_MOVE_MIN) return;
-    var write = { was: was, set: set, by: by, frames: ROOM_CHECK_FRAMES };
+    // A change this small is no further than a finger moves the conversation in the same frames, so it is not
+    // watched for being taken back. It is still this write's doing, which the bundle may ask about.
+    var write = { was: was, set: set, by: by, frames: ROOM_CHECK_FRAMES, watched: Math.abs(by) >= ROWS_MOVE_MIN };
     roomWrites.set(el, write);
     requestAnimationFrame(function check() {
       if (roomWrites.get(el) !== write || roomWriteTakenBack(el)) return;
@@ -3170,14 +3175,14 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   function roomWriteTakenBack(el) {
     var write = roomWrites.get(el);
     // A conversation that has left the page, or is hidden, reads as at its top, which is not the position put back.
-    if (!write || !el.isConnected || !el.clientHeight) return false;
+    if (!write || !write.watched || !el.isConnected || !el.clientHeight) return false;
     var top = el.scrollTop;
     if (Math.abs(top - write.was) >= Math.abs(top - write.set)) return false;
     roomWrites.delete(el);
     setRoom(el, roomOf(el) - write.by);
     noteShift(el, write.was - write.set);
     roomChanged(el, -write.by);
-    roomFailures++;
+    roomFailures.set(el, (roomFailures.get(el) || 0) + 1);
     roomEvent("back", write.by);
     return true;
   }
@@ -3241,11 +3246,15 @@ const scrollInputTracker = `<script id="agy-scroll-input">
   // A conversation thrown above its top reads as a negative position, which no finger and no script gives it. With
   // room above the first row it ends in the room instead, and that is somewhere a reader's own fling gets to as well:
   // a step at a time, to be stopped at the first row. A throw is one move, further than a fling makes between two
-  // looks at it, with no finger down, that no script asked for or is still animating. A conversation that was hidden
-  // comes back at the very top of its room the same way, and is put back where it was.
+  // looks at it, with no finger down, that no script asked for or is still animating. After a touch, while a fling
+  // may still be going, the page can be held up for half a second and the fling's own step is then as long: only a
+  // move faster than any fling is a throw. A conversation that was hidden comes back at the very top of its room,
+  // and is put back where it was as a jump is.
   function thrownIntoRoom(el, seen, now) {
     var top = el.scrollTop;
-    if (roomOf(el) - top <= -FLUNG_ABOVE_TOP || seen.top - top < JUMP_MIN || fingerDown(now)) return false;
+    var jump = seen.top - top;
+    if (roomOf(el) - top <= -FLUNG_ABOVE_TOP || jump < JUMP_MIN || fingerDown(now)) return false;
+    if (now - window.__agyLastScrollInputAt < MOMENTUM_MS && jump <= THROW_PX_PER_MS * Math.max(16, now - movedAt)) return false;
     if (scripted && scripted.smooth && scripted.el === el && now - scripted.at < FLING_HOLD_MS) return false;
     return !askedFor(el, top, now);
   }
@@ -3337,9 +3346,12 @@ const scrollInputTracker = `<script id="agy-scroll-input">
         countingFrames = true;
         requestAnimationFrame(countFrame);
       }
+      // The browser's anchoring is left on for a conversation that only moves: it keeps the reader's rows in place
+      // when something above them changes height, and that move is a scroll event as well. It is switched off where
+      // rows above are about to come or go, and for the room's own changes.
       if (hasRoom(el)) {
         keepOffRoom(el);
-        holdAnchoring(el);
+        waitForRest(el);
       }
     }
   }, opts);
@@ -3391,7 +3403,9 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       var idle = !fingerDown(now) && !pressed && !moving(now) && !typing() && now - keptAt >= GROW_PACE_MS;
       // The bundle asks again in 100 ms for as long as the first row is near enough for it to want more.
       if (el.scrollTop - roomOf(el) >= GROW_NEAR && !idle) return true;
-      if (growLetInAt <= keptAt) rowsDueSince = now;
+      // Rows let in for a reader who follows the end arrive without being handed over, so a wait that has run out
+      // starts again with the next ones.
+      if (!rowsDue(now)) rowsDueSince = now;
       growLetInAt = now;
       holdAnchoring(el);
       return false;
@@ -3456,7 +3470,15 @@ const scrollInputTracker = `<script id="agy-scroll-input">
     }
     function away() {
       var off = row.getBoundingClientRect().top - el.getBoundingClientRect().top - offset;
-      return roomy ? off + el.scrollTop - shiftOf(el) - from : off;
+      if (!roomy) return off;
+      var scrolled = el.scrollTop - shiftOf(el) - from;
+      // Rows that turn out shorter can leave the position past the end, and the browser cuts it back. That is not the
+      // reader, who cannot be scrolling down beyond the end, so it is made up for with the rest.
+      if (scrolled < 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1) {
+        noteShift(el, scrolled);
+        scrolled = 0;
+      }
+      return off + scrolled;
     }
     function rowsTall() { return el.scrollHeight - roomOf(el); }
     // The first move is the bundle's own, to half a pixel. A position only goes to whole pixels in WebKit, so asking
@@ -3497,6 +3519,12 @@ const scrollInputTracker = `<script id="agy-scroll-input">
       // A row replaced or hidden before the commit is over has no place left to measure.
       if (lost()) {
         report("gone");
+        return;
+      }
+      // Something else in the same commit has moved the conversation since, as the bundle's navigator does when it
+      // jumps to a step: the position is that script's now. With room the row is not put back by the position.
+      if (!roomy && Math.abs(el.scrollTop - left) > 1) {
+        if (moved[0]) report("taken");
         return;
       }
       put(1, false);

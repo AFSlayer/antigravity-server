@@ -24,11 +24,16 @@ func TestPatchRowsTreatsNotNeededAsOK(t *testing.T) {
 		{ID: "not-needed", Desc: "not needed patch", Status: patches.StatusNotNeeded},
 		{ID: "disabled", Desc: "disabled patch", Status: patches.StatusDisabled},
 		{ID: "missing", Desc: "missing patch", Status: patches.StatusMissing},
+		{ID: "built-on", Desc: "built on another", Status: patches.StatusNotNeeded, Without: "missing"},
 	}
 
 	rows := patchRows(report)
-	if len(rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	// A patch left out because the one it builds on did not apply is not shown as done.
+	if rows[4].Mark != "–" || rows[4].Class != "off" || rows[4].Desc != "built on another (not needed without missing)" {
+		t.Errorf("row of a patch that went without another = %+v", rows[4])
 	}
 	if rows[0].Mark != "✓" || rows[0].Class != "ok" {
 		t.Errorf("applied row = %+v, want Mark=✓ Class=ok", rows[0])

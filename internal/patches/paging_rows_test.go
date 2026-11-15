@@ -233,6 +233,21 @@ const kept = () => events.filter(e => e.type === "agy-rows-kept").map(e => e.det
     assert.strictEqual(frames.length, 0);
   }
 
+  // The bundle's navigator jumps to a step in the same commit, after the rows were handed over. The position is the
+  // navigator's from then on: putting the row back once more would undo the jump.
+  {
+    events.length = 0;
+    const { el, row } = conversation();
+    row.y += 4401;
+    window.__agyKeepRows(el, row, 60);
+    assert.strictEqual(el.scrollTop, 4701);
+    el.scrollTop = 1200;
+    await microtasks();
+    assert.strictEqual(el.scrollTop, 1200, "a jump made in the same commit is left where it went");
+    assert.strictEqual(frames.length, 0, "and the row is not looked at again");
+    assert.deepStrictEqual(kept(), [{ moved: 4401, again: "taken" }]);
+  }
+
   // A row that stops being laid out in the frames after, or a conversation that is hidden, reads as nothing. Moving
   // the position by what that seems to say, frame after frame, took the reader thousands of pixels away.
   {
@@ -660,8 +675,9 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   el.writes = 0;
   flick();
   scrollBy(-40);
-  assert.strictEqual(el.anchoring, "none", "the browser's anchoring is off while the conversation moves");
+  assert.strictEqual(el.anchoring, "auto", "the browser's anchoring is left on for a conversation that only moves");
   assert.strictEqual(window.__agyDeferGrow(), false, "rows do not wait for the fling with room for them");
+  assert.strictEqual(el.anchoring, "none", "and it is off from when rows are let in");
   at = seen();
   rowsArrive(4401, at);
   assert.strictEqual(el.room, ROOM - 4401);
@@ -730,6 +746,7 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   scrollBy(el.room - 80 - el.top);
   assert.strictEqual(el.room, el.top, "the room ends where the reader is");
   assert.strictEqual(el.style.overflowY, "hidden", "and the fling is ended");
+  assert.strictEqual(el.anchoring, "none", "with the browser's anchoring off for the room's own change");
   assert.deepStrictEqual(named("agy-room"), [{ what: "stop", by: 80 }]);
   pass(100);
   assert.strictEqual(el.style.overflowY, "");
@@ -795,7 +812,15 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   pass(4000);
   assert.strictEqual(el.anchoring, "none");
   pass(1500);
-  assert.strictEqual(el.anchoring, "auto", "rows that never come are given up");`},
+  assert.strictEqual(el.anchoring, "auto", "rows that never come are given up");
+  // Rows for a reader who follows the end come in without being handed over, like rows that never came. The next
+  // ones that are let in are waited for all the same.
+  pass(3000);
+  flick();
+  scrollBy(-100);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  pass(1500);
+  assert.strictEqual(el.anchoring, "none", "a wait that ran out starts again with the next rows");`},
 
 		// With little room left rows wait for the conversation to stop, as they did before there was any.
 		{"the room runs out", "", `
@@ -940,6 +965,34 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(el.room, ROOM - 4000);
   assert.strictEqual(el.writes, 0);`},
 
+		// Rows that turn out shorter can leave the position past the end of the conversation, and the browser cuts it
+		// back. That is not the reader scrolling, and the row is put back where it was all the same.
+		{"rows redrawn shorter near the end", "", `
+  const c = conversation();
+  c.el.rows = 2000;
+  c.el.top = c.el.rows - c.el.screen - 200;
+  c.row.y = c.el.top + 60;
+  window.__agyRowsDrawn(c.el);
+  c.scrollBy(0);
+  pass(600);
+  assert.strictEqual(c.el.room, ROOM);
+  c.el.writes = 0;
+  c.flick();
+  c.scrollBy(-10);
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const at = c.seen();
+  c.rowsArrive(3000, at);
+  assert.strictEqual(c.seen(), at);
+  // Their tables are drawn again 350 px shorter, with the reader 210 px from the end.
+  c.el.rows -= 350;
+  c.row.y -= 350;
+  await microtasks();
+  assert.strictEqual(c.seen(), at, "the row is where it was, though the position was cut back by 140 px");
+  assert.strictEqual(c.el.room, ROOM - 3000 + 210);
+  assert.strictEqual(c.el.writes, 0);
+  for (let k = 0; k < 30; k++) frame();
+  assert.strictEqual(c.seen(), at);`},
+
 		// A finger can land as the room is filled, and iOS then puts the old position back. The room goes back to what it
 		// was, so the rows are where that position has them. After the second time it is left alone.
 		{"the room's own write is taken back", "", `
@@ -968,7 +1021,12 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   d.scrollBy(0);
   pass(1000);
   assert.strictEqual(d.el.room, 0, "left alone after two");
-  assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "back", "top", "back"]);`},
+  assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "back", "top", "back"]);
+  // That is this conversation's count. The next one opened on the page has its own.
+  const next = conversation();
+  next.scrollBy(0);
+  pass(1000);
+  assert.strictEqual(next.el.room, ROOM, "another conversation still gets its room");`},
 
 		// A conversation that leaves the page just after its room was filled reads as at its top from then on, which is
 		// not iOS putting the position back.
@@ -1064,6 +1122,28 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(c.el.room, ROOM);
   assert.strictEqual(named("agy-fling-hold").length, 1);
   assert.deepStrictEqual(named("agy-room"), []);`},
+
+		// After a touch a fling may still be going, and a page held up for half a second sees all of that fling's way at
+		// once. That is the reader's too. A move as long in a single frame is faster than any fling, and is a throw.
+		{"a fling seen late and a throw seen at once", "", `
+  const start = () => { const c = conversation(); c.el.rows = 100000; c.el.top = 3000; window.__agyRowsDrawn(c.el); c.scrollBy(0); pass(1200); assert.strictEqual(c.el.room, ROOM); now += 20000; events.length = 0; return c; };
+  const f = start();
+  f.flick();
+  now += 16;
+  f.scrollBy(-200);
+  now += 500;
+  f.scrollBy(-6000);
+  assert.strictEqual(f.el.room, f.el.top, "6,000 px in half a second is a fling, stopped at the first row");
+  assert.deepStrictEqual(named("agy-fling-hold"), []);
+  const t = start();
+  t.flick();
+  now += 16;
+  t.scrollBy(-200);
+  now += 16;
+  t.scrollBy(-6000);
+  assert.strictEqual(t.el.top, ROOM + 2800, "6,000 px in one frame is not, and the reader is put back");
+  assert.strictEqual(t.el.room, ROOM);
+  assert.strictEqual(named("agy-fling-hold").length, 1);`},
 
 		// A reader's own fling gets into the room in steps, however fast, and is stopped at the first row.
 		{"a fast fling into the room is the reader's", "", `
@@ -1170,7 +1250,22 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(window.__agyIsSpontaneousScroll(c.el), false, "a finger down is");
   fire("touchend", c.onEl([]));
   for (let k = 0; k < 12; k++) frame();
-  assert.strictEqual(window.__agyIsSpontaneousScroll(c.el), false, "and so is a drop after the write has settled");`},
+  assert.strictEqual(window.__agyIsSpontaneousScroll(c.el), false, "and so is a drop after the write has settled");
+  // A room with little left in it is given up the same way.
+  const small = conversation();
+  small.el.top = small.el.rows - small.el.screen - 40;
+  small.scrollBy(0);
+  pass(1000);
+  assert.strictEqual(small.el.room, ROOM);
+  small.flick();
+  small.scrollBy(-10);
+  small.rowsArrive(ROOM - 1500, small.seen());
+  await microtasks();
+  assert.strictEqual(small.el.room, 1500);
+  small.el.older.disabled = true;
+  for (let k = 0; k < 100 && small.el.room > 0; k++) pass(16);
+  assert.strictEqual(small.el.room, 0);
+  assert.strictEqual(window.__agyIsSpontaneousScroll(small.el), true, "however little room it was");`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			harness := roomPage + "(async () => {" + c.js + "\n})().catch(e => { console.error(e); process.exit(1); });\n"
