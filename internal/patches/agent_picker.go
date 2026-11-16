@@ -13,6 +13,15 @@ func hasAgentPickerInModelMenu(b []byte) bool {
 	return bytes.Contains(b, []byte(`"agent-selector-submenu"`))
 }
 
+// agentRoutingIsKnown says whether a match of mobileAgentPickerInModelMenuRe is the input's one decision on where the
+// picker goes: the name it declares is the one that both uses go by, and both hand on the same picker. Anywhere else
+// the patch would change another decision, or one use and not the other, and the picker would be drawn twice, or in
+// the toolbar with no menu around it, with the patch reported as applied.
+func agentRoutingIsKnown(groups [][]byte) bool {
+	decision := groups[1]
+	return bytes.Equal(groups[3], decision) && bytes.Equal(groups[5], decision) && bytes.Equal(groups[4], groups[6])
+}
+
 // The desktop layout's new conversation screen up to where it draws, as every bundle from 2.29.0 to 2.32.1 writes it:
 // how it starts, the run of hooks it builds the agent picker with, and the return that follows the run. Between its
 // start and the run the screen does other things, which differ from release to release. Each name a release changes is

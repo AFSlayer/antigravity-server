@@ -65,8 +65,10 @@ var (
 	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"\},[\s\S]{1,600}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
 
 	// The input hands the picker to the model selector, which draws it at the end of its menu, where the toolbar is on
-	// top and the model selector is shown. Group 1 is the name that decision goes by, 2 the rest of it up to its use.
-	mobileAgentPickerInModelMenuRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=)\s*[a-zA-Z0-9_$]+===\s*"top"&&\s*(![a-zA-Z0-9_$]+,[\s\S]{1,1000}?[\s\S]{0,400}?footerExtra:\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+:\s*void 0)`)
+	// top and the model selector is shown, and to its own toolbar otherwise. Group 1 is the name that decision goes by,
+	// 2 the rest of it up to its second use, 3 and 5 the names of the decisions the two uses go by, and 4 and 6 the
+	// pickers they hand on: see agentRoutingIsKnown.
+	mobileAgentPickerInModelMenuRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+===\s*"top"&&\s*(![a-zA-Z0-9_$]+,[\s\S]{1,1000}?[\s\S]{0,400}?footerExtra:\s*([a-zA-Z0-9_$]+)\?\s*([a-zA-Z0-9_$]+):\s*void 0[\s\S]{0,1000}?[\s\S]{0,1000}?[\s\S]{0,1000}?agentSelector:\s*([a-zA-Z0-9_$]+)\?\s*void 0:\s*([a-zA-Z0-9_$]+))`)
 	// The input of the phone layout's new conversation screen, which is given no picker.
 	mobileAgentPickerRe = regexp.MustCompile(`(\{conversationId:\s*void 0,\s*isLoading:\s*!1,\s*dropdownPlacement:\s*"top-start",\s*openConversationOptimistically:\s*[a-zA-Z0-9_$]+,\s*showBottomToolbar:\s*!0,\s*aboveContent:\s*[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+,\s*null\),\s*initialQuery:\s*[a-zA-Z0-9_$]+)(\}\))`)
 
@@ -504,7 +506,8 @@ func All() []Patch {
 			FindRe:       mobileAgentPickerInModelMenuRe,
 			Optional:     true,
 			Precondition: hasAgentPickerInModelMenu,
-			Replace:      `${1}${2}`,
+			Accept:       agentRoutingIsKnown,
+			Replace:      `${1}=${2}`,
 		},
 		// The desktop screen builds the picker in a run of hooks that reads the agents, keeps the choice in step with
 		// them and ends in the picker's element, or in nothing where there is no agent to pick. That run stays where it
@@ -526,9 +529,12 @@ func All() []Patch {
 			Replace:      mobileAgentPickerHookReplace,
 		},
 		// The phone screen calls the function as it draws its input: every time and in the same place, which is what
-		// hooks ask for. The new conversation screen is where a phone starts everything, so a function that throws as
-		// it is drawn costs the screen its picker and not the screen: the error is written to the console once. A
-		// promise thrown to wait for something is React's to catch, and is passed on.
+		// hooks ask for. The new conversation screen is where a phone starts everything, so a function that throws at
+		// the same step at every drawing, such as one that reads a name the screen does not have, costs the screen its
+		// picker and not the screen: the error is written to the console once. One that throws at some drawings and
+		// not at others still takes the screen down, since React counts the hooks a component calls, and so does an
+		// error in one of the run's effects. A promise thrown to wait for something is React's to catch, and is passed
+		// on.
 		{
 			ID:           "mobile-agent-picker",
 			Desc:         "Offer the agent picker on a phone's new conversation screen",

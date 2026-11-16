@@ -223,7 +223,8 @@ calls = [];
 M3c(); M3c();
 assert.strictEqual(calls.filter(c => c === "read").length, 2);
 
-// A function that throws as the screen is drawn costs the screen its picker and nothing else, and says so once.
+// A function that throws at the same step at every drawing costs the screen its picker and nothing else, and says so
+// once.
 const built = window.__agyPhoneAgentPicker;
 const said = [];
 console.error = (...a) => said.push(a.join(" "));
@@ -342,6 +343,16 @@ func TestAgentPickerPatchesBuildOnEachOther(t *testing.T) {
 
 		{"the input's choice in another form", change(`$w=n==="top"&&!q,`, `$w=!q&&n==="top",`), Options{MobileUX: true}, afterRouting},
 		{"the model selector's footer by another name", strings.ReplaceAll(v232AgentBundle, "footerExtra", "menuFooter"), Options{MobileUX: true}, afterRouting},
+		// In the bundles the toolbar's use is some 2,500 characters after the footer's, where the fixture cuts them out.
+		{"the toolbar's use as far from the footer as in the bundles", change("environmentSelector:R,agentSelector:", "environmentSelector:R,"+strings.Repeat("ka:b,", 520)+"agentSelector:"), Options{MobileUX: true}, [4]Status{applied, applied, applied, applied}},
+		// The decision is changed only where both uses go by it and hand on the same picker.
+		{"the toolbar's use decided on its own", change("agentSelector:$w?void 0:f", `agentSelector:n==="top"?void 0:f`), Options{MobileUX: true}, afterRouting},
+		{"the footer on another decision", change("footerExtra:$w?f:void 0", "footerExtra:qA?f:void 0"), Options{MobileUX: true}, afterRouting},
+		{"the toolbar's use on another decision", change("agentSelector:$w?void 0:f", "agentSelector:qA?void 0:f"), Options{MobileUX: true}, afterRouting},
+		{"another decision of that form before it", change(`$w=n==="top"&&!q,`, `$v=n==="top"&&!D,$w=n==="top"&&!q,`), Options{MobileUX: true}, afterRouting},
+		{"the footer with another picker", change("footerExtra:$w?f:void 0", "footerExtra:$w?t:void 0"), Options{MobileUX: true}, afterRouting},
+		{"the toolbar's use with another picker", change("agentSelector:$w?void 0:f", "agentSelector:$w?void 0:t"), Options{MobileUX: true}, afterRouting},
+		{"no toolbar use", change("agentSelector:$w?void 0:f,", ""), Options{MobileUX: true}, afterRouting},
 
 		// The run of hooks is copied only where it is the run this was written for, and reads only what the function
 		// that it is copied into gives it.
