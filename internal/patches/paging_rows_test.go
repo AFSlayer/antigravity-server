@@ -694,6 +694,20 @@ const openRows = () => {
   c.el.looks = 0;
   return c;
 };
+// The same as it has just appeared: drawn and scrolled to where it opens a frame ago, with no finger on it yet and
+// no rest.
+const freshRows = () => {
+  const c = conversation();
+  c.withRows(30, 300);
+  c.el.top = 1610;
+  window.__agyRowsDrawn(c.el, c.rowsOf);
+  c.scrollBy(0);
+  now += 16; frame();
+  events.length = 0;
+  c.el.writes = 0;
+  c.el.looks = 0;
+  return c;
+};
 // The timers that are due, with no frame drawn first.
 const timersDue = () => { const due = timers.filter(x => x.at <= now); timers = timers.filter(x => x.at > now); due.forEach(x => x.fn()); };
 `
@@ -1272,8 +1286,11 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(p.el.room, ROOM);
 
   // A jump nobody asked for is found when rows are taken out, with no scroll event to say the conversation moved.
-  // The reader is put back and the fling ended, which takes the overflow away for two frames.
+  // The reader is put back and the fling ended, which takes the overflow away for two frames. A finger was on this
+  // conversation a while ago, so its room waits for rest.
   const s = conversation();
+  s.flick();
+  now += 20000;
   s.scrollBy(0);
   pass(368);
   events.length = 0;
@@ -1313,7 +1330,6 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
 		// A bundle that moves the position for its rows itself, as those before 2.32 do, would move it for rows the room
 		// had made up for. It never says it hands that move over, and the page is left as it was for it.
 		{"a bundle that keeps its own rows", "", `
-  assert.strictEqual(window.__agyGrowRadius, 2400, "rows are asked for from further away");
   const old = conversation();
   old.scrollBy(0);
   pass(1000);
@@ -1328,8 +1344,9 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(old.el.writes, 0);
   assert.deepStrictEqual(["agy-room", "agy-grow-wait", "agy-fling-stop"].map(type => named(type).length), [0, 0, 0]);
 
-  // One that hands it over says so the first time it draws the conversation. The scroll that opened the conversation
-  // is over by then, and the room is made without waiting for another.
+  // One that hands it over and has not asked how far ahead to load rows says so the first time it draws the
+  // conversation again. The scroll that opened the conversation is over by then, and the room is made without
+  // waiting for another.
   window.__agyRowsDrawn(old.el);
   assert.strictEqual(old.el.room, 0);
   pass(416);
@@ -1871,12 +1888,337 @@ func TestRoomAboveTheFirstRowTakesRowsWithoutMovingThePosition(t *testing.T) {
   assert.strictEqual(el.room, ROOM + 50, "by the 50 px the cut left the rows higher");
   assert.strictEqual(el.writes, 0);`},
 
+		// A conversation that has just appeared has no fling going, so its room is made in the frame after it is drawn
+		// and is there for a reader who flicks at once. It was made at the first rest, which such a reader never gave it.
+		{"a conversation has its room as it is drawn", "", `
+  const { el, seen, scrollBy, flick, rowsArrive } = conversation();
+  window.__agyRowsDrawn(el);
+  assert.strictEqual(el.room, 0);
+  const at = seen();
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM, "in the frame after it is drawn");
+  assert.strictEqual(seen(), at, "with the rows where they were");
+  assert.deepStrictEqual(named("agy-room"), [{ what: "top", by: ROOM }]);
+  const asked = frames.length;
+  window.__agyRowsDrawn(el);
+  assert.strictEqual(frames.length, asked, "and no frame is asked for at a drawing once it has it");
+  // The reader flicks up at once and goes on without a rest. Rows are let in and take their height from the room.
+  events.length = 0;
+  el.writes = 0;
+  flick();
+  for (let k = 0; k < 6; k++) { now += 16; scrollBy(-40); frame(); }
+  assert.strictEqual(window.__agyDeferGrow(), false, "rows are let in while the reader moves");
+  const kept = seen();
+  rowsArrive(3000, kept);
+  await microtasks();
+  assert.strictEqual(seen(), kept);
+  assert.strictEqual(el.room, ROOM - 3000);
+  assert.strictEqual(el.writes, 0, "no position is written");
+  assert.deepStrictEqual(named("agy-grow-wait"), []);
+  assert.deepStrictEqual(named("agy-fling-stop"), []);`},
+
+		// The bundle tells of a conversation when it draws it again, which is some time after it appears. The app
+		// scrolls a conversation to its end as it opens, and that is heard sooner.
+		{"a conversation is heard of when it is scrolled as it opens", "", `
+  // The page has handed rows over before, in another conversation.
+  open();
+  const { el, seen, scrollBy } = conversation();
+  const at = seen();
+  scrollBy(0);
+  assert.strictEqual(el.room, 0);
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM, "its room is made in the frame after");
+  assert.strictEqual(seen(), at);
+  // One that a finger is already on when it is first heard of waits for rest, drawn or not.
+  const touched = conversation();
+  touched.flick();
+  touched.scrollBy(-20);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(touched.el.room, 0);
+  const asked = frames.length;
+  window.__agyRowsDrawn(touched.el);
+  assert.strictEqual(frames.length, asked, "no frame is asked for at its drawing");
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(touched.el.room, 0, "nor is it given any");
+  pass(1000);
+  assert.strictEqual(touched.el.room, ROOM, "at rest");`},
+
+		// The first conversation of a page is drawn a second time some tenths of a second after it appears, which was
+		// when the page first knew the bundle hands its rows over. Such a bundle asks how far ahead to load rows as it
+		// loads, and that is taken as its word.
+		{"the first conversation of a page has its room as it opens", "", `
+  assert.strictEqual(window.__agyGrowRadius, 2400, "the bundle asks, and rows are asked for from further away");
+  const { el, seen, scrollBy, flick, rowsArrive } = conversation();
+  const at = seen();
+  scrollBy(0);
+  assert.strictEqual(el.room, 0);
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM, "made in the frame after it is scrolled to its end, with nothing drawn a second time");
+  assert.strictEqual(seen(), at);
+  assert.deepStrictEqual(named("agy-room"), [{ what: "top", by: ROOM }]);
+  // The reader flicks at once, and the rows that arrive come out of the room.
+  el.writes = 0;
+  flick();
+  for (let k = 0; k < 6; k++) { now += 16; scrollBy(-40); frame(); }
+  assert.strictEqual(window.__agyDeferGrow(), false);
+  const kept = seen();
+  rowsArrive(3000, kept);
+  await microtasks();
+  assert.strictEqual(seen(), kept);
+  assert.strictEqual(el.room, ROOM - 3000);
+  assert.strictEqual(el.writes, 0, "no position is written");
+  assert.deepStrictEqual(["agy-grow-wait", "agy-fling-stop"].map(type => named(type).length), [0, 0]);`},
+
+		// Rows dropped above a conversation as it opens give their height to the room, which is then a little of what
+		// it should be. It is filled in the frame after, as one with none is given it.
+		{"a conversation left a little room by rows dropped as it opens", "", `
+  const { el, seen, rowsArrive } = conversation();
+  const at = seen();
+  window.__agyRowsDrawn(el);
+  rowsArrive(-2000, at);
+  await microtasks();
+  assert.strictEqual(el.room, 2000);
+  assert.strictEqual(seen(), at);
+  el.writes = 0;
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM, "filled in the frame after");
+  assert.strictEqual(seen(), at, "with the rows where they were");
+  assert.strictEqual(el.writes, 1);
+  // Once it has enough, what rows take from it is filled back at rest and not as it is drawn.
+  rowsArrive(3000, at);
+  await microtasks();
+  assert.strictEqual(el.room, ROOM - 3000);
+  el.writes = 0;
+  window.__agyRowsDrawn(el);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(el.room, ROOM - 3000);
+  assert.strictEqual(el.writes, 0);
+  // One whose frame came with a finger down somewhere else is filled when it is next drawn.
+  const b = conversation();
+  const there = b.seen();
+  window.__agyRowsDrawn(b.el);
+  b.rowsArrive(-2000, there);
+  await microtasks();
+  fire("touchstart", { target: { closest: () => null }, touches: [{}] });
+  now += 16; frame();
+  assert.strictEqual(b.el.room, 2000);
+  fire("touchend", { target: { closest: () => null }, touches: [] });
+  window.__agyRowsDrawn(b.el);
+  now += 16; frame();
+  assert.strictEqual(b.el.room, ROOM);
+  assert.strictEqual(b.seen(), there);`},
+
+		{"a conversation drawn before it has rows to fill the screen", "", `
+  const { el, seen } = conversation();
+  el.rows = 400;
+  el.top = 0;
+  window.__agyRowsDrawn(el);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(el.room, 0, "none while its rows do not fill the screen");
+  // The rest of its rows are drawn.
+  el.rows = 9000;
+  window.__agyRowsDrawn(el);
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM, "made when it is drawn with enough of them");
+  // One with no older rows to load gets none however it is drawn.
+  const last = conversation();
+  last.el.older.disabled = true;
+  window.__agyRowsDrawn(last.el);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(last.el.room, 0);
+  // Nor does one that has no button to load them with, as it is drawn or at rest.
+  const bare = conversation();
+  bare.el.querySelector = () => null;
+  window.__agyRowsDrawn(bare.el);
+  bare.scrollBy(0);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(bare.el.room, 0);
+  pass(1000);
+  assert.strictEqual(bare.el.room, 0);`},
+
+		// A position put back after the room was made as the conversation was drawn says that something moves the
+		// conversation after all. The room is taken off, as it is at rest, and is tried again at rest.
+		{"the room made as a conversation is drawn is taken back", "", `
+  const { el, seen } = conversation();
+  const at = seen();
+  window.__agyRowsDrawn(el);
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM);
+  // The position it had is put back.
+  el.top = 300;
+  fire("scroll", { target: el });
+  assert.strictEqual(el.room, 0, "the room goes with it");
+  assert.strictEqual(seen(), at);
+  assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "back"]);
+  window.__agyRowsDrawn(el);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(el.room, 0, "and is not made again as the conversation is drawn");
+  // Time passes until the conversation has its room, which is at its next rest.
+  const untilRoom = () => { for (let k = 0; k < 100 && !el.room; k++) pass(16); };
+  untilRoom();
+  assert.strictEqual(el.room, ROOM, "it is at rest");
+  // That first one was not counted against the conversation. It is left alone after two at rest, as it was before
+  // it was given room any sooner.
+  el.top = 300;
+  frame();
+  assert.strictEqual(el.room, 0);
+  fire("scroll", { target: el });
+  untilRoom();
+  assert.strictEqual(el.room, ROOM, "after one taken back at rest it is tried again");
+  el.top = 300;
+  frame();
+  assert.strictEqual(el.room, 0);
+  fire("scroll", { target: el });
+  pass(2000);
+  assert.strictEqual(el.room, 0, "and after two it is left alone");
+  assert.deepStrictEqual(named("agy-room").map(e => e.what), ["top", "back", "top", "back", "top", "back"]);`},
+
+		// Once a finger or a wheel has been on a conversation there may be a fling, and the room waits for rest.
+		{"a conversation that a finger was on before it could be given room", "", `
+  const { el, scrollBy, flick, onEl } = conversation();
+  el.rows = 400;
+  el.top = 0;
+  window.__agyRowsDrawn(el);
+  now += 16; frame();
+  flick();
+  el.rows = 9000;
+  el.top = 300;
+  window.__agyRowsDrawn(el);
+  for (let k = 0; k < 5; k++) { now += 16; scrollBy(-10); frame(); }
+  assert.strictEqual(el.room, 0, "not while it may be flung");
+  pass(1000);
+  assert.strictEqual(el.room, ROOM, "at rest, as before");
+  // One that is drawn with a finger down waits for the finger.
+  const held = conversation();
+  fire("touchstart", { target: { closest: () => null }, touches: [{}] });
+  window.__agyRowsDrawn(held.el);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(held.el.room, 0, "none with a finger down");
+  fire("touchend", { target: { closest: () => null }, touches: [] });
+  window.__agyRowsDrawn(held.el);
+  now += 16; frame();
+  assert.strictEqual(held.el.room, ROOM, "the finger was not on a conversation, and is up");
+  // Where nothing draws or scrolls it again after the finger is up, it has its room at rest.
+  const quiet = conversation();
+  fire("touchstart", { target: { closest: () => null }, touches: [{}] });
+  window.__agyRowsDrawn(quiet.el);
+  now += 16; frame();
+  fire("touchend", { target: { closest: () => null }, touches: [] });
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(quiet.el.room, 0);
+  pass(1000);
+  assert.strictEqual(quiet.el.room, ROOM);`},
+
+		// Its first rest ends that as well. From then on something other than a finger may be moving a conversation,
+		// a key or the app's own smooth scroll, and only rest says that nothing is.
+		{"a conversation that has come to rest is given room at rest", "", `
+  const { el, scrollBy } = conversation();
+  el.older.disabled = true;
+  window.__agyRowsDrawn(el);
+  scrollBy(0);
+  pass(1000);
+  assert.strictEqual(el.room, 0, "none with no older rows to load");
+  // Rows above the reader are dropped as a reply grows, and there are older ones to load now.
+  el.older.disabled = false;
+  window.__agyRowsDrawn(el);
+  scrollBy(0);
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  assert.strictEqual(el.room, 0, "not as it is drawn or scrolled");
+  pass(1000);
+  assert.strictEqual(el.room, ROOM, "at its next rest");`},
+
+		// What counts is whether a finger has been on a conversation since this one appeared, not how long ago: a
+		// reader who leaves a conversation they were flicking and opens another has room in the new one at once.
+		{"a conversation opened straight after another was flicked", "", `
+  const first = open();
+  first.flick();
+  for (let k = 0; k < 4; k++) { now += 16; first.scrollBy(-60); frame(); }
+  first.el.isConnected = false;
+  now += 300;
+  events.length = 0;
+  const { el, seen, scrollBy } = conversation();
+  // A browser tells the page of a position that script sets, as it is set.
+  const own = Object.getOwnPropertyDescriptor(el, "scrollTop");
+  Object.defineProperty(el, "scrollTop", { get: own.get, set(v) { window.__agyScrolledByScript(el, v); own.set.call(el, v); } });
+  const at = seen();
+  // The app scrolls it to its end as it opens, and with the flick of a moment ago that reads as a conversation
+  // still moving.
+  scrollBy(0);
+  now += 16; frame();
+  assert.strictEqual(el.room, ROOM);
+  assert.strictEqual(seen(), at);
+  // The room's write is no move of the app's to end a fling for. There is none on this conversation, and with its
+  // overflow taken away for two frames a finger that lands in them scrolls nothing.
+  assert.deepStrictEqual(named("agy-fling-stop"), []);
+  assert.strictEqual(el.style.overflowY, "");
+  // A move of the app's that far still ends one.
+  now += 16;
+  scrollBy(-10);
+  el.scrollTop = el.top - 5000;
+  assert.strictEqual(named("agy-fling-stop").length, 1);`},
+
+		// The scroll event that tells of the room's write is not the conversation moving. Rows the bundle drops as it
+		// opens a conversation wait for one that moves, and were held back for this until the reader had started.
+		{"the room's write is not taken for the conversation moving", "", `
+  const first = open();
+  first.flick();
+  for (let k = 0; k < 4; k++) { now += 16; first.scrollBy(-60); frame(); }
+  first.el.isConnected = false;
+  now += 300;
+  const opened = () => {
+    const c = conversation();
+    c.scrollBy(0);
+    now += 16; frame();
+    assert.strictEqual(c.el.room, ROOM);
+    return c;
+  };
+  const a = opened();
+  // The page is busy drawing the conversation, and the event for the room's write comes when it is done.
+  now += 400;
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  fire("scroll", { target: a.el });
+  assert.strictEqual(window.__agyDeferTrim(), false, "rows are dropped as they would be with no room made");
+  // An event after that one is the conversation moving, wherever it finds the position.
+  now += 400;
+  fire("scroll", { target: a.el });
+  assert.strictEqual(window.__agyDeferTrim(), true);
+  // So is the first, where the position is not what the room wrote: something else has moved it since.
+  const b = opened();
+  now += 400;
+  for (let k = 0; k < 3; k++) { now += 16; frame(); }
+  b.el.top -= 40;
+  fire("scroll", { target: b.el });
+  assert.strictEqual(window.__agyDeferTrim(), true);`},
+
+		{"a conversation that is hidden or gone when its frame comes", "", `
+  const a = conversation();
+  window.__agyRowsDrawn(a.el);
+  a.el.hidden = true;
+  now += 16; frame();
+  assert.strictEqual(a.el.room, 0, "a hidden one is left as it is");
+  a.el.hidden = false;
+  window.__agyRowsDrawn(a.el);
+  now += 16; frame();
+  assert.strictEqual(a.el.room, ROOM, "and given its room when it is drawn again");
+  const b = conversation();
+  const asked = frames.length;
+  window.__agyRowsDrawn(b.el);
+  window.__agyRowsDrawn(b.el);
+  assert.strictEqual(frames.length, asked + 1, "one frame is asked for however often it is drawn");
+  b.el.isConnected = false;
+  now += 16; frame();
+  assert.strictEqual(b.el.room, 0);`},
+
 		// A finger can land as the room is filled, and iOS then puts the old position back. The room goes back to what it
 		// was, so the rows are where that position has them. After the second time it is left alone.
 		{"the room's own write is taken back", "", `
   const d = conversation();
   window.__agyRowsDrawn(d.el);
+  // A finger has been on the conversation since it appeared, so its room waits for rest.
+  d.flick();
   d.scrollBy(0);
+  frame();
+  assert.strictEqual(d.el.room, 0);
   pass(416);
   assert.strictEqual(d.el.room, ROOM);
   // The page hears of the position put back. The room goes back with it at once, and the move is not taken for a
@@ -2179,7 +2521,7 @@ const roomWalk = `
   let s = seed * 2654435761 % 4294967296;
   const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
   const pick = (a, b) => Math.floor(a + rnd() * (b - a + 1));
-  const { el, list, seenOf, atTop, scrollBy, flick, withRows, prepend, change, place, rowsOf } = openRows();
+  const { el, list, seenOf, atTop, scrollBy, flick, withRows, prepend, change, place, rowsOf } = process.env.WALK_FRESH ? freshRows() : openRows();
   const among = () => el.top - el.laid;
   const last = () => Math.max(0, el.rows + el.below - el.screen);
   const frames = n => { for (let k = 0; k < n; k++) { now += 16; frame(); } };
@@ -2290,7 +2632,8 @@ const roomWalk = `
   }`
 
 // On a page of its own for each seed, as an iPhone and as an Android phone, which has no room and leaves everything
-// to the browser.
+// to the browser. An iPhone's walk starts from a conversation that has come to rest, or from one that has just
+// appeared and has its room from the frame before.
 func TestRandomWalksLeaveTheRowAtTheTopWhereABrowserWould(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -2307,15 +2650,20 @@ func TestRandomWalksLeaveTheRowAtTheTopWhereABrowserWould(t *testing.T) {
 	const android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36"
 	for _, c := range []struct {
 		name, ua string
+		fresh    bool
 		walks    int
-	}{{"iPhone", "", 120}, {"Android", android, 30}} {
+	}{{"iPhone", "", false, 120}, {"iPhone, as the conversation appears", "", true, 60}, {"Android", android, false, 30}} {
 		for seed := 1; seed <= c.walks; seed++ {
 			args := []string{"-e", harness, scriptPath}
 			if c.ua != "" {
 				args = append(args, c.ua)
 			}
+			fresh := ""
+			if c.fresh {
+				fresh = "1"
+			}
 			cmd := exec.Command(node, args...)
-			cmd.Env = append(os.Environ(), "WALK_SEED="+strconv.Itoa(seed), "WALK_STEPS=80")
+			cmd.Env = append(os.Environ(), "WALK_SEED="+strconv.Itoa(seed), "WALK_STEPS=80", "WALK_FRESH="+fresh)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("%s, walk %d: %v\n%s", c.name, seed, err, out)
 			}
