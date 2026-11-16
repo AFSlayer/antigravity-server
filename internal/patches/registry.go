@@ -64,6 +64,22 @@ var (
 
 	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"\},[\s\S]{1,600}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
 
+	// The new conversation screen of the desktop layout builds the agent picker with a run of hooks that ends in the
+	// picker's element, or in nothing where there is no agent to pick. Group 1 is that screen's component up to the
+	// run, 2 the name it gives the agent the address asks for, 3 the hook that reads the address, 4 the hook that gives
+	// the app's settings, 5 the name the settings of the input go by and then the picker, 6 the run and 7 what follows.
+	mobileAgentPickerHookRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=\s*\(\)=>\s*\{var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\(\),\s*[a-zA-Z0-9_$]+=\s*\(0,\s*[a-zA-Z0-9_$]+\.useRef\)\(null\),\s*[a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\(\),\s*\{q:\s*[a-zA-Z0-9_$]+,\s*ws:\s*[a-zA-Z0-9_$]+,\s*customSubagent:\s*([a-zA-Z0-9_$]+)\}=\s*([a-zA-Z0-9_$]+)\(\{strict:\s*!1\}\),\s*[a-zA-Z0-9_$]+=\s*([a-zA-Z0-9_$]+)\(\),\s*[a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.get\("tipCards"\),\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.get\("inputComponent"\);[\s\S]{1,700}?)(var\s*\{agentScriptsEnabled:[\s\S]{1,1000}?[\s\S]{0,1000}?hideAgentSelectorIfEmpty:\s*[a-zA-Z0-9_$]+\?\.hideAgentSelectorIfEmpty,[\s\S]{1,900}?\}\)\s*:\s*void 0;)(\s*return\s+[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\.Fragment)`)
+	// The input hands the picker to the model selector, which draws it at the end of its menu, where the toolbar is on
+	// top and the model selector is shown. Group 1 is the name that decision goes by, 2 the rest of it up to its use.
+	mobileAgentPickerInModelMenuRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=)\s*[a-zA-Z0-9_$]+===\s*"top"&&\s*(![a-zA-Z0-9_$]+,[\s\S]{1,1000}?[\s\S]{0,400}?footerExtra:\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+:\s*void 0)`)
+	// The input of the phone layout's new conversation screen, which is given no picker.
+	mobileAgentPickerRe = regexp.MustCompile(`(\{conversationId:\s*void 0,\s*isLoading:\s*!1,\s*dropdownPlacement:\s*"top-start",\s*openConversationOptimistically:\s*[a-zA-Z0-9_$]+,\s*showBottomToolbar:\s*!0,\s*aboveContent:\s*[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+,\s*null\),\s*initialQuery:\s*[a-zA-Z0-9_$]+)(\}\))`)
+
+	// The input shows the agent that is chosen as a chip beside the model selector, in a new conversation and only where
+	// its toolbar is on top. Group 1 is the input's footer from the model selector it is given, which is group 2, up to
+	// that decision, 3 the name the toolbar being on top goes by and 4 the rest of the decision.
+	mobileAgentPickerChipRe = regexp.MustCompile(`(modelSelector:\s*([a-zA-Z0-9_$]+),\s*environmentSelector:[\s\S]{1,1000}?[\s\S]{0,400}?selectedAgent:\s*)([a-zA-Z0-9_$]+)(&&\s*![a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+\?\.selectedAgentScriptItem:\s*void 0)`)
+
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
 	mobileBackClearsSectionRe         = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
@@ -470,6 +486,84 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
 			Replace: `${1}${2},replace:!0${3}var _s=${4}({strict:!1}),sec=_s?.section||_s?.project,isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{"data-testid":"mobile-new-convo-empty",className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7},`,
+		},
+
+		// Antigravity lets the reader choose an agent for a new conversation at the end of the model selector's menu, in
+		// its desktop layout only. Its phone layout, which it uses for a mobile browser under 640 px wide, gives the new
+		// conversation screen's input no picker, so over remote access from a phone a project's agents could not be
+		// chosen at all. These four give the phone layout the same picker. Each builds on the one before it, so a
+		// bundle that one of them does not fit is left as it was by those after it.
+		//
+		// The input hands the picker to the model selector only where its toolbar is on top, which it is on the desktop
+		// screen and not on the phone's. Anywhere else it would draw the picker in its own toolbar, where the picker's
+		// parts, which are those of a submenu, have no menu around them. No screen has asked for that since 2.29, when
+		// the picker moved into the menu, so the picker goes to the model selector wherever there is one.
+		{
+			ID:       "mobile-agent-picker-in-model-menu",
+			Desc:     "Draw the agent picker in the model selector's menu wherever the input is given one",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  mobile,
+			FindRe:   mobileAgentPickerInModelMenuRe,
+			Optional: true,
+			// Before 2.29 the picker stood in the input's toolbar and the model selector's menu had no place for it.
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("footerExtra")) && bytes.Contains(b, []byte("agentSelector"))
+			},
+			Replace: `${1}${2}`,
+		},
+		// The desktop screen builds the picker in a run of hooks that reads the agents, keeps the choice in step with
+		// them and ends in the picker's element, or in nothing where there is no agent to pick. That run stays where it
+		// is, and a copy of it becomes a function the phone screen can call, with the two things the run takes from the
+		// screen around it read the way that screen reads them.
+		{
+			ID:       "mobile-agent-picker-hook",
+			Desc:     "Make the new conversation screen's agent picker available to the phone layout",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  mobile,
+			FindRe:   mobileAgentPickerHookRe,
+			Optional: true,
+			Requires: "mobile-agent-picker-in-model-menu",
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("hideAgentSelectorIfEmpty")) && bytes.Contains(b, []byte("MOBILE_HOME_VIEW"))
+			},
+			Replace: `__agyPhoneAgentPicker=window.__agyPhoneAgentPicker=function(){var{customSubagent:${2}}=${3}({strict:!1}),${5}=${4}().get("inputComponent");${6}return ${5}},${1}${6}${7}`,
+		},
+		// The phone screen calls the function as it draws its input: every time and in the same place, which is what
+		// hooks ask for.
+		{
+			ID:       "mobile-agent-picker",
+			Desc:     "Offer the agent picker on a phone's new conversation screen",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  mobile,
+			FindRe:   mobileAgentPickerRe,
+			Optional: true,
+			Requires: "mobile-agent-picker-hook",
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("MOBILE_HOME_VIEW"))
+			},
+			Replace: `${1},agentSelector:window.__agyPhoneAgentPicker()${2}`,
+		},
+
+		// On the desktop screen the agent that is chosen shows as a chip beside the model selector, which is the one sign
+		// of it outside the menu. The input draws the chip only where its toolbar is on top, so on a phone a reader
+		// who had chosen an agent saw nothing change until the first reply came. The chip is drawn wherever the input's
+		// model selector has the picker in its menu, which the model selector's own element says.
+		{
+			ID:       "mobile-agent-picker-chip",
+			Desc:     "Show the chosen agent beside the model selector on a phone's new conversation screen",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  mobile,
+			FindRe:   mobileAgentPickerChipRe,
+			Optional: true,
+			Requires: "mobile-agent-picker",
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte("selected-agent-chip"))
+			},
+			Replace: `${1}(${3}||${2}?.props?.footerExtra)${4}`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
