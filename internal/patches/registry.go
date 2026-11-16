@@ -1682,16 +1682,19 @@ div.user-input-buttons-container > * {
     opacity: 1 !important;
   }
 
+  /* The element around a conversation's prompt is found by its classes. Antigravity 2.29 gave it pb-4 where it had
+     pb-2, and with only the old one named here the prompt sat in the home indicator's area and kept 16px of padding
+     above the keyboard. Both are named, and the live bundle test says when neither is there. */
   /* Smooth padding-bottom transition to prevent 34px snap/jerk when keyboard dismisses */
-  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.relative.w-full.px-4.flex-shrink-0:is(.pb-2, .pb-4),
   div.shrink-0.p-2 {
     transition: padding-bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Collapse composer wrapper padding when keyboard is open */
-  body.agy-kb-open div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  body.agy-kb-open div.relative.w-full.px-4.flex-shrink-0:is(.pb-2, .pb-4),
   body.agy-kb-open div.shrink-0.p-2,
-  html[style*="--agy-bottom"] div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  html[style*="--agy-bottom"] div.relative.w-full.px-4.flex-shrink-0:is(.pb-2, .pb-4),
   html[style*="--agy-bottom"] div.shrink-0.p-2 {
     padding-bottom: 0px !important;
   }
@@ -1887,7 +1890,7 @@ div.user-input-buttons-container > * {
 
 /* Tablet (iPad) touch devices (> 768px): Ensure composer wrappers have proper safe-area padding above home indicator */
 @media (pointer: coarse) and (min-width: 769px) {
-  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.relative.w-full.px-4.flex-shrink-0:is(.pb-2, .pb-4),
   div.shrink-0.p-2 {
     padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 16px)) !important;
   }
@@ -1897,7 +1900,7 @@ div.user-input-buttons-container > * {
    Desktop browsers (pointer: fine) and split-screen desktop windows are completely isolated! */
 @media (pointer: coarse) and (max-width: 768px) {
   /* Compact padding for mobile composer wrapper (prevents floating gap on mobile phones) */
-  div.relative.w-full.px-4.pb-2.flex-shrink-0,
+  div.relative.w-full.px-4.flex-shrink-0:is(.pb-2, .pb-4),
   div.shrink-0.p-2 {
     padding: 0.25rem 0.5rem 0 0.5rem !important;
     padding-bottom: max(0.25rem, env(safe-area-inset-bottom, 6px)) !important;

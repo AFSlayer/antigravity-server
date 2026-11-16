@@ -35,6 +35,10 @@ var viewportInnerRe = regexp.MustCompile(`"data-testid":\s*"autoscroll-viewport"
 // patched method hands to scroll-input-tracker, which follows the row at the top of the screen among them.
 var rowsFromPropRe = regexp.MustCompile(`getSnapshotBeforeUpdate\([a-zA-Z0-9_$]+\)\s*\{[^{}]{0,300}?\.getAnchorCandidates\b`)
 
+// promptWrapperRe matches the classes of the element around a conversation's prompt, written as one string or as the
+// first two of several, with the bottom padding it has had: pb-2 up to 2.28 and pb-4 since.
+var promptWrapperRe = regexp.MustCompile(`relative w-full px-4 pb-[24](?:",\s*"| )flex-shrink-0`)
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -106,6 +110,15 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	}
 	if !bytes.Contains(mainJS, []byte("agent-input-box")) {
 		t.Error("the bundle no longer has agent-input-box; keyboard-detect may stop working")
+	}
+	// safe-area-insets finds the element around a prompt by its classes, and nothing else says when they change: 2.29
+	// gave the conversation's one pb-4 for pb-2, and the prompt sat in the home indicator's area on a phone and kept
+	// its padding above the keyboard until someone saw it.
+	if !regexpMatch(promptWrapperRe, mainJS) {
+		t.Error("the bundle no longer has the element around a conversation's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
+	}
+	if !bytes.Contains(mainJS, []byte(`"shrink-0 p-2"`)) {
+		t.Error("the bundle no longer has the element around the home screen's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
 	}
 
 	// mobile-user-message-actions and autoscroll-distance-fix are optional because 2.31 does both itself. A bundle with
