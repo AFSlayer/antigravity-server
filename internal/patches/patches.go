@@ -89,6 +89,13 @@ type Patch struct {
 	// hashes. The cache key does not see ReplaceMatch, so a change that only
 	// touches ReplaceMatch must also change Replace or the release version.
 	ReplaceMatch func(groups [][]byte, opts Options) string
+	// Accept, for Regexp patches, looks at what the pattern captured and says
+	// whether this is the code the patch was written for. A match it turns down
+	// counts as no match at all, so the patch is reported as missing, or as not
+	// needed where it is optional and its Precondition does not hold. It is for
+	// what a pattern cannot say, such as two captures having to be one name. The
+	// cache key does not see it, as it does not see ReplaceMatch.
+	Accept func(groups [][]byte) bool
 
 	// Required marks patches without which remote access cannot work at all.
 	Required bool
@@ -236,6 +243,9 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 
 		case Regexp:
 			loc := regexpFindSubmatchIndex(p.FindRe, body)
+			if loc != nil && p.Accept != nil && !p.Accept(submatches(body, loc)) {
+				loc = nil
+			}
 			if loc != nil {
 				var repl []byte
 				if p.ReplaceMatch != nil {

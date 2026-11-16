@@ -488,6 +488,10 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 		if p.Desc == "" {
 			t.Errorf("%s: needs a user-facing Desc", p.ID)
 		}
+		// Apply asks Accept about a pattern's match and about nothing else.
+		if p.Accept != nil && p.Kind != Regexp {
+			t.Errorf("%s: Accept is for regexp patches", p.ID)
+		}
 
 		switch p.Kind {
 		case Literal:

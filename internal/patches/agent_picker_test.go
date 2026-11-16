@@ -39,10 +39,10 @@ isUploading:rb||ni.length>0,isFetchingMcpPrompts:Wa,sendBlock:Fc,inExistingConve
 
 var agentPickerPatches = []string{"mobile-agent-picker-in-model-menu", "mobile-agent-picker-hook", "mobile-agent-picker", "mobile-agent-picker-chip"}
 
-// agentBundle puts the four places together the way a bundle has them: the input's footer and the input first, then
-// the two screens.
+// agentBundle puts the four places together the way a bundle has them: the picker's row in the model selector's
+// menu, the input's footer and the input, then the two screens.
 func agentBundle(chip, routing, home, phone, search string) string {
-	return `var chipOf={"data-testid":"selected-agent-chip"},footerOf=()=>` + chip + ";var " + routing + ";const n2c=()=>0," + home + ";var M3c=()=>{var a=L3c(),{q:b}=" + search + `({strict:!1});P6("MOBILE_HOME_VIEW");return ` + phone + "};"
+	return `var rowOf={"data-testid":"agent-selector-submenu"},footerOf=()=>` + chip + ";var " + routing + ";const n2c=()=>0," + home + ";var M3c=()=>{var a=L3c(),{q:b}=" + search + `({strict:!1});P6("MOBILE_HOME_VIEW");return ` + phone + "};"
 }
 
 var (
@@ -60,28 +60,31 @@ func agentStatuses(t *testing.T, src string, opts Options) (string, map[string]R
 	return string(out), got
 }
 
+// The call the phone screen's input is given the picker by.
+const phonePickerCall = `agentSelector:(()=>{try{return window.__agyPhoneAgentPicker()}catch(e){if(e&&typeof e.then==="function")throw e;window.__agyPhoneAgentPickerFailed||(window.__agyPhoneAgentPickerFailed=!0,console.error("[agy] the agent picker could not be built for this screen:",e))}})()`
+
 // The phone layout's new conversation screen is given the picker the desktop one builds, in every bundle since the
 // picker moved into the model selector's menu.
 func TestAgentPickerPatchesFitTheBundlesSince229(t *testing.T) {
 	node, _ := exec.LookPath("node")
 	for _, c := range []struct {
-		name, src string
-		want      []string
+		name, src, home string
+		want            []string
 	}{
-		{"2.32.1", v232AgentBundle, []string{
+		{"2.32.1", v232AgentBundle, v232AgentHome, []string{
 			`var $w=!q,qA=D&&C&&F&&n==="top"&&fb.connectors,`,
 			"footerExtra:$w?f:void 0}),[q,t,b,fa,$w,f])",
 			"agentSelector:$w?void 0:f,",
 			`const n2c=()=>0,__agyPhoneAgentPicker=window.__agyPhoneAgentPicker=function(){var{customSubagent:g}=dI({strict:!1}),l=oj().get("inputComponent");var {agentScriptsEnabled:m,`,
 			"agentScriptsError:y}):void 0;return l},o2c=()=>{var a=zk(),",
-			`initialQuery:b,agentSelector:window.__agyPhoneAgentPicker()})`,
+			"initialQuery:b," + phonePickerCall + "})",
 			"onOpenDrivePlugin:G,selectedAgent:($c||n?.props?.footerExtra)&&!hb?L?.selectedAgentScriptItem:void 0})",
 		}},
-		{"2.29.0", v229AgentBundle, []string{
+		{"2.29.0", v229AgentBundle, v229AgentHome, []string{
 			`var aG=!r,VN=C&&E&&n==="top"&&Na.connectors,`,
 			`const n2c=()=>0,__agyPhoneAgentPicker=window.__agyPhoneAgentPicker=function(){var{customSubagent:g}=cG({strict:!1}),l=hk().get("inputComponent");var {agentScriptsEnabled:n,`,
 			"agentScriptsError:z}):void 0;return l},nFc=()=>{var a=Pl(),",
-			`initialQuery:b,agentSelector:window.__agyPhoneAgentPicker()})`,
+			"initialQuery:b," + phonePickerCall + "})",
 			"onOpenDrivePlugin:F,selectedAgent:(Fb||m?.props?.footerExtra)&&!Fa?L?.selectedAgentScriptItem:void 0})",
 		}},
 	} {
@@ -97,11 +100,7 @@ func TestAgentPickerPatchesFitTheBundlesSince229(t *testing.T) {
 			}
 		}
 		// The screen the picker was copied from is as it was, to the letter.
-		home := v232AgentHome
-		if c.name == "2.29.0" {
-			home = v229AgentHome
-		}
-		if !strings.Contains(out, home) {
+		if !strings.Contains(out, c.home) {
 			t.Errorf("%s: the desktop screen was changed", c.name)
 		}
 		if node == "" {
@@ -127,11 +126,11 @@ func TestAgentPickerPatchesFitTheBundlesSince229(t *testing.T) {
 	}
 }
 
-// agentPage is a page for the patched 2.32.1 bundle to run on: React's hooks reduced to what the two screens use of
-// them, and the bundle's own pieces replaced by ones that note how they were called.
-const agentPage = `
+// agentPage is a page for the patched 2.32.1 bundle to run on, in strict mode as the bundle is: React's hooks reduced
+// to what the two screens use of them, and the bundle's own pieces replaced by ones that note how they were called.
+const agentPage = `"use strict";
 const assert = require("assert");
-global.window = global;
+globalThis.window = globalThis;
 let calls = [];
 let search = { q: "", ws: undefined, customSubagent: undefined };
 let settings = { tipCards: null, inputComponent: { hideAgentSelectorIfEmpty: true } };
@@ -169,7 +168,6 @@ func TestAgentPickerOnAPhoneIsTheDesktopOne(t *testing.T) {
 			t.Fatalf("%s is %v", id, got[id].Status)
 		}
 	}
-	// The bundle's declarations are a function's own here, so the page can look at the two screens it declares.
 	runNode(t, agentPage+`
 var n, q, f, D, C, F, fb = {}, t, b, fa, R, ds;
 `+out+`
@@ -224,13 +222,35 @@ assert.deepStrictEqual(s.phone.calls, s.desktop.calls);
 calls = [];
 M3c(); M3c();
 assert.strictEqual(calls.filter(c => c === "read").length, 2);
+
+// A function that throws as the screen is drawn costs the screen its picker and nothing else, and says so once.
+const built = window.__agyPhoneAgentPicker;
+const said = [];
+console.error = (...a) => said.push(a.join(" "));
+window.__agyPhoneAgentPicker = () => { throw new ReferenceError("a is not defined"); };
+for (let k = 0; k < 3; k++) {
+  const input = inputOf(M3c());
+  assert.strictEqual(input.props.agentSelector, undefined, "the input is drawn, with no picker");
+  assert.strictEqual(input.props.initialQuery, "");
+}
+assert.strictEqual(said.length, 1, "the error is written once and not at every drawing");
+assert.ok(said[0].includes("a is not defined"), said[0]);
+// A promise thrown to wait for something is React's to catch.
+const waiting = Promise.resolve();
+window.__agyPhoneAgentPicker = () => { throw waiting; };
+assert.throws(() => M3c(), e => e === waiting);
+assert.strictEqual(said.length, 1);
+// With the function back the picker is too.
+window.__agyPhoneAgentPicker = built;
+assert.strictEqual(inputOf(M3c()).props.agentSelector.type, "AgentPicker");
 `)
 }
 
 // The input hands the picker to the model selector wherever it has one, toolbar on top or not, and keeps it for
 // its own toolbar only where the model selector is hidden, as it did.
 func TestAgentPickerGoesToTheModelSelectorWithoutATopToolbar(t *testing.T) {
-	out, got := agentStatuses(t, "var "+v232AgentRouting+";", Options{MobileUX: true})
+	src := `var rowOf={"data-testid":"agent-selector-submenu"};var ` + v232AgentRouting + ";"
+	out, got := agentStatuses(t, src, Options{MobileUX: true})
 	if got["mobile-agent-picker-in-model-menu"].Status != StatusApplied {
 		t.Fatalf("the routing is %v", got["mobile-agent-picker-in-model-menu"].Status)
 	}
@@ -238,7 +258,7 @@ func TestAgentPickerGoesToTheModelSelectorWithoutATopToolbar(t *testing.T) {
 		return "(n, q, f) => { var D, C, F, fb = {}, t, b, fa, R, ds; " + body + " return { footer: Fq && Fq.props.footerExtra, modelSelector: Boolean(Fq), own: OTc.props.agentSelector }; }"
 	}
 	runNode(t, agentPage+`
-const before = `+inputOf("var "+v232AgentRouting+";")+`;
+const before = `+inputOf(src)+`;
 const after = `+inputOf(out)+`;
 const picker = { type: "AgentPicker" };
 // The desktop screen: toolbar on top. The model selector draws the picker, before and after.
@@ -254,91 +274,6 @@ for (const input of [before, after]) for (const toolbar of ["top", undefined]) a
 `)
 }
 
-// Each of the four builds on the one before it, so a bundle that one of them does not fit is left alone by those
-// after it, and doctor says which one each went without.
-func TestAgentPickerPatchesBuildOnEachOther(t *testing.T) {
-	routing, hook, phone := agentPickerPatches[0], agentPickerPatches[1], agentPickerPatches[2]
-	// A bundle from before 2.29, where the picker stood in the input's toolbar: no menu to draw it in, and no chip.
-	older := "var x=1;const n2c=()=>0," + v232AgentHome + `;var M3c=()=>{P6("MOBILE_HOME_VIEW");return ` + v232PhoneHome + "};"
-	// The desktop screen's picker built another way.
-	otherHome := strings.Replace(v232AgentBundle, `hideAgentSelectorIfEmpty:l?.hideAgentSelectorIfEmpty,`, `hideIfEmpty:l?.hideAgentSelectorIfEmpty,`, 1)
-	// The input's choice written another way.
-	otherRouting := strings.Replace(v232AgentBundle, `$w=n==="top"&&!q,`, `$w=!q&&n==="top",`, 1)
-	// The phone screen's input given something else.
-	otherPhone := strings.Replace(v232AgentBundle, "showBottomToolbar:!0,aboveContent:", "showBottomToolbar:!0,belowContent:", 1)
-	// The chip decided another way.
-	otherChip := strings.Replace(v232AgentBundle, "selectedAgent:$c&&!hb?L?.selectedAgentScriptItem:void 0", "selectedAgent:hb||!$c?void 0:L?.selectedAgentScriptItem", 1)
-	applied, notNeeded, missing, disabled := StatusApplied, StatusNotNeeded, StatusMissing, StatusDisabled
-	for _, c := range []struct {
-		name, src string
-		opts      Options
-		want      [4]Status
-		without   [4]string
-	}{
-		{"2.32.1", v232AgentBundle, Options{MobileUX: true}, [4]Status{applied, applied, applied, applied}, [4]string{}},
-		{"a bundle before 2.29", older, Options{MobileUX: true}, [4]Status{notNeeded, notNeeded, notNeeded, notNeeded}, [4]string{"", routing, hook, phone}},
-		{"the input's choice in another form", otherRouting, Options{MobileUX: true}, [4]Status{missing, notNeeded, notNeeded, notNeeded}, [4]string{"", routing, hook, phone}},
-		{"the desktop screen's picker in another form", otherHome, Options{MobileUX: true}, [4]Status{applied, missing, notNeeded, notNeeded}, [4]string{"", "", hook, phone}},
-		{"the phone screen's input in another form", otherPhone, Options{MobileUX: true}, [4]Status{applied, applied, missing, notNeeded}, [4]string{"", "", "", phone}},
-		{"the chip decided another way", otherChip, Options{MobileUX: true}, [4]Status{applied, applied, applied, missing}, [4]string{}},
-		{"the first switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{routing: true}}, [4]Status{disabled, notNeeded, notNeeded, notNeeded}, [4]string{"", routing, hook, phone}},
-		{"the second switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{hook: true}}, [4]Status{applied, disabled, notNeeded, notNeeded}, [4]string{"", "", hook, phone}},
-		{"the third switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{phone: true}}, [4]Status{applied, applied, disabled, notNeeded}, [4]string{"", "", "", phone}},
-	} {
-		out, got := agentStatuses(t, c.src, c.opts)
-		for i, id := range agentPickerPatches {
-			if got[id].Status != c.want[i] || got[id].Without != c.without[i] {
-				t.Errorf("%s: %s is %v without %q, want %v without %q", c.name, id, got[id].Status, got[id].Without, c.want[i], c.without[i])
-			}
-		}
-		// The phone screen is only handed the function where the function is there to call, and the chip is only
-		// drawn for a picker the phone screen was handed.
-		called, made, chip := strings.Contains(out, "agentSelector:window.__agyPhoneAgentPicker()"), strings.Contains(out, "window.__agyPhoneAgentPicker=function()"), strings.Contains(out, "?.props?.footerExtra)")
-		if called && !made {
-			t.Errorf("%s: the phone screen calls a function the bundle does not have", c.name)
-		}
-		if chip && !called {
-			t.Errorf("%s: the chip is drawn for a picker the phone screen is not given", c.name)
-		}
-	}
-}
-
-// A release breaks the bundle's long lines in different places. Each of the four applies the same way with a line
-// break wherever the minifier could put one.
-func TestAgentPickerPatchesMatchALineBreakAtAnyToken(t *testing.T) {
-	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
-	base, got := agentStatuses(t, v232AgentBundle, Options{MobileUX: true})
-	for _, id := range agentPickerPatches {
-		if got[id].Status != StatusApplied {
-			t.Fatalf("%s is %v", id, got[id].Status)
-		}
-	}
-	for _, part := range []struct{ id, src string }{
-		{agentPickerPatches[0], v232AgentRouting},
-		{agentPickerPatches[1], v232AgentHome},
-		{agentPickerPatches[2], v232PhoneHome},
-		{agentPickerPatches[3], v232AgentChip},
-	} {
-		at := strings.Index(v232AgentBundle, part.src)
-		positions := lineBreakPositions(part.src)
-		if at < 0 || len(positions) < 5 {
-			t.Fatalf("%s: %d break positions at %d", part.id, len(positions), at)
-		}
-		for _, pos := range positions {
-			broken := v232AgentBundle[:at+pos] + "\n" + v232AgentBundle[at+pos:]
-			out, got := agentStatuses(t, broken, Options{MobileUX: true})
-			ok := compact(out) == compact(base)
-			for _, id := range agentPickerPatches {
-				ok = ok && got[id].Status == StatusApplied
-			}
-			if !ok {
-				t.Errorf("%s: a line break at offset %d is not matched: %q", part.id, pos, part.src[max(0, pos-30):min(len(part.src), pos+30)])
-				break
-			}
-		}
-	}
-}
-
 // The chip for the agent that is chosen is drawn wherever the input's model selector has the picker in its menu,
 // toolbar on top or not, and nowhere it was not drawn before but there.
 func TestAgentChipShowsWhereTheModelMenuHasThePicker(t *testing.T) {
@@ -352,7 +287,7 @@ func TestAgentChipShowsWhereTheModelMenuHasThePicker(t *testing.T) {
 	footerOf := func(body string) string {
 		return `($c, hb, L, n) => { var c, h, k, Qc, l, m, le, p, z, hd, yb, ra, Kc, C, H, ac = {}, Eb, Bd, Ia, lb = [], Jd, jb, Rc = [], Za, xd, O, na, W, fa, da, y, S, Z, T, aa, V, I, A, u, D, v, G; return (` + body + `).props.selectedAgent; }`
 	}
-	runNode(t, `
+	runNode(t, `"use strict";
 const assert = require("assert");
 const B = { createElement: (type, props) => ({ type, props }) };
 const HSc = "Footer";
@@ -379,4 +314,210 @@ for (const footer of [before, after]) for (const top of [true, false]) {
   assert.strictEqual(footer(top, false, undefined, withPicker), undefined);
 }
 `)
+}
+
+// Each of the four builds on the one before it, so a bundle that one of them does not fit is left alone by those
+// after it, and doctor says which one each went without. A bundle that has the picker in the model selector's menu
+// and does not fit one of them is told of, whatever it has renamed.
+func TestAgentPickerPatchesBuildOnEachOther(t *testing.T) {
+	routing, hook, phone := agentPickerPatches[0], agentPickerPatches[1], agentPickerPatches[2]
+	change := func(old, new string) string {
+		t.Helper()
+		if !strings.Contains(v232AgentBundle, old) {
+			t.Fatalf("the bundle has no %q", old)
+		}
+		return strings.Replace(v232AgentBundle, old, new, 1)
+	}
+	applied, notNeeded, missing, disabled := StatusApplied, StatusNotNeeded, StatusMissing, StatusDisabled
+	afterRouting := [4]Status{missing, notNeeded, notNeeded, notNeeded}
+	afterHook := [4]Status{applied, missing, notNeeded, notNeeded}
+	for _, c := range []struct {
+		name, src string
+		opts      Options
+		want      [4]Status
+	}{
+		{"2.32.1", v232AgentBundle, Options{MobileUX: true}, [4]Status{applied, applied, applied, applied}},
+		// Before 2.29 the picker stood in the input's toolbar: no menu to draw it in, and no chip.
+		{"a bundle before 2.29", "var x=1;const n2c=()=>0," + v232AgentHome + `;var M3c=()=>{P6("MOBILE_HOME_VIEW");return ` + v232PhoneHome + "};", Options{MobileUX: true}, [4]Status{notNeeded, notNeeded, notNeeded, notNeeded}},
+
+		{"the input's choice in another form", change(`$w=n==="top"&&!q,`, `$w=!q&&n==="top",`), Options{MobileUX: true}, afterRouting},
+		{"the model selector's footer by another name", strings.ReplaceAll(v232AgentBundle, "footerExtra", "menuFooter"), Options{MobileUX: true}, afterRouting},
+
+		// The run of hooks is copied only where it is the run this was written for, and reads only what the function
+		// that it is copied into gives it.
+		{"a run with one more step", change("var {registerOpenSelector:D}=A3a();", "var {registerOpenSelector:D}=A3a();Y1c(z);"), Options{MobileUX: true}, afterHook},
+		{"a run that reads another of the screen's names", change("V1c({initialCustomSubagent:g,", "V1c({dispatch:a,initialCustomSubagent:g,"), Options{MobileUX: true}, afterHook},
+		{"a run that passes another of the screen's names", change("V1c({initialCustomSubagent:g,", "V1c({initialCustomSubagent:d,"), Options{MobileUX: true}, afterHook},
+		{"a run whose names do not agree", change("U1c({fire:q})", "U1c({fire:p})"), Options{MobileUX: true}, afterHook},
+		{"a run that calls something of the screen's", change("=\nj5b(),{data:v,", "=\nk(),{data:v,"), Options{MobileUX: true}, afterHook},
+		{"a run that ends in another name", change("l=b2c({agentScriptsEnabled:m,", "k=b2c({agentScriptsEnabled:m,"), Options{MobileUX: true}, afterHook},
+		{"a setting hidden by another name", change("hideAgentSelectorIfEmpty:l?.hideAgentSelectorIfEmpty,", "hideIfEmpty:l?.hideAgentSelectorIfEmpty,"), Options{MobileUX: true}, afterHook},
+		{"a run that does not end the screen's hooks", change("agentScriptsError:y}):void 0;return B.createElement(B.Fragment", "agentScriptsError:y}):void 0;Y1c(l);return B.createElement(B.Fragment"), Options{MobileUX: true}, afterHook},
+
+		// What the function reads for the run is what the screen has in those names when it gets to the run.
+		{"a screen that reads the input's settings from elsewhere", change(`l=h.get("inputComponent");`, `l=k.get("inputComponent");`), Options{MobileUX: true}, afterHook},
+		{"a screen that reads the tips into the name of the app's settings", change(`k=h.get("tipCards")`, `h=h.get("tipCards")`), Options{MobileUX: true}, afterHook},
+		{"a screen that reads the tips into the name of the agent asked for", change(`k=h.get("tipCards")`, `g=h.get("tipCards")`), Options{MobileUX: true}, afterHook},
+		{"a screen that changes the input's settings before the run", change("m2c();", "m2c();l=l||{};"), Options{MobileUX: true}, afterHook},
+		{"a screen that changes the agent asked for before the run", change("m2c();", "m2c();g&&=g.trim();"), Options{MobileUX: true}, afterHook},
+		{"a screen that takes the input's settings apart before the run", change("m2c();", "m2c();var{current:C,...l}=b;"), Options{MobileUX: true}, afterHook},
+		{"a screen that so much as reads the agent asked for before the run", change("m2c();", "m2c();g&&m2c();"), Options{MobileUX: true}, afterHook},
+
+		// What the function calls is the bundle's own and nothing of the screen's.
+		{"a screen that reads the address with a hook of its own", change("customSubagent:g}=dI({strict:!1})", "customSubagent:g}=a({strict:!1})"), Options{MobileUX: true}, afterHook},
+		{"a screen that reads the app's settings with a hook of its own", change("h=oj(),", "h=c(),"), Options{MobileUX: true}, afterHook},
+		{"a screen that takes React from a name of its own", strings.ReplaceAll(change("zk(),b=(0,B.useRef)", "zk(),b=(0,a.useRef)"), "B.", "a."), Options{MobileUX: true}, afterHook},
+		{"a screen with React by two names", change("zk(),b=(0,B.useRef)", "zk(),b=(0,a.useRef)"), Options{MobileUX: true}, afterHook},
+		{"a screen that declares one of the run's hooks before the run", change("m2c();", "m2c();function U1c(){}"), Options{MobileUX: true}, afterHook},
+		{"a screen that declares one of its own hooks before the run", change("m2c();", "m2c();function dI(){}"), Options{MobileUX: true}, afterHook},
+
+		// A property by one of those names is not that name.
+		{"a screen that reads properties named like them before the run", change("m2c();", "m2c();b.current?.l;b.g;b.U1c;"), Options{MobileUX: true}, [4]Status{applied, applied, applied, applied}},
+
+		{"the phone screen's input in another form", change("showBottomToolbar:!0,aboveContent:", "showBottomToolbar:!0,belowContent:"), Options{MobileUX: true}, [4]Status{applied, applied, missing, notNeeded}},
+		{"the chip decided another way", change("selectedAgent:$c&&!hb?L?.selectedAgentScriptItem:void 0", "selectedAgent:hb||!$c?void 0:L?.selectedAgentScriptItem"), Options{MobileUX: true}, [4]Status{applied, applied, applied, missing}},
+
+		{"the first switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{routing: true}}, [4]Status{disabled, notNeeded, notNeeded, notNeeded}},
+		{"the second switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{hook: true}}, [4]Status{applied, disabled, notNeeded, notNeeded}},
+		{"the third switched off", v232AgentBundle, Options{MobileUX: true, Disabled: map[string]bool{phone: true}}, [4]Status{applied, applied, disabled, notNeeded}},
+	} {
+		out, got := agentStatuses(t, c.src, c.opts)
+		for i, id := range agentPickerPatches {
+			// One that was not tried names the one before it, which it went without.
+			without := ""
+			if i > 0 && c.want[i] == notNeeded {
+				without = agentPickerPatches[i-1]
+			}
+			if got[id].Status != c.want[i] || got[id].Without != without {
+				t.Errorf("%s: %s is %v without %q, want %v without %q", c.name, id, got[id].Status, got[id].Without, c.want[i], without)
+			}
+		}
+		// One that is not applied leaves nothing of its own in the bundle, so the phone screen is only handed the
+		// function where the function is there to call, and the chip is only drawn for a picker that screen is handed.
+		for i, its := range []string{`var $w=!q,`, "__agyPhoneAgentPicker=function()", "window.__agyPhoneAgentPicker()", "?.props?.footerExtra)"} {
+			if has := strings.Contains(out, its); has != (c.want[i] == applied) {
+				t.Errorf("%s: %s is %v and the bundle has %q: %v", c.name, agentPickerPatches[i], c.want[i], its, has)
+			}
+		}
+	}
+}
+
+// A match that the patch turns down is no match at all: nothing is rewritten, and what is reported goes by the same
+// rule as for a pattern that found nothing.
+func TestAgentPickerMatchTurnedDownIsNoMatch(t *testing.T) {
+	hook, phone, chip := agentPickerPatches[1], agentPickerPatches[2], agentPickerPatches[3]
+	// The screen as the pattern knows it, with one of the run's names written as another in one place.
+	turnedDown := strings.Replace(v232AgentBundle, "U1c({fire:q})", "U1c({fire:p})", 1)
+	if turnedDown == v232AgentBundle || !agentScreen.re.MatchString(turnedDown) {
+		t.Fatal("the pattern does not match the screen with one name changed")
+	}
+	// In a bundle with the picker's row in the model selector's menu that is a patch gone missing.
+	out, got := agentStatuses(t, turnedDown, Options{MobileUX: true})
+	if got[hook].Status != StatusMissing || got[hook].Without != "" {
+		t.Errorf("with the row the patch is %v without %q", got[hook].Status, got[hook].Without)
+	}
+	if strings.Contains(out, "__agyPhoneAgentPicker") {
+		t.Error("with the row the bundle was given the function")
+	}
+	// In one without the row, nothing says the bundle is one the patch is for.
+	out, got = agentStatuses(t, strings.Replace(turnedDown, `"agent-selector-submenu"`, `"agent-selector"`, 1), Options{MobileUX: true})
+	if got[hook].Status != StatusNotNeeded || got[hook].Without != "" {
+		t.Errorf("without the row the patch is %v without %q", got[hook].Status, got[hook].Without)
+	}
+	if got[phone].Status != StatusNotNeeded || got[phone].Without != hook || got[chip].Status != StatusNotNeeded || got[chip].Without != phone {
+		t.Errorf("without the row the two after it are %v without %q and %v without %q", got[phone].Status, got[phone].Without, got[chip].Status, got[chip].Without)
+	}
+	if strings.Contains(out, "__agyPhoneAgentPicker") {
+		t.Error("without the row the bundle was given the function")
+	}
+}
+
+// The function the run is copied into calls nothing that is the screen's own: a bundle in which one of the names it
+// reads from outside is a name of the screen's start, or is declared on the screen's way to the run, is not taken.
+func TestAgentPickerFunctionCallsNothingOfTheScreens(t *testing.T) {
+	// 2.32.1's names for what the screen's start declares and for what the function reads from outside.
+	start := []string{"a", "b", "c", "d", "f", "g", "h", "k", "l"}
+	outside := []string{"dI", "oj", "B", "j5b", "U1c", "c2c", "V1c", "A3a", "b2c", "f2c"}
+	groups := agentScreen.re.FindStringSubmatch(v232AgentBundle)
+	if groups == nil {
+		t.Fatal("the pattern does not match the screen")
+	}
+	for _, c := range []struct {
+		roles []string
+		want  []string
+	}{{agentScreenDeclares, start}, {agentPickerOutside, outside}} {
+		var got []string
+		for _, role := range c.roles {
+			got = append(got, groups[agentScreen.names[role][0]])
+		}
+		if strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Fatalf("%v are %v in 2.32.1, want %v", c.roles, got, c.want)
+		}
+	}
+	hookOf := func(home string) Status {
+		t.Helper()
+		if home == v232AgentHome {
+			t.Fatal("nothing was changed")
+		}
+		_, got := agentStatuses(t, agentBundle(v232AgentChip, v232AgentRouting, home, v232PhoneHome, "dI"), Options{MobileUX: true})
+		return got["mobile-agent-picker-hook"].Status
+	}
+	for _, name := range start {
+		// The run calling a name of the start's.
+		if got := hookOf(strings.Replace(v232AgentHome, "=A3a();", "="+name+"();", 1)); got != StatusMissing {
+			t.Errorf("a run that calls the screen's %s is %v", name, got)
+		}
+		// React by a name of the start's, in every place the screen reads it.
+		if got := hookOf(strings.ReplaceAll(v232AgentHome, "B.", name+".")); got != StatusMissing {
+			t.Errorf("a screen with React in its own %s is %v", name, got)
+		}
+	}
+	for _, name := range outside {
+		// React is read by the screen's start, where a declaration further down would be in the way of that.
+		if name == "B" {
+			continue
+		}
+		if got := hookOf(strings.Replace(v232AgentHome, "m2c();", "m2c();function "+name+"(){}", 1)); got != StatusMissing {
+			t.Errorf("a screen that declares %s on its way to the run is %v", name, got)
+		}
+	}
+	// The two that the function reads for the run, declared again on the way to it.
+	for _, name := range []string{"g", "l"} {
+		if got := hookOf(strings.Replace(v232AgentHome, "m2c();", "m2c();var["+name+"]=b.current;", 1)); got != StatusMissing {
+			t.Errorf("a screen that declares %s again on its way to the run is %v", name, got)
+		}
+	}
+}
+
+// A release breaks the bundle's long lines in different places. Each of the four matches, and rewrites the same way,
+// with a line break wherever the minifier could put one.
+func TestAgentPickerPatchesMatchALineBreakAtAnyToken(t *testing.T) {
+	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for i, src := range []string{v232AgentRouting, v232AgentHome, v232PhoneHome, v232AgentChip} {
+		var p Patch
+		for _, each := range All() {
+			if each.ID == agentPickerPatches[i] {
+				p = each
+			}
+		}
+		// The patch's own rewrite of its own place, as Apply makes it.
+		rewrite := func(src string) (string, bool) {
+			loc := p.FindRe.FindStringSubmatchIndex(src)
+			if loc == nil || (p.Accept != nil && !p.Accept(submatches([]byte(src), loc))) {
+				return "", false
+			}
+			return src[:loc[0]] + string(p.FindRe.ExpandString(nil, p.Replace, src, loc)) + src[loc[1]:], true
+		}
+		base, ok := rewrite(src)
+		positions := lineBreakPositions(src)
+		if !ok || len(positions) < 5 {
+			t.Fatalf("%s: matched %v, with %d break positions", p.ID, ok, len(positions))
+		}
+		for _, pos := range positions {
+			if out, ok := rewrite(src[:pos] + "\n" + src[pos:]); !ok || compact(out) != compact(base) {
+				t.Errorf("%s: a line break at offset %d is not matched: %q", p.ID, pos, src[max(0, pos-30):min(len(src), pos+30)])
+				break
+			}
+		}
+	}
 }

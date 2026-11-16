@@ -168,6 +168,23 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		}
 	}
 
+	// The agent picker's four patches are for a bundle with the picker's row in the model selector's menu, and take one
+	// without it for a bundle from before 2.29, where they are not needed. The chip for the chosen agent and the menu's
+	// footer came with the row, so a bundle that has either and not the row has the row by another name, and would
+	// lose the four without a word. With the row, the loop above and Apply below say which of them does not fit.
+	if !hasAgentPickerInModelMenu(mainJS) && (bytes.Contains(mainJS, []byte("selected-agent-chip")) || bytes.Contains(mainJS, []byte("footerExtra"))) {
+		t.Error("the agent picker's patches: the bundle has the chosen agent's chip or the model selector's footer, but not the picker's row by the test id the patches know their bundles by; a phone is without the picker and doctor reports the four as not needed")
+	}
+	// mobile-agent-picker-in-model-menu sends the agent picker to the model selector's menu from every input that is
+	// given one, and was written with one screen giving its input one: the desktop layout's new conversation screen.
+	// That is the picker's prop written four times: by that screen, by the input that takes it and passes it on, and
+	// by the box the input draws. Another screen that gives one would be changed as well, on a desktop too.
+	if hasAgentPickerInModelMenu(mainJS) {
+		if n := bytes.Count(mainJS, []byte("agentSelector")); n != 4 {
+			t.Errorf("mobile-agent-picker-in-model-menu: the bundle writes agentSelector %d times, not the 4 of one screen giving its input a picker; see who else gives one and what the patch does to it", n)
+		}
+	}
+
 	// mobile-back-clears-section also tells the titlebar's home hook to treat a selected project as away from home, so
 	// the back button shows there. That part is optional for older bundles and would fail without a word, so check
 	// that it matches and that the hook it flags is the one mobile-new-convo-header rewrites.
