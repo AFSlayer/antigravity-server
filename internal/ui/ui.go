@@ -46,6 +46,13 @@ func patchRows(report patches.Report) []PatchRow {
 	rows := make([]PatchRow, 0, len(report))
 	for _, res := range report {
 		row := PatchRow{ID: res.ID, Desc: res.Desc}
+		if res.Status == patches.StatusNotNeeded && res.Without != "" {
+			// Left out because the patch it builds on did not apply, which is not the same as nothing to fix.
+			row.Mark, row.Class = "–", "off"
+			row.Desc += " (not needed without " + res.Without + ")"
+			rows = append(rows, row)
+			continue
+		}
 		switch res.Status {
 		case patches.StatusApplied, patches.StatusNotNeeded:
 			row.Mark, row.Class = "✓", "ok"

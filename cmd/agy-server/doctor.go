@@ -178,7 +178,11 @@ func (c *checklist) checkPatches(cfg *config.Config, instance *lsproc.Instance) 
 			case patches.StatusApplied:
 				c.ok("patch %s", dim(res.ID))
 			case patches.StatusNotNeeded:
-				c.ok("patch %s %s", dim(res.ID), dim("(cleaned up upstream)"))
+				if res.Without != "" {
+					c.ok("patch %s %s", dim(res.ID), dim("(not needed without "+res.Without+")"))
+				} else {
+					c.ok("patch %s %s", dim(res.ID), dim("(cleaned up upstream)"))
+				}
 			case patches.StatusDisabled:
 				c.skip("patch %s (disabled)", res.ID)
 			default:

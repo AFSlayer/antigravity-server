@@ -30,12 +30,13 @@ type Debug struct {
 	mu      sync.Mutex
 	file    *os.File
 	written int64
+	maxFile int64
 	closed  bool
 }
 
 // NewDebug opens path for appending.
 func NewDebug(path string) (*Debug, error) {
-	d := &Debug{path: path}
+	d := &Debug{path: path, maxFile: debugMaxFile}
 	if err := d.open(false); err != nil {
 		return nil, err
 	}
@@ -91,6 +92,23 @@ func (d *Debug) open(truncate bool) error {
 	return nil
 }
 
+// rotate starts a new file and keeps the full one beside it as path.1, in place of the one kept before. Emptying the
+// file instead lost the minutes that were being looked for: a trace is read when something went wrong, and that is
+// often what filled it. Where the full one cannot be moved aside it is emptied after all, so that a trace never
+// takes more than twice the limit.
+//
+// The full one is closed before it is moved, because Windows does not rename a file that is open, and it is emptied
+// by opening it again, because a file opened for appending cannot be cut short there. If neither can be done there
+// is no file until one opens: collect tries again for the next trace.
+func (d *Debug) rotate() error {
+	if d.file != nil {
+		_ = d.file.Close()
+		d.file = nil
+	}
+	err := os.Rename(d.path, d.path+".1")
+	return d.open(err != nil && !os.IsNotExist(err))
+}
+
 func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
 	if !isPublicPost(w, r, d.trusted, d.publicURL) {
 		return
@@ -111,15 +129,21 @@ func (d *Debug) collect(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.closed || d.file == nil {
+	if d.closed {
 		http.Error(w, "closed", http.StatusServiceUnavailable)
 		return
 	}
+	if d.file == nil {
+		if err := d.open(false); err != nil {
+			http.Error(w, "cannot write", http.StatusInternalServerError)
+			return
+		}
+	}
 
-	// The traces are verbose by design; recycling the file keeps a long session
+	// The traces are verbose by design; starting a new file keeps a long session
 	// from filling the disk.
-	if d.written > debugMaxFile {
-		if err := d.open(true); err != nil {
+	if d.written > d.maxFile {
+		if err := d.rotate(); err != nil {
 			http.Error(w, "cannot write", http.StatusInternalServerError)
 			return
 		}

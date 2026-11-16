@@ -27,6 +27,18 @@ var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Fin
 var userMessageButtonsOnTouchRe = regexp.MustCompile(`user-input-buttons-container[^"]*"\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
 var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
 
+// viewportInnerRe matches the one element the bundle puts inside the conversation's viewport, which is the first thing
+// it creates there. On iOS scroll-input-tracker keeps room above the rows as padding on it.
+var viewportInnerRe = regexp.MustCompile(`"data-testid":\s*"autoscroll-viewport"[^;]{0,300}?\},\s*[a-zA-Z0-9_$.]+\(\s*"div",\s*\{\s*className:\s*"mx-auto w-full"`)
+
+// rowsFromPropRe matches the component that keeps a row in place reading the rows it chooses among from the prop its
+// patched method hands to scroll-input-tracker, which follows the row at the top of the screen among them.
+var rowsFromPropRe = regexp.MustCompile(`getSnapshotBeforeUpdate\([a-zA-Z0-9_$]+\)\s*\{[^{}]{0,300}?\.getAnchorCandidates\b`)
+
+// promptWrapperRe matches the classes of the element around a conversation's prompt, written as one string or as the
+// first two of several, with the bottom padding it has had: pb-2 up to 2.28 and pb-4 since.
+var promptWrapperRe = regexp.MustCompile(`relative w-full px-4 pb-[24](?:",\s*"| )flex-shrink-0`)
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -99,6 +111,15 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if !bytes.Contains(mainJS, []byte("agent-input-box")) {
 		t.Error("the bundle no longer has agent-input-box; keyboard-detect may stop working")
 	}
+	// safe-area-insets finds the element around a prompt by its classes, and nothing else says when they change: 2.29
+	// gave the conversation's one pb-4 for pb-2, and the prompt sat in the home indicator's area on a phone and kept
+	// its padding above the keyboard until someone saw it.
+	if !regexpMatch(promptWrapperRe, mainJS) {
+		t.Error("the bundle no longer has the element around a conversation's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
+	}
+	if !bytes.Contains(mainJS, []byte(`"shrink-0 p-2"`)) {
+		t.Error("the bundle no longer has the element around the home screen's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
+	}
 
 	// mobile-user-message-actions and autoscroll-distance-fix are optional because 2.31 does both itself. A bundle with
 	// neither the code they patch nor that would lose them without a word.
@@ -113,6 +134,21 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	// a moving reader without a word.
 	if bytes.Contains(mainJS, []byte("oppositeDirectionCooldownMs")) && !regexpMatch(pagingTrimWaitsRe, mainJS) {
 		t.Error("paging-trim-waits-for-still: the paging code is there but its update decision was not found; rows above drop while the reader scrolls")
+	}
+
+	// On iOS the scroll tracker makes room above the conversation only where the bundle's button says there are older
+	// rows to load, and finds it by its label. Without it the rows wait for the conversation to stop, as before. The
+	// patches that go with the room each say what of the bundle they need, so the loop above reports those.
+	if regexpMatch(pagingRowsKeptRe, mainJS) && !regexpMatch(viewportInnerRe, mainJS) {
+		t.Error("the conversation's viewport no longer holds one element with everything in it; the scroll tracker sets the room above the rows as padding on that element, and gives the room up where it finds none")
+	}
+	// With the anchoring off the scroll tracker follows the row at the top of the screen, which it finds among the rows
+	// the component chooses from. The patched method hands it the prop they come from.
+	if regexpMatch(pagingRowsKeptRe, mainJS) && !regexpMatch(rowsFromPropRe, mainJS) {
+		t.Error("the component that keeps a row in place no longer reads its rows from a getAnchorCandidates prop; the scroll tracker is handed that prop, and without it follows only the row it was handed, wherever the reader has gone")
+	}
+	if bytes.Contains(mainJS, []byte("innerRadiusPx")) && !(bytes.Contains(mainJS, []byte("Load older messages")) && bytes.Contains(mainJS, []byte("No more older messages"))) {
+		t.Error("the conversation's paging is there but not the button that says whether there are older messages, which the scroll tracker reads")
 	}
 
 	// user-status-keep-on-error is optional for 2.28 and earlier, which did not clear userStatus in catch. A newer

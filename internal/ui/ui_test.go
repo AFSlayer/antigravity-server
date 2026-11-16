@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,11 +24,16 @@ func TestPatchRowsTreatsNotNeededAsOK(t *testing.T) {
 		{ID: "not-needed", Desc: "not needed patch", Status: patches.StatusNotNeeded},
 		{ID: "disabled", Desc: "disabled patch", Status: patches.StatusDisabled},
 		{ID: "missing", Desc: "missing patch", Status: patches.StatusMissing},
+		{ID: "built-on", Desc: "built on another", Status: patches.StatusNotNeeded, Without: "missing"},
 	}
 
 	rows := patchRows(report)
-	if len(rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	// A patch left out because the one it builds on did not apply is not shown as done.
+	if rows[4].Mark != "–" || rows[4].Class != "off" || rows[4].Desc != "built on another (not needed without missing)" {
+		t.Errorf("row of a patch that went without another = %+v", rows[4])
 	}
 	if rows[0].Mark != "✓" || rows[0].Class != "ok" {
 		t.Errorf("applied row = %+v, want Mark=✓ Class=ok", rows[0])
@@ -376,5 +382,109 @@ func TestSignInBehindReverseProxyAndDebugClose(t *testing.T) {
 	}
 	if dbg.file != nil {
 		t.Fatalf("Debug.file must remain nil after Close()")
+	}
+}
+
+// A trace file that fills up is kept beside the new one, once: emptying it lost the minutes that were being looked for.
+func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), "traces")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(folder, "mobile-debug.log")
+	dbg, err := NewDebug(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbg.Close()
+	dbg.maxFile = 20
+	mux := http.NewServeMux()
+	dbg.WithSameOrigin(nil, "https://agy.example.com").Register(mux)
+	try := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, DebugLogPath, strings.NewReader(body))
+		req.Host = "agy.example.com"
+		req.Header.Set("Origin", "https://agy.example.com")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	post := func(body string) {
+		t.Helper()
+		if code := try(body); code != http.StatusNoContent {
+			t.Fatalf("posting %q: status %d", body, code)
+		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	post("first episode, long enough to fill it")
+	post("second episode, also over the limit")
+	if got := read(logPath + ".1"); got != "first episode, long enough to fill it\n" {
+		t.Errorf("the full file was not kept: %q", got)
+	}
+	if got := read(logPath); got != "second episode, also over the limit\n" {
+		t.Errorf("the new file holds %q", got)
+	}
+	post("third")
+	if got := read(logPath + ".1"); got != "second episode, also over the limit\n" {
+		t.Errorf("only the last full file is kept, got %q", got)
+	}
+	if got := read(logPath); got != "third\n" {
+		t.Errorf("the new file holds %q", got)
+	}
+	post("fourth")
+	if got := read(logPath); got != "third\nfourth\n" {
+		t.Errorf("a file under the limit is added to, got %q", got)
+	}
+
+	// Something in the way of the kept file: the full one is emptied instead, as it was before any was kept.
+	if err := os.Remove(logPath + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(logPath+".1", "in-the-way"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	post("fifth, which takes it over the limit again")
+	post("sixth")
+	if got := read(logPath); got != "sixth\n" {
+		t.Errorf("a full file that cannot be kept is emptied, got %q", got)
+	}
+	post("seventh")
+	if got := read(logPath); got != "sixth\nseventh\n" {
+		t.Errorf("and written to again, got %q", got)
+	}
+
+	// The folder goes away with the file full, so no file can be started. A trace is refused while that lasts, and
+	// taken again once a file opens, without a restart.
+	post("eighth, which takes it over the limit once more")
+	// Windows does not let a folder go while a file in it is open, so there the file is closed first, which is how a
+	// start that failed leaves it anyway.
+	if runtime.GOOS == "windows" {
+		dbg.mu.Lock()
+		_ = dbg.file.Close()
+		dbg.file = nil
+		dbg.mu.Unlock()
+	}
+	if err := os.RemoveAll(folder); err != nil {
+		t.Fatal(err)
+	}
+	if code := try("ninth"); code != http.StatusInternalServerError {
+		t.Errorf("a trace with nowhere to go: status %d, want %d", code, http.StatusInternalServerError)
+	}
+	if code := try("tenth"); code != http.StatusInternalServerError {
+		t.Errorf("and the next one: status %d, want %d", code, http.StatusInternalServerError)
+	}
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	post("eleventh")
+	if got := read(logPath); got != "eleventh\n" {
+		t.Errorf("a file that opens again is written to, got %q", got)
 	}
 }

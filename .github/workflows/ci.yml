@@ -37,7 +37,8 @@ jobs:
           fi
 
   # Process discovery runs ps and lsof on macOS and PowerShell on Windows,
-  # code the Linux job never reaches.
+  # code the Linux job never reaches. The debug trace file is closed, renamed
+  # and opened again when it is full, which Windows allows only in that order.
   test-lsproc:
     strategy:
       fail-fast: false
@@ -57,6 +58,8 @@ jobs:
           node-version: "20"
 
       - run: go test ./internal/lsproc/
+
+      - run: go test ./internal/ui/ -run TestDebug
 
   smoke-test:
     runs-on: ubuntu-latest

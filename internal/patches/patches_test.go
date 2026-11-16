@@ -90,6 +90,11 @@ var regexpFixtures = map[string]string{
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
 	"paging-trim-waits-for-still":               `ma=Z.startIndex<oa.startIndex||Z.endIndexExclusive>oa.endIndexExclusive;if(N(ba,pa,ka))ma&&K(g.timing.oppositeDirectionCooldownMs||g.timing.retryDelayMs);else{`,
+	"paging-keeps-rows-after-render":            `var Kp=class extends B.Component{getSnapshotBeforeUpdate(a){return a.anchorKey===this.props.anchorKey?null:[...this.props.getAnchorCandidates()].map(b=>({element:b,offset:0}))}componentDidUpdate(a,b,c){a=this.props.viewportRef.current;c=c?.find(({element:d})=>d.isConnected);a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){return this.props.children}};`,
+	"paging-loads-rows-ahead":                   `var R2a={expansion:{minBatchSize:15,multiplier:.5,maxBatchSize:50},timing:{throttleMs:100,retryDelayMs:1E3,oppositeDirectionCooldownMs:1E3},trigger:{innerRadiusPx:600,contractionSafetyPx:8E3,outerRadiusPx:1.5E4}};`,
+	"scrollbar-measures-rows":                   `var na=h?oa.scrollLeft:oa.scrollTop,ta=h?oa.scrollWidth:oa.scrollHeight,ra=h?oa.clientWidth:oa.clientHeight;A.pos=na;A.scrollLength=ta;A.clientLength=ra;if(!(ra>0&&ta>ra+1))return W(),!1;`,
+	"scrollbar-click-lands-in-rows":             `ea>0&&(ta=Math.min(ea,Math.max(0,ta-ra/2))/ea*pa,h?oa.scrollLeft=ta:oa.scrollTop=ta,A.pos=h?oa.scrollLeft:oa.scrollTop,Z(!0))`,
+	"scrollbar-thumb-by-script":                 `function TQb(){var a=globalThis.ScrollTimeline;return typeof a==="function"?a:null}var eV=()=>B.createElement("div",{"data-overlay-scrollbar-track":""});`,
 	"scrollbar-drag-follows-paging":             `pa=z.current.startScrollPos+((h?pa.clientX:pa.clientY)-z.current.startCoord)/ua*H.current.maxScrollPos,h?la.scrollLeft=pa:la.scrollTop=pa,`,
 	"autoscroll-unpin-needs-input":              `var J=()=>{var L=n.current;if(L){var M=L.scrollTop,N=F(),P=Math.max(0,L.scrollHeight-L.clientHeight),O=P<v.current&&M>=P-1,Q=r.current;M<t.current&&!O?(r.current=!1,tT.delete(L)):N&&!C.current&&(r.current=!0);Q!==r.current&&y.current?.(r.current)}}`,
 	"websocket-transport-default":               `function Khc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`,
@@ -207,7 +212,8 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`"Copy path")),n&&z.createElement`,
 		`g=l=>l;if(!c.size)return g(h);`,
 		`contractionSafetyPx:8E3,outerRadiusPx:1.5E4`,
-		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else{`,
+		`else if(!ma&&Z.startIndex>oa.startIndex&&window.__agyDeferTrim?.())K(250);else if(Z.startIndex<oa.startIndex&&window.__agyDeferGrow?.())K(100);else{`,
+		`c=c?.find(({element:d})=>d.isConnected);window.__agyKeepRows?(window.__agyRowsDrawn?.(a,this.props.getAnchorCandidates),a&&c&&window.__agyKeepRows(a,c.element,c.offset)):a&&c&&(c=c.element.getBoundingClientRect().top-a.getBoundingClientRect().top-c.offset,Math.abs(c)>=.5&&(a.scrollTop+=c))}render(){`,
 		`value:"__write_in__",checked:e,onChange:()=>{var D=(a.isMultiSelect?!e:!0);m(D);D&&(a.isMultiSelect||k())}`,
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
@@ -454,6 +460,7 @@ func TestCacheKeyChangesWithPatchSet(t *testing.T) {
 
 func TestEveryPatchIsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
+	targets := map[string]Target{}
 
 	for _, p := range All() {
 		if p.ID == "" {
@@ -463,7 +470,12 @@ func TestEveryPatchIsWellFormed(t *testing.T) {
 		if seen[p.ID] {
 			t.Errorf("%s: duplicate patch ID", p.ID)
 		}
+		// Apply goes down the list once, so a patch can only build on one that came before it for the same document.
+		if target, listed := targets[p.Requires]; p.Requires != "" && (!listed || target != p.Target) {
+			t.Errorf("%s: requires %q, which is not listed before it for %s", p.ID, p.Requires, p.Target)
+		}
 		seen[p.ID] = true
+		targets[p.ID] = p.Target
 
 		if p.Desc == "" {
 			t.Errorf("%s: needs a user-facing Desc", p.ID)
