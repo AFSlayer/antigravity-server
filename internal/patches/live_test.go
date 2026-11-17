@@ -168,6 +168,12 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		}
 	}
 
+	// The context indicator's patches are for a bundle that takes the indicator from the build bindings, and take one
+	// that does not for 2.29 or earlier, which draws it itself. A bundle with the setting that does neither has the
+	// slot by another name, and would lose the indicator without a word.
+	if bytes.Contains(mainJS, []byte(`"contextUsageIndicatorEnabled"`)) && !hasContextIndicatorSlot(mainJS) && !bytes.Contains(mainJS, []byte(`"context-usage-indicator"`)) {
+		t.Error("the context indicator's patches: the bundle has the indicator's setting, but neither draws the indicator itself nor takes it from the build bindings where the patches look for it; the indicator is gone and doctor reports the patches as not needed")
+	}
 	// The agent picker's four patches are for a bundle with the picker's row in the model selector's menu, and take one
 	// without it for a bundle from before 2.29, where they are not needed. The chip for the chosen agent and the menu's
 	// footer came with the row, so a bundle that has either and not the row has the row by another name, and would

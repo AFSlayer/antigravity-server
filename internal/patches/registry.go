@@ -565,6 +565,90 @@ func All() []Patch {
 			Replace:      `${1}(${3}||${2}?.props?.footerExtra)${4}`,
 		},
 
+		// The context indicator beside the send button, which the web bundle has had no component for since 2.30: see
+		// context_indicator.go. The first hands the input one where the build bindings give none, the second defines
+		// it, and the third shows it unless the setting was turned off. The next three show the setting itself, which
+		// the web build hides, at the top of Settings > Appearance; they need the indicator and not the third, so the
+		// setting can still turn it on where the third does not fit. The last describes the setting as what it shows.
+		{
+			ID:           "context-indicator-slot",
+			Desc:         "Show how full the context window is beside the send button",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSlot.re,
+			Optional:     true,
+			Precondition: hasContextIndicatorSlot,
+			Accept:       contextIndicatorSlotIsKnown,
+			Replace:      contextIndicatorSlot.replace,
+		},
+		{
+			ID:           "context-indicator-define",
+			Desc:         "Define a context window indicator for the web bundle, which has none since Antigravity 2.30",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorDefine.re,
+			Optional:     true,
+			Requires:     "context-indicator-slot",
+			Precondition: hasContextIndicatorSlot,
+			Accept:       contextIndicatorHooksAreKnown,
+			Replace:      contextIndicatorDefine.replace,
+		},
+		{
+			ID:           "context-indicator-default-on",
+			Desc:         "Show the context window indicator unless its setting was turned off",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorDefaultRe,
+			Optional:     true,
+			Requires:     "context-indicator-define",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      `${1}!=="false"`,
+		},
+		{
+			ID:           "context-indicator-setting-allowed",
+			Desc:         "Keep the context indicator's setting in the settings screens",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingAllowedRe,
+			Optional:     true,
+			Requires:     "context-indicator-define",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      `${1}`,
+		},
+		{
+			ID:           "context-indicator-setting-visible",
+			Desc:         "Show the context indicator's setting without the Google flag it is behind",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingVisible.re,
+			Optional:     true,
+			Requires:     "context-indicator-setting-allowed",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingVisible.replace,
+		},
+		{
+			ID:           "context-indicator-setting-in-chat",
+			Desc:         "Put the context indicator's setting in the Chat section of Settings > Appearance, which is never collapsed",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingInChatRe,
+			Optional:     true,
+			Requires:     "context-indicator-setting-visible",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingInChat,
+		},
+		{
+			ID:           "context-indicator-setting-description",
+			Desc:         "Describe the context indicator's setting as what it shows, without the model quota",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingDescription.re,
+			Optional:     true,
+			Requires:     "context-indicator-setting-visible",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingDescription.replace,
+		},
+
 		// On mobile, show the back button in the main titlebar when a project is selected
 		// and ensure back navigation always clears the active section.
 		{

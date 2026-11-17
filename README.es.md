@@ -227,6 +227,11 @@ El paquete web servido por Antigravity —ya sea a través del puente remoto ofi
 | **Estabilidad de Conexión** | Banner "Lost connection" visible tras reconexión exitosa; iOS Safari detiene flujos fetch a mitad de respuesta y deja listas vacías o spinners girando | Usa por defecto el transporte RPC por WebSocket incluido en el paquete, oculta avisos obsoletos de desconexión tras verificar conectividad y recupera spinners bloqueados (>30s sin tráfico de red) mediante guardián |
 | **Entrada de Texto** | Enter en móvil envía mensaje o rompe composición IME; navegación por teclado salta al inicio con comandos slash | Mantiene salto de línea nativo, protege composición IME, restaura navegación al inicio de línea (Cmd+Izquierda / Inicio) y por palabras (Ctrl+Izquierda), envía con Cmd/Ctrl+Enter |
 | **Selección de Modelo** | Tocar un modelo cierra el menú inmediatamente | Abre correctamente el submenú de nivel de razonamiento (reasoning effort) |
+| **Ventana de contexto** | Sin indicador de contexto en el acceso remoto: hasta la 2.29 está detrás de una flag de Google, y desde la 2.30 el paquete web no lo incluye y oculta el ajuste "Context and Quota Indicator" | En la 2.30 y posteriores, muestra un anillo con el porcentaje junto al botón de enviar; al tocarlo muestra los tokens usados por el prompt del sistema, las herramientas y la conversación, y el espacio libre. Activado por defecto, con su interruptor arriba de Ajustes > Appearance |
+
+<p align="center"><img src="docs/assets/context-indicator.png" width="380" alt="El indicador de contexto junto al botón de enviar en un teléfono, abierto: 123,3K de 256K tokens usados, con prompt del sistema, herramientas, mensajes y espacio libre" /></p>
+
+Las cifras son la estimación del propio servidor de lenguaje en la última llamada al modelo, así que el indicador aparece cuando la conversación ha recibido una respuesta y se actualiza con cada una. Para ocultarlo, desactiva **Ajustes > Appearance > Context and Quota Indicator**; la elección se guarda en el navegador.
 
 Ejecute `agy-server doctor` para verificar la integridad de todos los parches aplicados a su instalación.
 

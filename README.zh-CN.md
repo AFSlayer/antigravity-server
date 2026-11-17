@@ -243,6 +243,11 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 | **连接稳定性与横幅** | 重连成功后“Lost connection”横幅仍持续显示，或 iOS Safari 的 fetch 流响应中途停住，导致列表为空或转圈不停 | 默认使用资源包内置的 WebSocket RPC 传输，检测到服务器心跳正常后自动清除断联横幅，若无网络流量且加载转圈卡死超过 30 秒则由看门狗自动安全重连 |
 | **输入行为** | 移动端回车直接发送或破坏输入法未上屏状态；存在斜杠命令/标签时跳行异常 | 保持原生换行，保护输入法组合状态，修复含斜杠命令时的 Cmd+Left(macOS)/Home(全平台) 行首导航与 Ctrl+Left 逐词导航，通过 Cmd/Ctrl+Enter 发送 |
 | **模型选择** | 点击模型选项时下拉菜单立即自动关闭 | 点击时正常展开 reasoning effort 推理深度子菜单 |
+| **上下文窗口** | 远程访问时看不到上下文指示器：2.29 及之前它隐藏在 Google 功能开关之后，自 2.30 起网页包中完全没有，"Context and Quota Indicator" 设置也被隐藏 | 在 2.30 及之后的版本中，于发送按钮旁以圆环显示占用比例，点击后列出系统提示、工具、对话各自占用的 token 以及剩余空间。默认开启，可在 设置 > Appearance 顶部关闭 |
+
+<p align="center"><img src="docs/assets/context-indicator.png" width="380" alt="手机上发送按钮旁的上下文指示器展开后的样子：256K 中已用 123.3K token，以及系统提示、工具、对话消息和剩余空间" /></p>
+
+数值是语言服务器在最近一次调用模型时给出的估算，因此对话收到一次回复后指示器才会出现，并随每次回复更新。如需隐藏，请关闭 **设置 > Appearance > Context and Quota Indicator**，该选择保存在浏览器中。
 
 运行 `agy-server doctor` 可检查当前安装的资源包中所有补丁的应用状态。
 

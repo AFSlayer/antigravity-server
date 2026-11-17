@@ -227,6 +227,11 @@ O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo
 | **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; iOS Safari para streams fetch no meio da resposta e deixa listas vazias ou spinners girando | Usa por padrão o transporte RPC por WebSocket embutido no pacote, oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>30s sem tráfego de rede) via guardião cliente |
 | **Comportamento de Entrada** | Enter mobile envia mensagem ou corrompe composição IME; navegação falha na presença de comandos slash | Preserva quebra de linha nativa, protege composição IME, restaura navegação para o início da linha (Cmd+Esquerda / Home) e por palavras (Ctrl+Esquerda), envia com Cmd/Ctrl+Enter |
 | **Seleção de Modelo** | Tocar em um modelo fecha o menu imediatamente | Abre corretamente o submenu de esforço de raciocínio (reasoning effort) |
+| **Janela de contexto** | Sem indicador de contexto no acesso remoto: até a 2.29 ele fica atrás de uma flag do Google, e desde a 2.30 o bundle web não o tem e esconde a configuração "Context and Quota Indicator" | Na 2.30 e posteriores, mostra um anel com a porcentagem ao lado do botão de envio; um toque mostra os tokens usados pelo prompt do sistema, pelas ferramentas e pela conversa, e o espaço livre. Ligado por padrão, com o interruptor no topo de Configurações > Appearance |
+
+<p align="center"><img src="docs/assets/context-indicator.png" width="380" alt="O indicador de contexto ao lado do botão de envio em um celular, aberto: 123,3K de 256K tokens usados, com prompt do sistema, ferramentas, mensagens e espaço livre" /></p>
+
+Os números são a estimativa do próprio servidor de linguagem na última chamada ao modelo, então o indicador aparece depois que a conversa recebe uma resposta e é atualizado a cada uma. Para escondê-lo, desligue **Configurações > Appearance > Context and Quota Indicator**; a escolha fica salva no navegador.
 
 Execute `agy-server doctor` para verificar o status de todos os patches em relação ao pacote instalado.
 
