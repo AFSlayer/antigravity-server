@@ -227,6 +227,7 @@ O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo
 | **Estabilidade de Conexão** | Banner "Lost connection" permanece após reconexão bem-sucedida; iOS Safari para streams fetch no meio da resposta e deixa listas vazias ou spinners girando | Usa por padrão o transporte RPC por WebSocket embutido no pacote, oculta avisos de desconexão após verificar pulso do servidor e recupera spinners travados (>30s sem tráfego de rede) via guardião cliente |
 | **Comportamento de Entrada** | Enter mobile envia mensagem ou corrompe composição IME; navegação falha na presença de comandos slash | Preserva quebra de linha nativa, protege composição IME, restaura navegação para o início da linha (Cmd+Esquerda / Home) e por palavras (Ctrl+Esquerda), envia com Cmd/Ctrl+Enter |
 | **Seleção de Modelo** | Tocar em um modelo fecha o menu imediatamente | Abre corretamente o submenu de esforço de raciocínio (reasoning effort) |
+| **Janela de contexto** | Desde o Antigravity 2.30 o bundle web não tem o indicador de contexto, e ativar "Context and Quota Indicator" não mostra nada | Mostra um anel com a porcentagem ao lado do botão de envio; um toque mostra os tokens usados pelo prompt do sistema, pelas ferramentas e pela conversa, e o espaço livre |
 
 Execute `agy-server doctor` para verificar o status de todos os patches em relação ao pacote instalado.
 

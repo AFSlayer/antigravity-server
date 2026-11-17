@@ -565,6 +565,44 @@ func All() []Patch {
 			Replace:      `${1}(${3}||${2}?.props?.footerExtra)${4}`,
 		},
 
+		// The context indicator beside the send button, which the web bundle has had no component for since 2.30: see
+		// context_indicator.go. The first hands the input one where the build bindings give none, the second defines
+		// it, and the third shows it unless the setting was turned off.
+		{
+			ID:           "context-indicator-slot",
+			Desc:         "Show how full the context window is beside the send button",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSlot.re,
+			Optional:     true,
+			Precondition: hasContextIndicatorSlot,
+			Accept:       contextIndicatorSlotIsKnown,
+			Replace:      contextIndicatorSlot.replace,
+		},
+		{
+			ID:           "context-indicator-define",
+			Desc:         "Define a context window indicator for the web bundle, which has none since Antigravity 2.30",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorDefine.re,
+			Optional:     true,
+			Requires:     "context-indicator-slot",
+			Precondition: hasContextIndicatorSlot,
+			Accept:       contextIndicatorHooksAreKnown,
+			Replace:      contextIndicatorDefine.replace,
+		},
+		{
+			ID:           "context-indicator-default-on",
+			Desc:         "Show the context window indicator unless its setting was turned off",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorDefaultRe,
+			Optional:     true,
+			Requires:     "context-indicator-define",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      `${1}!=="false"`,
+		},
+
 		// On mobile, show the back button in the main titlebar when a project is selected
 		// and ensure back navigation always clears the active section.
 		{

@@ -39,6 +39,9 @@ func syntheticBundle() []byte {
 // regexpFixtures supplies a synthetic match for each regexp patch, since a
 // regexp has no literal to reuse.
 var regexpFixtures = map[string]string{
+	"context-indicator-define":                  v232ContextIndicatorHook,
+	"context-indicator-slot":                    v232ContextIndicatorSlot,
+	"context-indicator-default-on":              v232ContextIndicatorSetting,
 	"skip-onboarding":                           `c.hasOnboardingScreens&&e!==2&&RK({to:"/onboarding",replace:!0,throw:!0})`,
 	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;var l=k.shiftKey&&(k.metaKey||k.ctrlKey);if(k.shiftKey&&!l)return!1;k.preventDefault();`,
 	"model-effort-submenu":                      ",onClick:()=>{var y=\nv.byEffort.get(w);y&&b(y)}",
