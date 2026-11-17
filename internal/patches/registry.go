@@ -567,7 +567,8 @@ func All() []Patch {
 
 		// The context indicator beside the send button, which the web bundle has had no component for since 2.30: see
 		// context_indicator.go. The first hands the input one where the build bindings give none, the second defines
-		// it, and the third shows it unless the setting was turned off.
+		// it, and the third shows it unless the setting was turned off. The last three show the setting itself, which
+		// the web build hides, at the top of Settings > Appearance.
 		{
 			ID:           "context-indicator-slot",
 			Desc:         "Show how full the context window is beside the send button",
@@ -601,6 +602,39 @@ func All() []Patch {
 			Requires:     "context-indicator-define",
 			Precondition: hasContextIndicatorSlot,
 			Replace:      `${1}!=="false"`,
+		},
+		{
+			ID:           "context-indicator-setting-allowed",
+			Desc:         "Keep the context indicator's setting in the settings screens",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingAllowedRe,
+			Optional:     true,
+			Requires:     "context-indicator-default-on",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      ``,
+		},
+		{
+			ID:           "context-indicator-setting-visible",
+			Desc:         "Show the context indicator's setting without the Google flag it is behind",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingVisible.re,
+			Optional:     true,
+			Requires:     "context-indicator-setting-allowed",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingVisible.replace,
+		},
+		{
+			ID:           "context-indicator-setting-in-chat",
+			Desc:         "Put the context indicator's setting in the Chat section of Settings > Appearance, which is never collapsed",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingInChatRe,
+			Optional:     true,
+			Requires:     "context-indicator-setting-visible",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingInChat,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected

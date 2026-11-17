@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// Up to 2.29 the web bundle drew a context indicator beside the send button: how full the conversation's context
-// window is, with a breakdown on click, shown when the "Context and Quota Indicator" setting is on. Since 2.30 the
-// indicator's component comes from the app's build bindings, and the web build has none, so the setting draws nothing
-// over remote access. The language server still sends each conversation's context window usage.
+// Up to 2.29 the web bundle could draw a context indicator beside the send button: how full the conversation's
+// context window is, with a breakdown on click. It was behind the "Context and Quota Indicator" setting, which was off
+// by default and itself behind a Google feature flag. Since 2.30 the indicator's component comes from the app's build
+// bindings, and the web build has none, so nothing is drawn over remote access. The language server still sends each
+// conversation's context window usage.
 
 // hasContextIndicatorSlot says whether a bundle takes the indicator from the build bindings, as 2.30 and later do.
 func hasContextIndicatorSlot(b []byte) bool {
@@ -24,8 +25,8 @@ const (
 	contextIndicatorHookNext  = `«next»=«a2»=>{«a3»=«hook»(«a4»);return «select»(«a5»,{selector:`
 )
 
-// contextIndicatorDefine is the pattern for the hooks with its replacement, which declares the indicator as one more
-// name in the list the hook is declared in, before it.
+// contextIndicatorDefine is the pattern for the hooks with its replacement, which declares the indicator, and the
+// query it reads the store with, as two more names in the list the hook is declared in, before it.
 var contextIndicatorDefine = func() (s struct {
 	re      *regexp.Regexp
 	names   map[string][]int
@@ -41,8 +42,8 @@ var contextIndicatorDefine = func() (s struct {
 	b.close()
 	s.re, s.names = regexp.MustCompile(b.String()), b.names
 	name := func(role string) string { return "${" + strconv.Itoa(s.names[role][0]) + "}" }
-	component := strings.NewReplacer("${2}", name("hook"), "${4}", name("React"), "${5}", name("select")).Replace(contextIndicatorComponent)
-	s.replace = "},__agyContextIndicator=window.__agyContextIndicator=" + component + ",${" + strconv.Itoa(head) + "}"
+	component := strings.NewReplacer("«hook»", name("hook"), "«React»", name("React"), "«select»", name("select")).Replace(contextIndicatorComponent)
+	s.replace = "},__agyContextUsageQuery=" + contextIndicatorQuery + ",__agyContextIndicator=window.__agyContextIndicator=" + component + ",${" + strconv.Itoa(head) + "}"
 	return s
 }()
 
@@ -80,29 +81,75 @@ var contextIndicatorDefaultRe = func() *regexp.Regexp {
 	return regexp.MustCompile(b.String())
 }()
 
-// contextIndicatorComponent is the indicator, after the 2.29 one: a ring and the percentage, and on a click the
-// tokens used of the window and each part the language server counts them in. It reads the conversation's store with
-// the bundle's own two hooks, written ${2} and ${5}, and draws with React, written ${4}; contextIndicatorDefine puts
-// in the groups they are. It has no template literal and no other $, since the replacement is expanded.
-const contextIndicatorComponent = `function(p){` +
-	`var R=${4},E=R.createElement,s=${2}(p.conversationId),u=${5}(s,{selector:x=>x?.contextWindowUsage}),[o,so]=(0,R.useState)(!1),r=(0,R.useRef)(null);` +
-	`(0,R.useEffect)(()=>{if(!o)return;var h=e=>{r.current&&!r.current.contains(e.target)&&so(!1)};document.addEventListener("pointerdown",h,!0);return()=>document.removeEventListener("pointerdown",h,!0)},[o]);` +
-	`var t=Number(u?.estimatedTokensUsed??0),m=Number(u?.maxContextTokens??0);if(!(t>0&&m>0))return null;` +
-	`var f=Math.min(1,t/m),c=Math.round(f*100),a=!!u.estimatedAfterCompaction,L=2*Math.PI*6,` +
-	`z=v=>v.endsWith(".0")?v.slice(0,-2):v,n=k=>k<1E3?String(k):k<1E6?z((k/1E3).toFixed(1))+"K":z((k/1E6).toFixed(1))+"M",` +
-	`g=(u.tokenGroups||[]).filter(x=>Number(x.numTokens)>0),rows=[];` +
-	`g.forEach((x,i)=>{rows.push(E("dt",{key:"t"+i},x.name||"Other"),E("dd",{key:"d"+i,style:{textAlign:"right"}},n(Number(x.numTokens))))});` +
-	`rows.push(E("dt",{key:"tf"},"Free"),E("dd",{key:"df",style:{textAlign:"right"}},n(Math.max(0,m-t))));` +
-	`return E("span",{ref:r,style:{position:"relative",display:"inline-flex"}},` +
-	`E("button",{type:"button","data-testid":"context-usage-indicator","aria-label":"Context window "+(a?"about ":"")+c+"% full","aria-expanded":o,onClick:()=>so(!o),` +
-	`className:"inline-flex items-center gap-1 h-6 px-1.5 rounded-md text-xs tabular-nums hover:bg-muted "+(f>=.8?"text-warning":"text-muted-foreground")},` +
-	`E("svg",{"aria-hidden":"true",viewBox:"0 0 16 16",width:14,height:14,style:{transform:"rotate(-90deg)"}},` +
-	`E("circle",{cx:"8",cy:"8",r:6,fill:"none",stroke:"currentColor",strokeWidth:"2",opacity:.25}),` +
-	`E("circle",{cx:"8",cy:"8",r:6,fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeDasharray:L,strokeDashoffset:L*(1-f)})),` +
-	`E("span",null,a?"~":"",c,"%")),` +
-	`o&&E("div",{"data-testid":"context-usage-panel",className:"agy-overlay surface-glass bg-card text-foreground border border-border text-xs",` +
-	`style:{position:"absolute",bottom:"100%",right:0,marginBottom:8,zIndex:60,width:280,maxWidth:"calc(100vw - 24px)",borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8}},` +
-	`E("div",{style:{display:"flex",justifyContent:"space-between"}},E("span",{className:"font-medium text-muted-foreground"},"Context window"),E("span",{className:"font-medium tabular-nums"},c,"%")),` +
-	`E("div",{className:"tabular-nums"},n(t)," of ",n(m)," tokens used"),` +
-	`E("dl",{className:"tabular-nums",style:{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",columnGap:8,rowGap:4,margin:0}},rows),` +
-	`E("p",{className:"text-muted-foreground",style:{margin:0}},a?"Compacted since the last response; counts update after the next one.":"When it fills up, older turns are summarized to make room.")))}`
+// The web build hides the setting three ways: the settings screens leave it out where the build bindings have no
+// indicator, the feature manager shows it only behind a Google flag, and the Appearance screen keeps the section it is
+// in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.32.1 write them.
+var (
+	contextIndicatorSettingAllowedRe = func() *regexp.Regexp {
+		var b shapeBuilder
+		b.code(`«withIndicator»||«hidden».add("contextUsageIndicatorEnabled");`)
+		return regexp.MustCompile(b.String())
+	}()
+	contextIndicatorSettingVisible = func() (s struct {
+		re      *regexp.Regexp
+		replace string
+	}) {
+		var b shapeBuilder
+		b.code(`contextUsageIndicatorEnabled:{feature:{visible:!1},applyAll:[{runtimeGating:{customFlag:"enable-context-usage-indicator"},feature:{visible:!0}}],important:[«important»]}`)
+		s.re = regexp.MustCompile(b.String())
+		s.replace = "contextUsageIndicatorEnabled:{feature:{visible:!0},important:[${" + strconv.Itoa(b.names["important"][0]) + "}]}"
+		return s
+	}()
+	contextIndicatorSettingInChatRe = func() *regexp.Regexp {
+		var b shapeBuilder
+		b.code(`{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`)
+		return regexp.MustCompile(b.String())
+	}()
+)
+
+const contextIndicatorSettingInChat = `{title:"Chat",settings:["verboseConversationSteps","contextUsageIndicatorEnabled"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth"]}`
+
+// contextIndicatorQuery picks the conversation's usage out of its state, and says, as the 2.29 indicator did, whether
+// the conversation was compacted since the usage was counted: a checkpoint step (type 23) that is done (status 3)
+// after the step the usage was counted at, and not one that only states an intent. It is declared once, so the
+// selector hook keeps one subscription for the indicator's life.
+const contextIndicatorQuery = `{selector:__agyX=>{var __agyW=__agyX?.contextWindowUsage;if(!__agyW)return null;` +
+	`var __agySteps=__agyX.trajectorySlice?.stepsInSlice??[],__agyC=!1;` +
+	`for(let __agyI=__agySteps.length-1;__agyI>=0;__agyI--){let __agyF=__agySteps[__agyI],__agyN=__agyF?.metadata?.sourceTrajectoryStepInfo?.stepIndex??-1;` +
+	`if(__agyN>=0&&__agyN<__agyW.lastStepIndex)break;` +
+	`if(__agyN>=0&&__agyF.type===23&&__agyF.status===3&&(__agyF.step?.case!=="checkpoint"||!__agyF.step.value?.intentOnly)){__agyC=!0;break}}` +
+	`return{usage:__agyW,compacted:__agyC}},` +
+	`equalityFn:(__agyA,__agyB)=>__agyA===__agyB||!!__agyA&&!!__agyB&&__agyA.usage===__agyB.usage&&__agyA.compacted===__agyB.compacted}`
+
+// contextIndicatorComponent is the indicator, after the 2.29 one: a ring and the percentage, and on a tap the tokens
+// used of the window, each part the language server counts them in, and what is free. It reads the conversation's
+// store with the bundle's own two hooks, «hook» and «select», and draws with its React, «React»; contextIndicatorDefine
+// puts in the names they have. Every name it declares starts with __agy, so none of those three is hidden by one of
+// its own. It has no template literal and no $, since the replacement is expanded.
+const contextIndicatorComponent = `function(__agyP){` +
+	`var __agyR=«React»,__agyE=__agyR.createElement,__agyS=«hook»(__agyP.conversationId),__agyQ=«select»(__agyS,__agyContextUsageQuery),` +
+	`[__agyO,__agySetO]=(0,__agyR.useState)(null),__agyRef=(0,__agyR.useRef)(null);` +
+	`(0,__agyR.useEffect)(()=>{if(!__agyO)return;var __agyH=__agyV=>{(__agyV.type==="keydown"?__agyV.key==="Escape":__agyRef.current&&!__agyRef.current.contains(__agyV.target))&&__agySetO(null)};` +
+	`document.addEventListener("pointerdown",__agyH,!0);document.addEventListener("keydown",__agyH,!0);` +
+	`return()=>{document.removeEventListener("pointerdown",__agyH,!0);document.removeEventListener("keydown",__agyH,!0)}},[__agyO]);` +
+	`var __agyU=__agyQ&&__agyQ.usage,__agyT=Number(__agyU?.estimatedTokensUsed??0),__agyM=Number(__agyU?.maxContextTokens??0);if(!(__agyT>0&&__agyM>0))return null;` +
+	`var __agyF=Math.min(1,__agyT/__agyM),__agyPc=Math.round(__agyF*100),__agyA=!!__agyQ.compacted,__agyL=2*Math.PI*6,` +
+	`__agyZ=__agyV=>__agyV.endsWith(".0")?__agyV.slice(0,-2):__agyV,__agyN=__agyK=>__agyK<1E3?String(__agyK):__agyK<1E6?__agyZ((__agyK/1E3).toFixed(1))+"K":__agyZ((__agyK/1E6).toFixed(1))+"M",` +
+	`__agyRows=[];` +
+	`(__agyU.tokenGroups||[]).filter(__agyX=>Number(__agyX.numTokens)>0).forEach((__agyX,__agyI)=>{__agyRows.push(__agyE("dt",{key:"t"+__agyI},__agyX.name||"Other"),__agyE("dd",{key:"d"+__agyI,style:{textAlign:"right"}},__agyN(Number(__agyX.numTokens))))});` +
+	`__agyRows.push(__agyE("dt",{key:"tf"},"Free"),__agyE("dd",{key:"df",style:{textAlign:"right"}},__agyN(Math.max(0,__agyM-__agyT))));` +
+	`return __agyE("span",{ref:__agyRef,style:{position:"relative",display:"inline-flex"}},` +
+	`__agyE("button",{type:"button","data-testid":"context-usage-indicator","aria-label":"Context window "+(__agyA?"about ":"")+__agyPc+"% full","aria-expanded":__agyO!==null,` +
+	// The breakdown opens above the indicator, as wide as the screen allows and inside it.
+	`onClick:()=>{if(__agyO!==null){__agySetO(null);return}var __agyB=__agyRef.current.getBoundingClientRect(),__agyWd=Math.min(280,innerWidth-24),__agyLeft=Math.min(Math.max(12,__agyB.right-__agyWd),innerWidth-12-__agyWd);__agySetO({left:__agyLeft-__agyB.left,width:__agyWd})},` +
+	`className:"inline-flex items-center gap-1 h-6 px-1.5 rounded-md text-xs tabular-nums hover:bg-muted "+(__agyF>=.8?"text-warning":"text-muted-foreground")},` +
+	`__agyE("svg",{"aria-hidden":"true",viewBox:"0 0 16 16",width:14,height:14,style:{transform:"rotate(-90deg)"}},` +
+	`__agyE("circle",{cx:"8",cy:"8",r:6,fill:"none",stroke:"currentColor",strokeWidth:"2",opacity:.25}),` +
+	`__agyE("circle",{cx:"8",cy:"8",r:6,fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeDasharray:__agyL,strokeDashoffset:__agyL*(1-__agyF)})),` +
+	`__agyE("span",null,__agyA?"~":"",__agyPc,"%")),` +
+	`__agyO&&__agyE("div",{"data-testid":"context-usage-panel",role:"dialog","aria-label":"Context window",className:"agy-overlay surface-glass bg-card text-foreground border border-border text-xs",` +
+	`style:{position:"absolute",bottom:"100%",left:__agyO.left,width:__agyO.width,marginBottom:8,zIndex:60,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8}},` +
+	`__agyE("div",{style:{display:"flex",justifyContent:"space-between"}},__agyE("span",{className:"font-medium text-muted-foreground"},"Context window"),__agyE("span",{className:"font-medium tabular-nums"},__agyPc,"%")),` +
+	`__agyE("div",{className:"tabular-nums"},__agyN(__agyT)," of ",__agyN(__agyM)," tokens used"),` +
+	`__agyE("dl",{className:"tabular-nums",style:{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",columnGap:8,rowGap:4,margin:0}},__agyRows),` +
+	`__agyE("p",{className:"text-muted-foreground",style:{margin:0}},__agyA?"Compacted since the last response; counts update after the next one.":"When it fills up, older turns are summarized to make room.")))}`

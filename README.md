@@ -265,11 +265,11 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Connection Health** | "Lost connection" banner remains visible even after successful auto-reconnect; iOS Safari stalls fetch streams mid-response, leaving lists empty or spinners running | Uses the bundled WebSocket RPC transport by default, dismisses stale disconnect banners upon verified server heartbeat, and recovers from stuck loading spinners (>30s without network traffic) via client watchdog |
 | **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition; line navigation jumps to text start when slash commands exist | Preserves native newline, prevents IME corruption, and restores visual line start navigation on Cmd+Left (macOS) / Home (all OS) with slash commands while preserving Ctrl+Left word navigation; Cmd/Ctrl+Enter submits |
 | **Model Selection** | Tapping a model closes the menu immediately | Opens the reasoning effort submenu on tap |
-| **Context Window** | Since Antigravity 2.30 the web bundle has no context indicator, so the "Context and Quota Indicator" setting draws nothing | Draws a ring with the percentage beside the send button; a tap shows the tokens used by the system prompt, tools and conversation, and what is free |
+| **Context Window** | Since Antigravity 2.30 the web bundle has no context indicator, and hides its "Context and Quota Indicator" setting | Draws a ring with the percentage beside the send button; a tap shows the tokens used by the system prompt, tools and conversation, and what is free. On by default, with its switch at the top of Settings > Appearance |
 
 <p align="center"><img src="docs/assets/context-indicator.png" width="380" alt="The context indicator beside the send button on a phone, open: 123.3K of 256K tokens used, with the system prompt, tools, chat messages and free space" /></p>
 
-The figures are the language server's own estimate as of the last model call, so the indicator appears once a conversation has had a reply and updates with each one.
+The figures are the language server's own estimate as of the last model call, so the indicator appears once a conversation has had a reply and updates with each one. To hide it, turn off **Settings > Appearance > Context and Quota Indicator**; the choice is kept in the browser.
 
 Run `agy-server doctor` to inspect the status of all patches against your installed bundle.
 
