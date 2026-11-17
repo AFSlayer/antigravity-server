@@ -567,8 +567,9 @@ func All() []Patch {
 
 		// The context indicator beside the send button, which the web bundle has had no component for since 2.30: see
 		// context_indicator.go. The first hands the input one where the build bindings give none, the second defines
-		// it, and the third shows it unless the setting was turned off. The last three show the setting itself, which
-		// the web build hides, at the top of Settings > Appearance.
+		// it, and the third shows it unless the setting was turned off. The next three show the setting itself, which
+		// the web build hides, at the top of Settings > Appearance; they need the indicator and not the third, so the
+		// setting can still turn it on where the third does not fit. The last describes the setting as what it shows.
 		{
 			ID:           "context-indicator-slot",
 			Desc:         "Show how full the context window is beside the send button",
@@ -610,9 +611,9 @@ func All() []Patch {
 			Kind:         Regexp,
 			FindRe:       contextIndicatorSettingAllowedRe,
 			Optional:     true,
-			Requires:     "context-indicator-default-on",
+			Requires:     "context-indicator-define",
 			Precondition: hasContextIndicatorSlot,
-			Replace:      ``,
+			Replace:      `${1}`,
 		},
 		{
 			ID:           "context-indicator-setting-visible",
@@ -635,6 +636,17 @@ func All() []Patch {
 			Requires:     "context-indicator-setting-visible",
 			Precondition: hasContextIndicatorSlot,
 			Replace:      contextIndicatorSettingInChat,
+		},
+		{
+			ID:           "context-indicator-setting-description",
+			Desc:         "Describe the context indicator's setting as what it shows, without the model quota",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       contextIndicatorSettingDescription.re,
+			Optional:     true,
+			Requires:     "context-indicator-setting-visible",
+			Precondition: hasContextIndicatorSlot,
+			Replace:      contextIndicatorSettingDescription.replace,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected

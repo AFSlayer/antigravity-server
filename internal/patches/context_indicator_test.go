@@ -16,20 +16,21 @@ var dA=a=>{var b=(0,B.useContext)(bA),c=(0,B.useCallback)(f=>b&&a?b.listen(a,f):
 	v232ContextIndicatorSlot    = `te=oc?.contextUsageIndicator?.Indicator,wh=!!te&&(A.get("contextUsageIndicator")??!1),Hc=Jk("contextUsageIndicatorEnabled",wh)===!0`
 	v232ContextIndicatorSetting = `case "contextUsageIndicatorEnabled":return c?.get("contextUsageIndicatorEnabled")===
 "true";`
-	v232ContextIndicatorAllowed = `g||l.add("contextUsageIndicatorEnabled");`
+	v232ContextIndicatorAllowed = `k||l.add("terminalPlacement");g||l.add("contextUsageIndicatorEnabled");`
 	v232ContextIndicatorVisible = `contextUsageIndicatorEnabled:{feature:{visible:!1},applyAll:[{runtimeGating:{customFlag:"enable-context-usage-indicator"},
 feature:{visible:!0}}],important:[W$]}`
-	v232ContextIndicatorSections = `{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`
+	v232ContextIndicatorDescription = `description:"Show how full the context window is next to the send button. Click it for a breakdown and to see your model quota."`
+	v232ContextIndicatorSections    = `{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`
 )
 
-var contextIndicatorPatches = []string{"context-indicator-slot", "context-indicator-define", "context-indicator-default-on", "context-indicator-setting-allowed", "context-indicator-setting-visible", "context-indicator-setting-in-chat"}
+var contextIndicatorPatches = []string{"context-indicator-slot", "context-indicator-define", "context-indicator-default-on", "context-indicator-setting-allowed", "context-indicator-setting-visible", "context-indicator-setting-in-chat", "context-indicator-setting-description"}
 
 // contextIndicatorBundle puts the places together as functions a node page can call.
 func contextIndicatorBundle(hook, slot string) string {
 	return "var x={a:1" + hook + "};function input(){var A=cfg,oc=bindings,d=convo;var " + slot + ";return Hc}" +
 		"function pref(c,k){switch(k){" + v232ContextIndicatorSetting + "}}" +
-		"function denied(g,h){var l=new Set;" + v232ContextIndicatorAllowed + "return l}" +
-		"const W$={cli:1},visibility={" + v232ContextIndicatorVisible + "},appearance=[" + v232ContextIndicatorSections + "];"
+		"function denied(g,k){var l=new Set;" + v232ContextIndicatorAllowed + "return l}" +
+		"const W$={cli:1},visibility={" + v232ContextIndicatorVisible + "},appearance=[" + v232ContextIndicatorSections + "],definition={" + v232ContextIndicatorDescription + "};"
 }
 
 func contextIndicatorStatuses(t *testing.T, src string) (string, map[string]Status) {
@@ -169,6 +170,8 @@ assert.ok(!denied(false, false).has("contextUsageIndicatorEnabled"));
 assert.deepStrictEqual(visibility.contextUsageIndicatorEnabled, { feature: { visible: true }, important: [W$] });
 assert.deepStrictEqual(appearance[0], { title: "Chat", settings: ["verboseConversationSteps", "contextUsageIndicatorEnabled"] });
 assert.ok(!appearance[1].settings.includes("contextUsageIndicatorEnabled"), "and not twice");
+assert.ok(denied(false, false).has("terminalPlacement"), "the statement before it is kept");
+assert.strictEqual(definition.description, "Show how full the context window is next to the send button. Tap it for a breakdown.");
 `)
 }
 
@@ -198,11 +201,18 @@ func TestContextIndicatorPatchesBuildOnEachOther(t *testing.T) {
 		src  string
 		want []Status
 	}{
-		{"2.32.1", contextIndicatorBundle(v232ContextIndicatorHook, v232ContextIndicatorSlot), []Status{applied, applied, applied, applied, applied, applied}},
-		{"a bundle before 2.30", "var x={a:1" + v232ContextIndicatorHook + "};", []Status{notNeeded, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
-		{"hooks in another form", contextIndicatorBundle(strings.Replace(v232ContextIndicatorHook, "return Bk(a,{selector:", "return Bk(a,{pick:", 1), v232ContextIndicatorSlot), []Status{applied, missing, notNeeded, notNeeded, notNeeded, notNeeded}},
-		{"a next hook reading another store", contextIndicatorBundle(strings.Replace(v232ContextIndicatorHook, "a=cA(a);return Bk", "a=dA(a);return Bk", 1), v232ContextIndicatorSlot), []Status{applied, missing, notNeeded, notNeeded, notNeeded, notNeeded}},
-		{"a slot whose names do not agree", contextIndicatorBundle(v232ContextIndicatorHook, strings.Replace(v232ContextIndicatorSlot, "wh=!!te&&", "wh=!!Qg&&", 1)), []Status{missing, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
+		{"2.32.1", contextIndicatorBundle(v232ContextIndicatorHook, v232ContextIndicatorSlot), []Status{applied, applied, applied, applied, applied, applied, applied}},
+		{"a bundle before 2.30", "var x={a:1" + v232ContextIndicatorHook + "};", []Status{notNeeded, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
+		{"hooks in another form", contextIndicatorBundle(strings.Replace(v232ContextIndicatorHook, "return Bk(a,{selector:", "return Bk(a,{pick:", 1), v232ContextIndicatorSlot), []Status{applied, missing, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
+		{"a next hook reading another store", contextIndicatorBundle(strings.Replace(v232ContextIndicatorHook, "a=cA(a);return Bk", "a=dA(a);return Bk", 1), v232ContextIndicatorSlot), []Status{applied, missing, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
+		// The default in another form: the setting is still shown, so the indicator can be turned on.
+		{"the default read another way", strings.Replace(contextIndicatorBundle(v232ContextIndicatorHook, v232ContextIndicatorSlot), `")===`, `")==`, 1), []Status{applied, applied, missing, applied, applied, applied, applied}},
+		// The hidden list written in another form: nothing is cut out of what comes before it.
+		{"the hidden list after a property", strings.Replace(contextIndicatorBundle(v232ContextIndicatorHook, v232ContextIndicatorSlot), `k||l.add("terminalPlacement");g||l`, `k||l.add("terminalPlacement");a.g||l`, 1), []Status{applied, applied, applied, missing, notNeeded, notNeeded, notNeeded}},
+		{"the hidden list after another operator", strings.Replace(contextIndicatorBundle(v232ContextIndicatorHook, v232ContextIndicatorSlot), `k||l.add("terminalPlacement");g||l`, `k||l.add("terminalPlacement");a&&g||l`, 1), []Status{applied, applied, applied, missing, notNeeded, notNeeded, notNeeded}},
+		// The slot written over two lines is still known for what it is.
+		{"a slot broken over lines", contextIndicatorBundle(v232ContextIndicatorHook, strings.Replace(v232ContextIndicatorSlot, "oc?.contextUsageIndicator?.Indicator", "oc?.\ncontextUsageIndicator\n?.Indicator", 1)), []Status{applied, applied, applied, applied, applied, applied, applied}},
+		{"a slot whose names do not agree", contextIndicatorBundle(v232ContextIndicatorHook, strings.Replace(v232ContextIndicatorSlot, "wh=!!te&&", "wh=!!Qg&&", 1)), []Status{missing, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded, notNeeded}},
 	} {
 		out, got := contextIndicatorStatuses(t, c.src)
 		for i, id := range contextIndicatorPatches {
@@ -228,7 +238,7 @@ assert.strictEqual(input(), false, "no indicator: the input reads the setting as
 
 func TestContextIndicatorPatchesMatchALineBreakAtAnyToken(t *testing.T) {
 	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
-	for i, src := range []string{v232ContextIndicatorSlot, v232ContextIndicatorHook, v232ContextIndicatorSetting, v232ContextIndicatorAllowed, v232ContextIndicatorVisible, v232ContextIndicatorSections} {
+	for i, src := range []string{v232ContextIndicatorSlot, v232ContextIndicatorHook, v232ContextIndicatorSetting, v232ContextIndicatorAllowed, v232ContextIndicatorVisible, v232ContextIndicatorSections, v232ContextIndicatorDescription} {
 		var p Patch
 		for _, each := range All() {
 			if each.ID == contextIndicatorPatches[i] {

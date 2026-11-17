@@ -1,7 +1,6 @@
 package patches
 
 import (
-	"bytes"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,10 +12,11 @@ import (
 // bindings, and the web build has none, so nothing is drawn over remote access. The language server still sends each
 // conversation's context window usage.
 
-// hasContextIndicatorSlot says whether a bundle takes the indicator from the build bindings, as 2.30 and later do.
-func hasContextIndicatorSlot(b []byte) bool {
-	return bytes.Contains(b, []byte(`?.contextUsageIndicator?.Indicator`))
-}
+// hasContextIndicatorSlot says whether a bundle takes the indicator from the build bindings, as 2.30 and later do,
+// with a line break wherever the minifier could put one.
+func hasContextIndicatorSlot(b []byte) bool { return regexpMatch(contextIndicatorSlotMarkRe, b) }
+
+var contextIndicatorSlotMarkRe = regexp.MustCompile(`\?\.\s*contextUsageIndicator\s*\?\.\s*Indicator\b`)
 
 // The hook that gives a conversation's agent state store, and the hook after it, which reads the store with the
 // selector hook. Each name a release changes is a «role»: see shapeBuilder.
@@ -85,8 +85,13 @@ var contextIndicatorDefaultRe = func() *regexp.Regexp {
 // indicator, the feature manager shows it only behind a Google flag, and the Appearance screen keeps the section it is
 // in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.32.1 write them.
 var (
+	// It is a statement of its own, and is matched from the end of the one before it, which is kept: group 1.
 	contextIndicatorSettingAllowedRe = func() *regexp.Regexp {
 		var b shapeBuilder
+		b.open()
+		b.raw(`[;{}]`)
+		b.close()
+		b.raw(`\s*`)
 		b.code(`«withIndicator»||«hidden».add("contextUsageIndicatorEnabled");`)
 		return regexp.MustCompile(b.String())
 	}()
@@ -106,6 +111,18 @@ var (
 		return regexp.MustCompile(b.String())
 	}()
 )
+
+// The setting's description promises the model quota, which this indicator does not show.
+var contextIndicatorSettingDescription = func() (s struct {
+	re      *regexp.Regexp
+	replace string
+}) {
+	var b shapeBuilder
+	b.code(`description:"Show how full the context window is next to the send button. Click it for a breakdown and to see your model quota."`)
+	s.re = regexp.MustCompile(b.String())
+	s.replace = `description:"Show how full the context window is next to the send button. Tap it for a breakdown."`
+	return s
+}()
 
 const contextIndicatorSettingInChat = `{title:"Chat",settings:["verboseConversationSteps","contextUsageIndicatorEnabled"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth"]}`
 
