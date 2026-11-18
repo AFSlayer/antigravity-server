@@ -264,3 +264,58 @@ func TestContextIndicatorPatchesMatchALineBreakAtAnyToken(t *testing.T) {
 		}
 	}
 }
+
+// 2.33 reads the setting from the user's settings on the server before the browser's, and says whether the setting is
+// shown in a function for each setting.
+func TestContextIndicatorOn233(t *testing.T) {
+	rewrite := func(id, src string) string {
+		t.Helper()
+		var p Patch
+		for _, each := range All() {
+			if each.ID == id {
+				p = each
+			}
+		}
+		loc := p.FindRe.FindStringSubmatchIndex(src)
+		if loc == nil {
+			t.Fatalf("%s does not match %q", id, src)
+		}
+		repl := string(p.FindRe.ExpandString(nil, p.Replace, src, loc))
+		if p.ReplaceMatch != nil {
+			repl = p.ReplaceMatch(submatches([]byte(src), loc), Options{})
+		}
+		return src[:loc[0]] + repl + src[loc[1]:]
+	}
+	setting := rewrite("context-indicator-default-on", v233ContextIndicatorSetting)
+	allowed := rewrite("context-indicator-setting-allowed", `function shown(d,b){switch(d){case "terminalPlacement":return!1;`+v233ContextIndicatorAllowed+`case "conversationWidth":return!0}}`)
+	if !strings.Contains(allowed, `case "contextUsageIndicatorEnabled":return!0;`) {
+		t.Errorf("the setting is not shown: %s", allowed)
+	}
+	runNode(t, `"use strict";
+const assert = require("assert");
+`+allowed+`
+const pref = (server, stored) => { const a = { rootProvider: { getState: () => ({ userConfig: { userSettings: { contextUsageIndicatorEnabled: server } } }) } }, c = { get: () => stored }; switch ("contextUsageIndicatorEnabled") { `+setting+`; } };
+// Nothing stored on the server or in the browser: on.
+assert.strictEqual(pref(undefined, undefined), true);
+// The browser's choice where the server has none.
+assert.strictEqual(pref(undefined, "false"), false);
+assert.strictEqual(pref(undefined, "true"), true);
+// The server's choice first.
+assert.strictEqual(pref(false, undefined), false);
+assert.strictEqual(pref(false, "true"), false);
+assert.strictEqual(pref(true, "false"), true);
+// The setting is shown whatever the build bindings have; the others are as they were.
+assert.strictEqual(shown("contextUsageIndicatorEnabled", false), true);
+assert.strictEqual(shown("terminalPlacement", false), false);
+`)
+	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for id, src := range map[string]string{"context-indicator-default-on": v233ContextIndicatorSetting, "context-indicator-setting-allowed": v233ContextIndicatorAllowed} {
+		base := rewrite(id, src)
+		for _, pos := range lineBreakPositions(src) {
+			if out := rewrite(id, src[:pos]+"\n"+src[pos:]); compact(out) != compact(base) {
+				t.Errorf("%s: a line break at offset %d is not matched", id, pos)
+				break
+			}
+		}
+	}
+}

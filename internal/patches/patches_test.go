@@ -55,7 +55,7 @@ var regexpFixtures = map[string]string{
 	"auth-service-login-redirect":               `async loginWithRedirect(a){var b=d;`,
 	"auth-service-show-login-flow":              `async showLoginFlow(){this._onDidRequestLoginFlow.fire()}`,
 	"auth-service-stub-login-redirect":          `loginWithRedirect:async()=>{console.log("[AuthService] loginWithRedirect")},showLoginFlow:async()=>{console.log("[AuthService] showLoginFlow")}`,
-	"mobile-skip-notification-prompt":           `var e=!!this.storageService.get("didAskForNotificationPermission");`,
+	"mobile-skip-notification-prompt":           `var e=!!this.storageService.get("didAskForNotificationPermission");this.notificationPermission!=="default"||e||x();`,
 	"mobile-new-convo-view":                     `const tub=()=>{var a=yM(),b=IT();return(0,x.useCallback)((c,e)=>{b(HT.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var uub=()=>{var a=tub(),{q:b}=dM({strict:!1});return x.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},x.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},x.createElement(sub,{surface:"background"})),`,
 	"mobile-new-convo-header":                   `CM=()=>QL({select:a=>a.location.pathname==="/"})`,
 	"mobile-agent-picker-in-model-menu":         v232AgentRouting,
