@@ -1,11 +1,14 @@
 package patches
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// The text each patch matches in Antigravity 2.33.0, with the bundle's own line breaks.
+// The text each patch matches in Antigravity 2.33.0, with the bundle's own line breaks, and v233NotificationBridge.
 const (
 	v233AuthRetry      = `_authState.state==="uninitialized"){a.startupAuth.lastErrorCode=W5a(p);let q=d6a(p),t=h||!k||!k.hasToken||k.isGcpTos&&!k.projectId?void 0:k,u=!!t&&p instanceof gh&&p.code===4;if(b>0&&q&&!u){let v=4-b;d(await c(new Promise(w=>{setTimeout(w,1E3*2**v)})));return a.isLoggingOut||a.sessionTracker.id!==f?void 0:lC(a,b-1)}`
 	v233UserStatusSync = `catch(q){if(m(),console.warn("[UserStatusSync] Failed to fetch user status:",q),!f()){var p=q instanceof gh&&q.code===7?SHa(q.rawMessage||
@@ -28,7 +31,7 @@ Z!==Q.current||T.current.get(da)?.focus()`
 	v233ContextIndicatorAllowed = `case "contextUsageIndicatorEnabled":return b;`
 
 	// v233NotificationBridge is the desktop bridge's notification service, which 2.33 writes with the same statement
-	// before the web one.
+	// before the web one, cut down to that statement and the one after it.
 	v233NotificationBridge = `if(this.bridge){var b=!!this.storageService.get("didAskForNotificationPermission");this.offerPreferences&&!b&&x()}`
 )
 
@@ -43,10 +46,10 @@ func TestAntigravity233PatchShapes(t *testing.T) {
 	}{
 		// Two more names after the transient check, and no retry for a timeout with a token in hand.
 		{"auth-startup-retry", v233AuthRetry, Options{}, []string{`lC(a,b>1?b-1:Date.now()<(a.__agyAuthRetryUntil??=Date.now()+3E5)?1:0)}`, `if(b>0&&q&&!u){`}, nil},
-		// The catch answers a permission error before clearing: the answer stays, the clearing goes, and a failure
-		// is told to the retry.
+		// The catch answers a permission error before clearing: the answer stays and is not retried, the clearing
+		// goes, and any other failure is told to the retry.
 		{"user-status-keep-on-error", v233UserStatusSync, Options{}, []string{
-			"catch(q){if(m(),console.warn(\"[UserStatusSync] Failed to fetch user status:\",q),!f()){var p=q instanceof gh&&q.code===7?SHa(q.rawMessage||\nq.message):void 0;p?b(VHa(p)):g?.()}return!1}",
+			"catch(q){if(m(),console.warn(\"[UserStatusSync] Failed to fetch user status:\",q),!f()){var p=q instanceof gh&&q.code===7?SHa(q.rawMessage||\nq.message):void 0;return p?b(VHa(p)):(g?.(),!1)}return!1}",
 			`_ok=(await SX(c,a,k,l,t,m,"clearStatus",u))!==!1`,
 			`var v=setInterval(()=>{_agyRun(!1)},6E5);`,
 		}, []string{`k?.()||b(`}},
@@ -120,4 +123,80 @@ func TestAntigravity233PatchesTolerateLineBreaks(t *testing.T) {
 			}
 		}
 	}
+}
+
+// v233UserStatusSync is 2.33.0's sync of the user's status and the effect that polls it, cut after the effect and
+// closed there.
+const v233UserStatusSyncWhole = `async function SX(a,b,c,d,f,g,h="clearStatus",k){var l=e,m=e;try{try{if(typeof a.getUserStatus!=="function")h!=="clearStatus"||k?.()||b(Mr(cc(F.UserStatusSchema)));else{var {userStatus:n}=m(await l(a.getUserStatus()));f()||(n&&(b(Mr(mqa(n,c))),n.email&&d?.(!n.disableTelemetry&&!n.userDataCollectionForceDisabled)),n?.email&&!n.cascadeModelConfigData?.errorMessage||g?.())}}catch(q){if(m(),console.warn("[UserStatusSync] Failed to fetch user status:",q),!f()){var p=q instanceof gh&&q.code===7?SHa(q.rawMessage||
+q.message):void 0;p?b(VHa(p)):(h!=="clearStatus"||k?.()||b(Mr(cc(F.UserStatusSchema))),g?.())}}}finally{l()}}function kXb(){var a=Gk(),b=nd()?.core.authService;return(0,D.useCallback)(()=>{xk(a.getState())?.state==="signedIn"&&b?.signOutIfServerHasNoCredential?.()},[a,b])}
+function lXb(){var a=Hk(),b=Gk(),c=(0,D.useContext)(Qt),d=vj(),f=d.get("models")?.geminiModelsOnly===!0,g=d.get("settings")?.onTelemetrySettingChanged,h=kXb();return(0,D.useCallback)(async()=>{var k=e,l=e;try{if(c){var m=xk(b.getState());l(await k(SX(c,a,f,g,()=>xk(b.getState())!==m,h,"keepStatus")))}}finally{k()}},[a,b,c,f,g,h])}
+function mXb(){var a=Hk(),b=Gk(),c=(0,D.useContext)(Qt),d=Ik(xk),f=nd()?.core.authService,g=Ll(),h=vj(),k=h.get("models")?.geminiModelsOnly===!0,l=h.get("settings")?.onTelemetrySettingChanged,m=kXb();(0,D.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(Mr(cc(F.UserStatusSchema)));else{var q=!1,t=()=>q,u=()=>{var w=b.getState();return!(!w.userStatus||!w.userStatus[Lr])};SX(c,a,k,l,t,m,"clearStatus",u);var v=setInterval(()=>{SX(c,a,k,l,t,m,"clearStatus",u)},6E5);return()=>{q=!0;clearInterval(v)}}},
+[a,b,c,d,k,l,m]);}`
+
+// The 2.33 rewrite run in node, with the bundle's helpers reduced to what the sync uses: a dropped socket leaves the
+// status as it is and is retried soon, a permission error is shown and not retried, and an answer is kept.
+func TestUserStatusKeepOnErrorRuntime233(t *testing.T) {
+	patched, status := applyWithStatus(t, "user-status-keep-on-error", v233UserStatusSyncWhole, Options{})
+	if status != StatusApplied {
+		t.Fatalf("status %v", status)
+	}
+	harness := func(src string) string {
+		return `"use strict";
+const assert = require("assert");
+const e = x => x;
+const F = { UserStatusSchema: "schema" }, cc = (schema, init) => ({ ...init }), Mr = status => ({ type: "set", status }), mqa = n => n;
+class gh extends Error { constructor(code, message) { super(message); this.code = code; this.rawMessage = message; } }
+const SHa = m => m, VHa = m => ({ type: "blocked", message: m }), Lr = Symbol("ACCESS_BLOCKED_MESSAGE");
+let answer, dispatched = [], timeouts = [], intervals = [], cleanup;
+const D = { useEffect: f => { cleanup = f(); }, useCallback: f => f, useContext: () => client };
+const client = { getUserStatus: async () => answer() };
+const store = { getState: () => ({ auth: { state: "signedIn" }, userStatus: undefined }) };
+const Hk = () => a => dispatched.push(a), Gk = () => store, Qt = {}, Ik = sel => sel(store.getState()), xk = s => s.auth;
+const nd = () => ({ core: { authService: { signOutIfServerHasNoCredential: () => {} } } }), Ll = () => null, vj = () => ({ get: () => undefined });
+// Each copy has timers and a page of its own.
+const setTimeout = (f, ms) => (timeouts.push(ms), timeouts.length), clearTimeout = () => {};
+const setInterval = (f, ms) => (intervals.push(ms), intervals.length), clearInterval = () => {};
+const document = { visibilityState: "visible", addEventListener() {}, removeEventListener() {} };
+const window = { addEventListener() {}, removeEventListener() {} };
+console.warn = () => {};
+` + src + `
+const settle = () => new Promise(r => setImmediate(r));
+module.exports = async (answerWith) => { answer = answerWith; dispatched = []; timeouts = []; intervals = []; mXb(); await settle(); await settle(); cleanup && cleanup(); return { dispatched, timeouts, intervals }; };
+`
+	}
+	dir := t.TempDir()
+	paths := map[string]string{"patched": filepath.Join(dir, "patched.js"), "upstream": filepath.Join(dir, "upstream.js")}
+	for name, src := range map[string]string{"patched": harness(patched), "upstream": harness(v233UserStatusSyncWhole)} {
+		if err := os.WriteFile(paths[name], []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runNode(t, `"use strict";
+const assert = require("assert");
+const patched = require(`+strconv.Quote(paths["patched"])+`);
+const upstream = require(`+strconv.Quote(paths["upstream"])+`);
+(async () => {
+  const dropped = () => { throw new Error("socket closed"); };
+  // 2.33 as it is: a dropped socket clears the status.
+  let r = await upstream(dropped);
+  assert.deepStrictEqual(r.dispatched, [{ type: "set", status: {} }]);
+  // Patched: it stays, and the sync is tried again in a second.
+  r = await patched(dropped);
+  assert.deepStrictEqual(r.dispatched, []);
+  assert.deepStrictEqual(r.timeouts, [1000]);
+  assert.deepStrictEqual(r.intervals, [6E5]);
+  // An answer is kept, and nothing is retried.
+  r = await patched(() => ({ userStatus: { email: "a@b" } }));
+  assert.deepStrictEqual(r.dispatched, [{ type: "set", status: { email: "a@b" } }]);
+  assert.deepStrictEqual(r.timeouts, []);
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+	// A permission error is the server's answer: shown as 2.33 shows it, and not retried.
+	runNode(t, harness(patched)+`
+(async () => {
+  const r = await module.exports(() => { throw new gh(7, "PERMISSION_DENIED: blocked"); });
+  assert.deepStrictEqual(r.dispatched, [{ type: "blocked", message: "PERMISSION_DENIED: blocked" }]);
+  assert.deepStrictEqual(r.timeouts, [], "no retry for a permission error");
+})().catch(e => { console.error(e); process.exit(1); });
+`)
 }

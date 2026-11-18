@@ -165,11 +165,11 @@ var (
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!?\s*[a-zA-Z0-9_$]+\(\))\s*(\|\||&&)\s*` +
 			`(?:\(\s*` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `)\s*\}` +
-			// 2.33: if(<warn>,!<cancelled>()){var p=<permission error>;p?<show it>:(<mode>!=="clearStatus"||<loaded>?.()||<clear>,<credential check>)}
+			// 2.33: if(<warn>,!<cancelled>()){var p=<permission error>;p?<show it>:(<mode>!=="clearStatus"||<access blocked shown>?.()||<clear>,<credential check>)}
 			`|catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*if\s*\(\s*` +
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!\s*[a-zA-Z0-9_$]+\(\))\s*\)\s*\{\s*` +
-			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};\s*[a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
+			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};)\s*([a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
 			`\(\s*[a-zA-Z0-9_$]+\s*!==\s*"clearStatus"\s*\|\|\s*[a-zA-Z0-9_$]+\?\.\(\)\s*\|\|\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)\s*\}\s*\})` +
 			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
@@ -733,6 +733,10 @@ func All() []Patch {
 			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${3}(a||_agyHome)&&${4}variant:_agyHome?"ghost":"secondary",${5}href:_agyHome?void 0:${6},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${7}selected:!_agyHome&&${8},`,
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
+			// The phone's home has asked for these rows since 2.29; one that does and is not matched is reported.
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(`conciergeTestId:"mobile-home-concierge"`))
+			},
 		},
 		{
 			ID:       "mobile-project-add-button",
@@ -1464,13 +1468,14 @@ func All() []Patch {
 				return bytes.Contains(b, []byte(`"[UserStatusSync] Failed to fetch user status:"`)) && !userStatusNoResetOnErrorRe.Match(b)
 			},
 			FindRe:  userStatusKeepOnErrorRe,
-			Replace: renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${11}", "${12}", "${13}", "${14}"),
+			Replace: renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${12}", "${13}", "${14}", "${15}"),
 			ReplaceMatch: func(g [][]byte, _ Options) string {
-				// Since 2.33 a permission error is still shown, and only the clearing is left out.
+				// Since 2.33 a permission error is shown as before, and is the server's answer rather than a failure to
+				// reach it, so it is not retried. Any other error leaves the status as it is and is retried.
 				if g[6] != nil {
 					return renderUserStatusRetry(
-						`catch(`+string(g[6])+`){if(`+string(g[7])+`,`+string(g[8])+`){`+string(g[9])+string(g[10])+`}return!1}`,
-						string(g[11]), string(g[12]), string(g[13]), string(g[14]),
+						`catch(`+string(g[6])+`){if(`+string(g[7])+`,`+string(g[8])+`){`+string(g[9])+`return `+string(g[10])+`(`+string(g[11])+`,!1)}return!1}`,
+						string(g[12]), string(g[13]), string(g[14]), string(g[15]),
 					)
 				}
 				credCheck := ""
@@ -1481,10 +1486,10 @@ func All() []Patch {
 					string(g[1]),
 					string(g[2]),
 					credCheck,
-					string(g[11]),
 					string(g[12]),
 					string(g[13]),
 					string(g[14]),
+					string(g[15]),
 				)
 			},
 		},

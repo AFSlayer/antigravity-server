@@ -88,11 +88,11 @@ var contextIndicatorDefaultRe = func() *regexp.Regexp {
 
 // The web build hides the setting three ways: the settings screens leave it out where the build bindings have no
 // indicator, the feature manager shows it only behind a Google flag, and the Appearance screen keeps the section it is
-// in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.32.1 write them.
+// in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.33 write them.
 var (
 	// Up to 2.32 it is a statement of its own, and is matched from the end of the one before it, which is kept: group 1.
 	// Since 2.33 a function says for each setting whether it is shown, and says so for this one by whether the build
-	// bindings have an indicator: group 3 is that case up to its answer.
+	// bindings have an indicator: group 4 is that case up to its answer.
 	contextIndicatorSettingAllowedRe = func() *regexp.Regexp {
 		var b shapeBuilder
 		b.raw(`(?:`)
