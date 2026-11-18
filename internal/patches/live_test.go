@@ -23,8 +23,9 @@ var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Fin
 
 // userMessageButtonsOnTouchRe and autoscrollPhysicalDistanceRe match what 2.31 does itself in place of
 // mobile-user-message-actions and autoscroll-distance-fix: user message buttons that only hide where the screen can
-// hover, and a hook that measures the distance to the bottom from the position.
-var userMessageButtonsOnTouchRe = regexp.MustCompile(`user-input-buttons-container[^"]*"\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
+// hover, in their container up to 2.32 and in user-message-actions since 2.33, and a hook that measures the distance to
+// the bottom from the position.
+var userMessageButtonsOnTouchRe = regexp.MustCompile(`(?:user-input-buttons-container[^"]*"|"data-testid":\s*"user-message-actions"[^;]{0,300}?)\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
 var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
 
 // viewportInnerRe matches the one element the bundle puts inside the conversation's viewport, which is the first thing

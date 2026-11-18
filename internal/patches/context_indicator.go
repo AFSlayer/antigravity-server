@@ -70,11 +70,16 @@ func contextIndicatorSlotIsKnown(groups [][]byte) bool {
 	return sameNames(groups, contextIndicatorSlot.names)
 }
 
-// The settings provider reading the setting as on only where it was stored as "true". Group 1 is the read.
+// The settings provider reading the setting as on only where it was stored as "true". Group 1 is the read. Since 2.33
+// the provider reads the user's settings on the server first, and the browser's only where those have none.
 var contextIndicatorDefaultRe = func() *regexp.Regexp {
 	var b shapeBuilder
 	b.open()
-	b.code(`case "contextUsageIndicatorEnabled":return «settings»?.get("contextUsageIndicatorEnabled")`)
+	b.code(`case "contextUsageIndicatorEnabled":return`)
+	b.raw(`\s*(?:`)
+	b.code(`«provider».rootProvider.getState().userConfig?.userSettings?.contextUsageIndicatorEnabled??`)
+	b.raw(`\s*)?`)
+	b.code(`«settings»?.get("contextUsageIndicatorEnabled")`)
 	b.close()
 	b.raw(`\s*`)
 	b.code(`==="true"`)
@@ -83,16 +88,26 @@ var contextIndicatorDefaultRe = func() *regexp.Regexp {
 
 // The web build hides the setting three ways: the settings screens leave it out where the build bindings have no
 // indicator, the feature manager shows it only behind a Google flag, and the Appearance screen keeps the section it is
-// in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.32.1 write them.
+// in, "Chat Layout", collapsed. These are the three, as 2.30 to 2.33 write them.
 var (
-	// It is a statement of its own, and is matched from the end of the one before it, which is kept: group 1.
+	// Up to 2.32 it is a statement of its own, and is matched from the end of the one before it, which is kept: group 1.
+	// Since 2.33 a function says for each setting whether it is shown, and says so for this one by whether the build
+	// bindings have an indicator: group 4 is that case up to its answer.
 	contextIndicatorSettingAllowedRe = func() *regexp.Regexp {
 		var b shapeBuilder
+		b.raw(`(?:`)
 		b.open()
 		b.raw(`[;{}]`)
 		b.close()
 		b.raw(`\s*`)
 		b.code(`«withIndicator»||«hidden».add("contextUsageIndicatorEnabled");`)
+		b.raw(`)|(?:`)
+		b.open()
+		b.code(`case "contextUsageIndicatorEnabled":return`)
+		b.close()
+		b.raw(`\s+`)
+		b.code(`«withIndicator2»;`)
+		b.raw(`)`)
 		return regexp.MustCompile(b.String())
 	}()
 	contextIndicatorSettingVisible = func() (s struct {

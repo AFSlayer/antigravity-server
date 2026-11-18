@@ -54,13 +54,13 @@ var (
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy [pP]ath"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":(?:([a-zA-Z0-9_$]+,className:"[^"]+","data-tooltip-id":[a-zA-Z0-9_$]+\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{name:"(edit_note|delete)"))?`)
 	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[([pq]),([a-zA-Z0-9_$]+)\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)([tu]=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,[ut]=[a-zA-Z0-9_$]+\|\|b;)`)
-	settingsRestoreCustomizationsRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
+	settingsRestoreCustomizationsRe  = regexp.MustCompile(`(?:([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};)|(if\s*\(\s*!\s*[a-zA-Z0-9_$]+\s*\)\s*return\s+([a-zA-Z0-9_$]+)\s*;\s*[a-zA-Z0-9_$]+\s*=\s*new Map\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*[a-zA-Z0-9_$]+\.delete\(\s*"Customizations"\s*\)\s*;\s*)(return\s+[a-zA-Z0-9_$]+\s*\})`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
 
 	hideUserProfileRe = regexp.MustCompile(`function [a-zA-Z0-9_$]+\(\{className:a=""\}={}\)\{return [a-zA-Z0-9_$]+\.createElement\("a",\{href:"#",onClick:b=>\{b\.preventDefault\(\)\},className:` + "`w-6 h-6 rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-transparent text-muted-foreground \\${a}`" + `,"aria-label":"User Profile \(Placeholder\)"`)
 
-	mobileSkipNotificationRe = regexp.MustCompile(`var ([a-zA-Z0-9_$]+)=!!this\.storageService\.get\("didAskForNotificationPermission"\);`)
+	mobileSkipNotificationRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)\s*=\s*!!this\.storageService\.get\(\s*"didAskForNotificationPermission"\s*\)\s*;(\s*this\.notificationPermission\s*!==)`)
 
 	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"\},[\s\S]{1,600}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
 
@@ -80,8 +80,8 @@ var (
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
 	mobileBackClearsSectionRe         = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
-	mobileHomeNewConvoRowRe           = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|(![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),`)
-	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,variant:"sidebar",surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
+	mobileHomeNewConvoRowRe           = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|((?:![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|)?[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),`)
+	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,(?:variant:"sidebar",)?surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
 
@@ -131,8 +131,8 @@ var (
 	fileUploadBatchEntryRe                = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length!==0\)\{(([a-zA-Z0-9_$]+\?\.\(null\);)?var ([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)-([a-zA-Z0-9_$]+);)?`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)[\r\n\s]*!([a-zA-Z0-9_$]+)(;(?:[a-zA-Z0-9_$]+\|\|\([a-zA-Z0-9_$]+\.current=!1,[a-zA-Z0-9_$]+\(\)\);)?[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
-	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
-	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+===void 0\|\|[a-zA-Z0-9_$]+\.isMultiSelect\|\|!document\.hasFocus\(\)\|\|[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)&&[a-zA-Z0-9_$]+!==[a-zA-Z0-9_$]+\.current)(\|\|[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\)\?\.focus\(\))`)
+	questionModalWriteInFocusRe           = regexp.MustCompile(`(?:(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:))|("data-testid"\s*:\s*"ask-question-writein"\s*,\s*value\s*:\s*[a-zA-Z0-9_$]+\s*,\s*onClick\s*:\s*([a-zA-Z0-9_$]+))(\s*,\s*onChange\s*:)`)
+	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\s*\|\|\s*[a-zA-Z0-9_$]+\s*===\s*void 0\s*\|\|\s*[a-zA-Z0-9_$]+\.isMultiSelect\s*\|\|\s*!document\.hasFocus\(\)\s*\|\|\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*&&\s*[a-zA-Z0-9_$]+\s*!==\s*[a-zA-Z0-9_$]+\.current)(\s*\|\|\s*[a-zA-Z0-9_$]+\.current\.get\(\s*[a-zA-Z0-9_$]+\s*\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*(?:[a-zA-Z0-9_$]+\.current|0)\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*|!\s*[a-zA-Z0-9_$]+\s*\|\|\s*([a-zA-Z0-9_$]+)\.current\s*\|\|\s*)?)`)
 	pagingTrimWaitsRe                     = regexp.MustCompile(`(([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.startIndex\s*<\s*([a-zA-Z0-9_$]+)\.startIndex\s*\|\|\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*>\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*;\s*if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{`)
@@ -147,7 +147,7 @@ var (
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
 	authStartupRetryRe                    = regexp.MustCompile(
 		`(_authState\.state\s*===\s*"uninitialized"\s*\)\s*\{\s*(?:[a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)*\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*)?` +
-			`let\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*if\s*\(\s*([a-zA-Z0-9_$]+)\s*>\s*0\s*&&\s*[a-zA-Z0-9_$]+\s*\)\s*\{\s*let\s+[a-zA-Z0-9_$]+\s*=\s*4\s*-\s*[a-zA-Z0-9_$]+\s*;\s*` +
+			`let\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)(?:\s*,[^;{}]{1,400}?)?\s*;\s*if\s*\(\s*([a-zA-Z0-9_$]+)\s*>\s*0\s*&&\s*[a-zA-Z0-9_$]+(?:\s*&&\s*![a-zA-Z0-9_$]+)?\s*\)\s*\{\s*let\s+[a-zA-Z0-9_$]+\s*=\s*4\s*-\s*[a-zA-Z0-9_$]+\s*;\s*` +
 			`[a-zA-Z0-9_$]+\(\s*await\s+[a-zA-Z0-9_$]+\(\s*new Promise\(\s*[a-zA-Z0-9_$]+\s*=>\s*\{\s*` + authStartupBackoffExpr + `\s*\}\s*\)\s*\)\s*\)\s*;\s*` +
 			`return\s+([a-zA-Z0-9_$]+)\.isLoggingOut\s*\|\|\s*[a-zA-Z0-9_$]+(?:\._currentSessionId|\.sessionTracker\.id)\s*!==\s*[a-zA-Z0-9_$]+\s*\?\s*void 0\s*:\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*)` +
 			`[a-zA-Z0-9_$]+\s*-\s*1(\s*\)\s*\})`,
@@ -161,10 +161,16 @@ var (
 	// check, in any bundle that retries it.
 	authStartupBackoffRe    = regexp.MustCompile(`_authState\.state\s*===\s*"uninitialized"\s*\)\s*\{[\s\S]{0,400}?` + authStartupBackoffExpr)
 	userStatusKeepOnErrorRe = regexp.MustCompile(
-		`catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*` +
+		`(?:catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*` +
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!?\s*[a-zA-Z0-9_$]+\(\))\s*(\|\||&&)\s*` +
 			`(?:\(\s*` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)|` + userStatusClearModeExpr + userStatusSchemaDispatchExpr + `)\s*\}` +
+			// 2.33: if(<warn>,!<cancelled>()){var p=<permission error>;p?<show it>:(<mode>!=="clearStatus"||<access blocked shown>?.()||<clear>,<credential check>)}
+			`|catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*if\s*\(\s*` +
+			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
+			`(!\s*[a-zA-Z0-9_$]+\(\))\s*\)\s*\{\s*` +
+			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};)\s*([a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
+			`\(\s*[a-zA-Z0-9_$]+\s*!==\s*"clearStatus"\s*\|\|\s*[a-zA-Z0-9_$]+\?\.\(\)\s*\|\|\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)\s*\}\s*\})` +
 			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
@@ -241,9 +247,9 @@ var (
 	sidePanelBodyRe = regexp.MustCompile(
 		`("data-side-panel-body"\s*:\s*!0\s*\}\s*,\s*)([a-zA-Z0-9_$]+)\s*\?\s*` +
 			`(([a-zA-Z0-9_$]+)\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"h-full w-full"\s*\}\s*,\s*` +
-			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*treeId\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*(?:treeId|panelScope)\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
 			`tabId\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*tab\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*\))\s*:\s*` +
-			`([a-zA-Z0-9_$]+\.createElement\(\s*([a-zA-Z0-9_$]+)\s*,\s*\{\s*treeId\s*:\s*[a-zA-Z0-9_$]+\s*,\s*isPaneOpen\s*:\s*([a-zA-Z0-9_$]+)\s*\}\s*\))`,
+			`([a-zA-Z0-9_$]+\.createElement\(\s*([a-zA-Z0-9_$]+)\s*,\s*\{\s*(treeId|panelScope)\s*:\s*[a-zA-Z0-9_$]+\s*,\s*isPaneOpen\s*:\s*([a-zA-Z0-9_$]+)\s*\}\s*\))`,
 	)
 	// sidePanelBodyLegacyRe is the same place in the side panel used when
 	// auxPaneComponent.redesignEnabled is off. The terminal hint before it
@@ -254,7 +260,7 @@ var (
 			`[a-zA-Z0-9_$]+\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"flex-grow overflow-hidden"\s*,\s*"data-side-panel-body"\s*:\s*!0\s*\}\s*,\s*)` +
 			`([a-zA-Z0-9_$]+)\s*&&\s*` +
 			`(([a-zA-Z0-9_$]+)\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"h-full w-full"\s*\}\s*,\s*` +
-			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*treeId\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
+			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*key\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*(?:treeId|panelScope)\s*:\s*([a-zA-Z0-9_$]+)\s*,\s*` +
 			`tabId\s*:\s*[a-zA-Z0-9_$]+\.id\s*,\s*tab\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*\))`,
 	)
 	// conversationNavTabRe finds where opening a conversation picks the tab
@@ -278,7 +284,7 @@ const SidecarFrameSandbox = "allow-scripts allow-forms allow-popups allow-popups
 
 const (
 	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
-	userStatusSyncCallExpr       = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+(?:\s*,\s*[a-zA-Z0-9_$]+){3,7}\s*\)`
+	userStatusSyncCallExpr       = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+(?:\s*,\s*(?:[a-zA-Z0-9_$]+|"[a-zA-Z]+")){3,7}\s*\)`
 	// userStatusClearModeExpr is the mode check 2.32 puts before the dispatch
 	// that clears the status. The poll runs in that mode, so it still clears.
 	userStatusClearModeExpr = `(?:[a-zA-Z0-9_$]+\s*===\s*"clearStatus"\s*&&\s*)?`
@@ -289,7 +295,12 @@ const (
 )
 
 func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar, callExpr, timerVar string) string {
-	return `catch(` + errVar + `){return ` + warnExpr + credCheck + `,!1}` +
+	return renderUserStatusRetry(`catch(`+errVar+`){return `+warnExpr+credCheck+`,!1}`, bridge, cancelVar, callExpr, timerVar)
+}
+
+// renderUserStatusRetry writes the effect that retries a failed refresh, after the catch that says it failed.
+func renderUserStatusRetry(catchBlock, bridge, cancelVar, callExpr, timerVar string) string {
+	return catchBlock +
 		bridge +
 		`let _agyRetry,_agyInFlight=!1,_agyDeferred=!1,_agyStale=!1,_agyQueued=!1,_agyFails=0,_agyLastOk=0,` +
 		`_agyHidden=()=>typeof document!=="undefined"&&document.visibilityState==="hidden",` +
@@ -469,7 +480,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileSkipNotificationRe,
-			Replace: `var $1=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService.get("didAskForNotificationPermission");`,
+			Replace: `var ${1}=(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))||!!this.storageService.get("didAskForNotificationPermission");${2}`,
 		},
 
 		// When a project or standalone section is selected on touch devices (e.g. via + button),
@@ -614,6 +625,12 @@ func All() []Patch {
 			Requires:     "context-indicator-define",
 			Precondition: hasContextIndicatorSlot,
 			Replace:      `${1}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[1] != nil {
+					return string(g[1])
+				}
+				return string(g[4]) + "!0;"
+			},
 		},
 		{
 			ID:           "context-indicator-setting-visible",
@@ -716,6 +733,10 @@ func All() []Patch {
 			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${3}(a||_agyHome)&&${4}variant:_agyHome?"ghost":"secondary",${5}href:_agyHome?void 0:${6},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${7}selected:!_agyHome&&${8},`,
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
+			// The phone's home has asked for these rows since 2.29; one that does and is not matched is reported.
+			Precondition: func(b []byte) bool {
+				return bytes.Contains(b, []byte(`conciergeTestId:"mobile-home-concierge"`))
+			},
 		},
 		{
 			ID:       "mobile-project-add-button",
@@ -973,7 +994,14 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: func(Options) bool { return true },
 			FindRe:  settingsRestoreCustomizationsRe,
-			Replace: `${1}=${2}=>${2};`,
+			Replace: `${1}=${2}=>${2};${5}`,
+			// 2.33 drops the tab in the hook that builds the list of screens, not in a helper of its own.
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[1] == nil {
+					return string(g[5])
+				}
+				return string(g[1]) + "=" + string(g[2]) + "=>" + string(g[2]) + ";"
+			},
 		},
 		{
 			ID:      "suppress-conversation-unavailable-modal",
@@ -1138,6 +1166,13 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  questionModalWriteInFocusRe,
 			Replace: `${1},onFocus:()=>{${2}||(${3}(!0),${4}.isMultiSelect||${5}())}${6}`,
+			// 2.33 names the click handler, which the write-in's focus gets as well.
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[7] != nil {
+					return string(g[7]) + ",onFocus:" + string(g[8]) + string(g[9])
+				}
+				return string(g[1]) + ",onFocus:()=>{" + string(g[2]) + "||(" + string(g[3]) + "(!0)," + string(g[4]) + ".isMultiSelect||" + string(g[5]) + "())}" + string(g[6])
+			},
 		},
 		{
 			ID:      "question-modal-prevent-radio-focus-steal",
@@ -1433,8 +1468,16 @@ func All() []Patch {
 				return bytes.Contains(b, []byte(`"[UserStatusSync] Failed to fetch user status:"`)) && !userStatusNoResetOnErrorRe.Match(b)
 			},
 			FindRe:  userStatusKeepOnErrorRe,
-			Replace: renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${6}", "${7}", "${8}", "${9}"),
+			Replace: renderUserStatusKeepOnError("${1}", "${2}", ",${3}${4}${5}", "${12}", "${13}", "${14}", "${15}"),
 			ReplaceMatch: func(g [][]byte, _ Options) string {
+				// Since 2.33 a permission error is shown as before, and is the server's answer rather than a failure to
+				// reach it, so it is not retried. Any other error leaves the status as it is and is retried.
+				if g[6] != nil {
+					return renderUserStatusRetry(
+						`catch(`+string(g[6])+`){if(`+string(g[7])+`,`+string(g[8])+`){`+string(g[9])+`return `+string(g[10])+`(`+string(g[11])+`,!1)}return!1}`,
+						string(g[12]), string(g[13]), string(g[14]), string(g[15]),
+					)
+				}
 				credCheck := ""
 				if g[5] != nil {
 					credCheck = "," + string(g[3]) + string(g[4]) + string(g[5])
@@ -1443,10 +1486,10 @@ func All() []Patch {
 					string(g[1]),
 					string(g[2]),
 					credCheck,
-					string(g[6]),
-					string(g[7]),
-					string(g[8]),
-					string(g[9]),
+					string(g[12]),
+					string(g[13]),
+					string(g[14]),
+					string(g[15]),
 				)
 			},
 		},
@@ -1586,7 +1629,7 @@ func All() []Patch {
 			Optional:     true,
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`"data-side-panel-body"`)) },
 			FindRe:       sidePanelBodyRe,
-			Replace:      `${1}${2}?(window.__agyPaneTab?${4}.createElement(window.__agyPaneTab,{key:${2}.id,R:${4},treeId:${5},tab:${2},open:${8},idle:${4}.createElement(${7},{treeId:${5},isPaneOpen:!1})},${3}):${3}):${6}`,
+			Replace:      `${1}${2}?(window.__agyPaneTab?${4}.createElement(window.__agyPaneTab,{key:${2}.id,R:${4},treeId:${5},tab:${2},open:${9},idle:${4}.createElement(${7},{${8}:${5},isPaneOpen:!1})},${3}):${3}):${6}`,
 		},
 		{
 			ID:       "side-panel-closed-file-viewer-legacy",
