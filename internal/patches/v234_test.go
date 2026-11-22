@@ -347,9 +347,10 @@ func TestPagingTrimWaits234(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("no %q in:\n%s", want, got)
 	}
-	// The window it would ask for is the one the decision is about.
+	// The window it would ask for is the one the decision is about, and a bundle with this paging code that the pattern
+	// does not fit is reported, not taken as one without it.
 	other := strings.Replace(v234PagingDecision, `if(U(ta,Ja,ua))`, `if(U(ta,Xa,ua))`, 1)
-	if _, status := applyWithStatus(t, "paging-trim-waits-for-still", other, Options{}); status == StatusApplied {
-		t.Error("a decision about another window was taken")
+	if _, status := applyWithStatus(t, "paging-trim-waits-for-still", v232PagingConfig+other, Options{}); status != StatusMissing {
+		t.Errorf("a decision about another window: status %v, want %v", status, StatusMissing)
 	}
 }
