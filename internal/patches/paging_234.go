@@ -14,7 +14,10 @@ var pagingTrimWaits234 = func() (s struct {
 }) {
 	b := shapeBuilder{groups: pagingTrimWaitsGroups}
 	s.upTo = b.open()
-	b.code(`var «start»=«next».startIndex,«grows»=«start»<«now».startIndex;if(«skip»(«a»,«next»,«b»))(«grows»||«growsEnd»)&&«retry»(«config».timing.oppositeDirectionCooldownMs||«config».timing.retryDelayMs);`)
+	b.code(`var «start»=«next».startIndex,«grows»=«start»<«now».startIndex;if(«skip»(«a»,«next»,«b»))(«grows»||«growsEnd»)&&«retry»(«config»`)
+	// Written whole, as the minifier does, so that the search starts from the few places that read it.
+	b.raw(`\.timing\.oppositeDirectionCooldownMs\s*`)
+	b.code(`||«config».timing.retryDelayMs);`)
 	b.close()
 	b.raw(`\s*`)
 	b.code(`else{`)
@@ -47,7 +50,11 @@ var pagingRowsKept234 = func() (s struct {
 	b.code(`componentDidUpdate(«a»,«b»,«c»){`)
 	b.close()
 	s.find = b.open()
-	b.code(`if((«a»=this.props.viewportRef.current)&&«c»&&«c».length!==0){«label»:{«b»=this.props.getAnchorCandidates;var «d»=this.props.getAnchorId;for(var «f» of «c»){if(«f».element.isConnected){var «g»={anchor:«f»,element:«f».element};break «label»}if(«f».id!==null&&«d»){if(!«g»){«g»=new Map;for(var «h» of «b»()){«c»=«d»(«h»);if(«c»===null||«g».has(«c»))continue;let{width:«w»,height:«ht»}=«h».getBoundingClientRect();«w»===0&&«ht»===0||«g».set(«c»,«h»)}}if(«c»=«g».get(«f».id)){«g»={anchor:«f»,element:«c»};break «label»}}}«g»=null}`)
+	b.code(`if((«a»=this.props.viewportRef.current)&&«c»&&«c».length!==0){«label»:{«b»=this.props.getAnchorCandidates;var «d»=`)
+	// Written whole, as the minifier does, so that the search starts from the one place that reads it rather than from
+	// the hundreds of getBoundingClientRect calls in a bundle.
+	b.raw(`\s*this\.props\.getAnchorId\s*`)
+	b.code(`;for(var «f» of «c»){if(«f».element.isConnected){var «g»={anchor:«f»,element:«f».element};break «label»}if(«f».id!==null&&«d»){if(!«g»){«g»=new Map;for(var «h» of «b»()){«c»=«d»(«h»);if(«c»===null||«g».has(«c»))continue;let{width:«w»,height:«ht»}=«h».getBoundingClientRect();«w»===0&&«ht»===0||«g».set(«c»,«h»)}}if(«c»=«g».get(«f».id)){«g»={anchor:«f»,element:«c»};break «label»}}}«g»=null}`)
 	b.close()
 	s.move = b.open()
 	b.code(`«g»?(«f»=«g».element.getBoundingClientRect().top-«a».getBoundingClientRect().top-«g».anchor.offset,«g»=«a».scrollTop,«f»=«g»+«f»+this.clampedDelta,«h»=Math.max(0,«f»),Math.abs(«h»-«g»)>=.5&&(«a».scrollTop=«h»),«h»=«a».scrollTop,«h»!==«g»&&«marks».set(«a»,{targetTop:«h»,markedAt:performance.now()}),«f»<-.5?(this.clampedDelta=«f»-«h»,this.clampedAtScrollTop=«h»,this.listeningViewport!==«a»&&(this.listeningViewport&&this.listeningViewport.removeEventListener("scroll",this.handleViewportScroll),«a».addEventListener("scroll",this.handleViewportScroll,{passive:!0}),this.listeningViewport=«a»)):«reset»(this)):«reset»(this)`)

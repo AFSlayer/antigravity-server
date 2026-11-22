@@ -9,12 +9,13 @@ import (
 	"testing"
 )
 
-// The text each patch matches in Antigravity 2.34.0, with the bundle's own line breaks, and the whole of its user
-// status sync: the function, the hook that checks the credential, and the effect that polls.
+// The text each patch matches in Antigravity 2.34.0, with the bundle's own line breaks; the Customizations screen's
+// filter with the statement before it and the return after it; and the whole of the user status sync: the function,
+// the hook that checks the credential, the one that refreshes on request, and the effect that polls.
 const (
 	v234ContextIndicatorSetting = `{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:["conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`
 	v234CustomizationsTab       = `if(!a)return qMb;var b=new Map(qMb);b.delete("Customizations");return b}`
-	v234CustomizationsScreen    = `a.get("plugins")&&(l=l.filter(m=>m!=="Customizations"));`
+	v234CustomizationsScreen    = `d||(l=l.filter(m=>m!=="Jetski Chat"));a.get("plugins")&&(l=l.filter(m=>m!=="Customizations"));return l}`
 	v234HeaderActions           = `className:Yi("absolute right-1 top-0 flex h-full items-center gap-1",
 k||u?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100")`
 	v234KebabMenu       = `function gkd(a){var {isOpen:b,onOpenChange:c,ariaLabel:d,sortMode:f,onSortModeChange:g,size:h="icon"}=a;a=ekd(a);var k=yS(),l=j1();return k||a.length===0&&!g?null:`
@@ -46,6 +47,7 @@ g.timing.retryDelayMs);else{`
 	v234UserStatusSyncWhole = `async function I_b({agentService:a,store:b,geminiModelsOnly:c,onTelemetrySettingChanged:d,isDisposed:f,onStatusUnavailable:g,ifFetchFails:h}){var k=e,l=e;try{let p=b.dispatch;try{if(typeof a.getUserStatus!=="function")h==="clearStatus"&&p(rB(ec(F.UserStatusSchema)));else{var {userStatus:m}=l(await k(a.getUserStatus()));if(!f()){if(m){let q=b.getState().userStatus,t=h==="keepStatus"&&H_b(q)?c_a(m):void 0;if(t)p(f_a(t));else if(h==="clearStatus"||!H_b(q)||H_b(m))p(rB(xqa(m,c))),m.email&&d?.(!m.disableTelemetry&&
 !m.userDataCollectionForceDisabled)}m?.email&&!m.cascadeModelConfigData?.errorMessage||g?.()}}}catch(q){if(l(),console.warn("[UserStatusSync] Failed to fetch user status:",q),!f()){var n=q instanceof qh&&q.code===7?b_a(q.rawMessage||q.message):void 0;(a=n)?p(f_a(a)):(h==="clearStatus"&&p(rB(ec(F.UserStatusSchema))),g?.())}}}finally{k()}}
 function J_b(){var a=cl(),b=ud()?.core.authService;return(0,E.useCallback)(()=>{Xk(a.getState())?.state==="signedIn"&&b?.signOutIfServerHasNoCredential?.()},[a,b])}
+function K_b(){var a=cl(),b=(0,E.useContext)(Mz),c=Nj(),d=c.get("models")?.geminiModelsOnly===!0,f=c.get("settings")?.onTelemetrySettingChanged,g=J_b();return(0,E.useCallback)(async()=>{var h=e,k=e;try{if(b){var l=Xk(a.getState());k(await h(I_b({agentService:b,store:a,geminiModelsOnly:d,onTelemetrySettingChanged:f,isDisposed:()=>Xk(a.getState())!==l,onStatusUnavailable:g,ifFetchFails:"keepStatus"})))}}finally{h()}},[a,b,d,f,g])}
 function L_b(){var a=dl(),b=cl(),c=(0,E.useContext)(Mz),d=el(Xk),f=ud()?.core.authService,g=em(),h=Nj(),k=h.get("models")?.geminiModelsOnly===!0,l=h.get("settings")?.onTelemetrySettingChanged,m=J_b();(0,E.useEffect)(()=>{if(c)if(d?.state==="signedOut")a(rB(ec(F.UserStatusSchema)));else{var q=!1,t=()=>q;I_b({agentService:c,store:b,geminiModelsOnly:k,onTelemetrySettingChanged:l,isDisposed:t,onStatusUnavailable:m,ifFetchFails:"clearStatus"});var u=setInterval(()=>{I_b({agentService:c,store:b,geminiModelsOnly:k,
 onTelemetrySettingChanged:l,isDisposed:t,onStatusUnavailable:m,ifFetchFails:"keepStatus"})},6E5);return()=>{q=!0;clearInterval(u)}}},[a,b,c,d,k,l,m]);}`
 )
@@ -63,7 +65,7 @@ func TestAntigravity234PatchShapes(t *testing.T) {
 		// The tab is dropped from a copy of the list under another name.
 		{"settings-restore-customizations-tab", v234CustomizationsTab, Options{}, []string{`return qMb}`}, []string{`delete("Customizations")`, `return b}`}},
 		// The list of screens is filtered once more.
-		{"settings-restore-customizations-screen", v234CustomizationsScreen, Options{}, nil, []string{`"Customizations"`}},
+		{"settings-restore-customizations-screen", v234CustomizationsScreen, Options{}, []string{`d||(l=l.filter(m=>m!=="Jetski Chat"));return l}`}, []string{`"Customizations"`}},
 		// A line break after the class string.
 		{"mobile-project-header-actions", v234HeaderActions, mobileOpts, []string{`items-center gap-1",(k||u||` + touch + `)?"opacity-100":`}, nil},
 		// The touch check is read into a name before the return.
@@ -165,6 +167,25 @@ func TestAntigravity234PatchesTolerateLineBreaks(t *testing.T) {
 				t.Errorf("%s: status %v with a line break at offset %d: %q", c.id, status, pos, c.src[max(0, pos-30):min(len(c.src), pos+30)])
 				break
 			}
+		}
+	}
+}
+
+// The Customizations screen's filter is removed only as a statement of its own, so that what it is removed from still
+// reads, and only where it filters the list it is assigned to. A bundle that filters in another form is reported.
+func TestCustomizationsScreen234TakesOnlyAWholeStatement(t *testing.T) {
+	filter := `a.get("plugins")&&(l=l.filter(m=>m!=="Customizations"));`
+	for _, other := range []string{
+		strings.Replace(v234CustomizationsScreen, filter, `!b&&`+filter, 1),
+		strings.Replace(v234CustomizationsScreen, filter, `a.settings.`+filter[2:], 1),
+		strings.Replace(v234CustomizationsScreen, filter, `if(b)`+filter, 1),
+		strings.Replace(v234CustomizationsScreen, filter, strings.Replace(filter, `(l=l.filter(`, `(l=k.filter(`, 1), 1),
+	} {
+		if other == v234CustomizationsScreen {
+			t.Fatal("nothing was changed")
+		}
+		if _, status := applyWithStatus(t, "settings-restore-customizations-screen", other, Options{}); status != StatusMissing {
+			t.Errorf("status %v, want %v, for %q", status, StatusMissing, other)
 		}
 	}
 }

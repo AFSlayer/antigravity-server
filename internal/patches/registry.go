@@ -54,7 +54,10 @@ var (
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy [pP]ath"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":(?:([a-zA-Z0-9_$]+,className:"[^"]+","data-tooltip-id":[a-zA-Z0-9_$]+\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{name:"(edit_note|delete)"))?`)
 	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[([pq]),([a-zA-Z0-9_$]+)\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)([tu]=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,[ut]=[a-zA-Z0-9_$]+\|\|b;)`)
-	settingsCustomizationsScreenRe   = regexp.MustCompile(`[a-zA-Z0-9_$]+\.get\(\s*"plugins"\s*\)\s*&&\s*\(\s*([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.filter\(\s*([a-zA-Z0-9_$]+)\s*=>\s*([a-zA-Z0-9_$]+)\s*!==\s*"Customizations"\s*\)\s*\)\s*;`)
+	// The statement is matched from where the one before it ends, so that what it is removed from still reads. Its
+	// repeats are bounded so that a bundle without it is searched only near each "Customizations".
+	settingsCustomizationsScreenRe   = regexp.MustCompile(`([;{}]\s{0,8})[a-zA-Z0-9_$]{1,64}\.get\(\s{0,8}"plugins"\s{0,8}\)\s{0,8}&&\s{0,8}\(\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}=\s{0,8}([a-zA-Z0-9_$]{1,64})\.filter\(\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}=>\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}!==\s{0,8}"Customizations"\s{0,8}\)\s{0,8}\)\s{0,8};`)
+	settingsCustomizationsFilteredRe = regexp.MustCompile(`!==\s*"Customizations"`)
 	settingsRestoreCustomizationsRe  = regexp.MustCompile(`(?:([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};)|(if\s*\(\s*!\s*[a-zA-Z0-9_$]+\s*\)\s*return\s+([a-zA-Z0-9_$]+)\s*;\s*(?:var\s+)?[a-zA-Z0-9_$]+\s*=\s*new Map\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*[a-zA-Z0-9_$]+\.delete\(\s*"Customizations"\s*\)\s*;\s*)(return\s+[a-zA-Z0-9_$]+\s*\})`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
@@ -1053,9 +1056,9 @@ func All() []Patch {
 			Enabled:      func(Options) bool { return true },
 			FindRe:       settingsCustomizationsScreenRe,
 			Optional:     true,
-			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`!=="Customizations"`)) },
-			Accept:       func(g [][]byte) bool { return bytes.Equal(g[1], g[2]) && bytes.Equal(g[3], g[4]) },
-			Replace:      ``,
+			Precondition: settingsCustomizationsFilteredRe.Match,
+			Accept:       func(g [][]byte) bool { return bytes.Equal(g[2], g[3]) && bytes.Equal(g[4], g[5]) },
+			Replace:      `${1}`,
 		},
 		{
 			ID:      "suppress-conversation-unavailable-modal",
@@ -1301,7 +1304,7 @@ func All() []Patch {
 		// about those more often, because a reader who has stopped may be waiting for them. It only has an answer for a
 		// bundle that hands it the move that keeps the rows in place, which is the next patch: a bundle before 2.32 is
 		// asked nothing new by this, and adds its rows when it always did. Optional because the paging code is not known
-		// to be in every supported bundle; the live bundle test reports it missing where the paging code is.
+		// to be in every supported bundle; where the paging code is, it is reported as not found.
 		{
 			ID:       "paging-trim-waits-for-still",
 			Desc:     "On iOS, hold rows the bundle would add or drop above the reader until the scroll tracker lets them through",
@@ -1309,8 +1312,11 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   pagingTrimWaitsRe,
 			Optional: true,
-			Accept:   func(g [][]byte) bool { return sameNames(g, pagingTrimWaits234.names) },
-			Replace:  `${1}else if(!${2}&&${3}.startIndex>${4}.startIndex&&window.__agyDeferTrim?.())${5}(250);else if(${3}.startIndex<${4}.startIndex&&window.__agyDeferGrow?.())${5}(100);else{`,
+			// A bundle with this paging code that the pattern does not fit is reported: 2.34's was not, and was taken
+			// as one without it.
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("oppositeDirectionCooldownMs")) },
+			Accept:       func(g [][]byte) bool { return sameNames(g, pagingTrimWaits234.names) },
+			Replace:      `${1}else if(!${2}&&${3}.startIndex>${4}.startIndex&&window.__agyDeferTrim?.())${5}(250);else if(${3}.startIndex<${4}.startIndex&&window.__agyDeferGrow?.())${5}(100);else{`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				if g[1] == nil {
 					return renderPagingTrimWaits234(g)

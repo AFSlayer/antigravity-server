@@ -85,7 +85,7 @@ var regexpFixtures = map[string]string{
 	"settings-rules-editor":                     `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var w=k||m||p,[y,z]=(0,G.useState)(!1),`,
 	"settings-customizations-show-edit":         `"Copy path")),!A&&n&&z.createElement(z.Fragment,null,Yz.createElement(Yz,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":`,
 	"settings-doc-row-editor":                   `function V2({title:a,displayPath:b,copyPath:c,description:d,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var [q,r]=(0,A.useState)(!1),t=!!d||!!f||!!g,u=d||b;`,
-	"settings-restore-customizations-screen":    `a.get("plugins")&&(l=l.filter(m=>m!=="Customizations"));`,
+	"settings-restore-customizations-screen":    `;a.get("plugins")&&(l=l.filter(m=>m!=="Customizations"));`,
 	"settings-restore-customizations-tab":       `h=k}else h=g;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");` + "\n" + `return l};if(!c.size)return g(h);`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
 	"force-disable-telemetry":                   `return{telemetryEnabled:f,marketingEmailsEnabled:`,
