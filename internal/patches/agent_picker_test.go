@@ -459,7 +459,10 @@ func TestAgentPickerFunctionCallsNothingOfTheScreens(t *testing.T) {
 	}{{agentScreenDeclares, start}, {agentPickerOutside, outside}} {
 		var got []string
 		for _, role := range c.roles {
-			got = append(got, groups[agentScreen.names[role][0]])
+			// 2.32.1's start does not read whether the keyboard is up.
+			if name := groups[agentScreen.names[role][0]]; name != "" {
+				got = append(got, name)
+			}
 		}
 		if strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Fatalf("%v are %v in 2.32.1, want %v", c.roles, got, c.want)
