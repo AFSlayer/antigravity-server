@@ -34,14 +34,18 @@ func agentRoutingIsKnown(groups [][]byte) bool {
 // mobile-agent-picker-hook copies the run into a function of its own, which has nothing of the screen's to read. So
 // the run is matched whole and not by its ends: a run with one more step in it, or one that reads something else of
 // the screen's, is not this code, and is reported as not found.
+//
+// Since 2.34 the start also reads whether the keyboard is up, between the app and its settings.
 const (
-	agentScreenStart  = `«screen»=()=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),«tips»=«app».get("tipCards"),«input»=«app».get("inputComponent");`
+	agentScreenStart  = `«screen»=()=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),`
+	agentScreenKeys   = `«keyboard»=«useTouch»();«keyboard»=«useKeyboard»(«keyboard»)!==void 0;var`
+	agentScreenTail   = `«tips»=«app».get("tipCards"),«input»=«app».get("inputComponent");`
 	agentPickerRun    = `var{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,getAgentScripts:«read»,globalScriptsDir:«global»,workspaceScriptsDir:«workspace»}=«agents»(),{data:«data»,refetch:«again»,isLoading:«loading»,error:«error»}=«fetch»({fire:«read»}),«all»=(0,«React».useMemo)(()=>«data»?.agentCustomizations??[],[«data»]),«offered»=(0,«React».useMemo)(()=>«all».filter(«one»=>!«one».agent?.disabled),[«all»]);«inStep»({isLoadingAgentScripts:«loading»,agentScriptsError:«error»,selectedAgentScriptItem:«chosen»,enabledCustomizations:«offered»,setSelectedAgentScriptItem:«choose»});«askedFor»({initialCustomSubagent:«asked»,agentCustomizations:«all»,setSelectedAgentScriptItem:«choose»});var{registerOpenSelector:«register»}=«modal»();(0,«React».useEffect)(()=>{var «handle»=«register»(()=>{«again»()});return()=>«handle».dispose()},[«register»,«again»]);«input»=«shown»({agentScriptsEnabled:«enabled»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»,hideAgentSelectorIfEmpty:«input»?.hideAgentSelectorIfEmpty,agentCustomizationsCount:«all».length,selectedAgentScriptItem:«chosen»})?«React».createElement(«picker»,{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,globalScriptsDir:«global»,workspaceScriptsDir:«workspace»,agentCustomizations:«all»,refreshAgentScripts:«again»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»}):void 0;`
 	agentScreenReturn = `return «React».createElement(«React».Fragment`
 )
 
-// The names the screen's start declares.
-var agentScreenDeclares = []string{"dispatch", "lastProject", "open", "query", "project", "asked", "app", "tips", "input"}
+// The names the screen's start declares. keyboard is declared only by a start that reads it.
+var agentScreenDeclares = []string{"dispatch", "lastProject", "open", "query", "project", "asked", "app", "keyboard", "tips", "input"}
 
 // The names the function reads from outside itself: the hooks it reads the address and the app's settings with, as the
 // screen's start does, and what the run calls. They have to be the bundle's own, from outside any screen.
@@ -57,6 +61,10 @@ var agentScreen = func() (s struct {
 	var b shapeBuilder
 	s.upToRun = b.open()
 	b.code(agentScreenStart)
+	b.raw(`\s*(?:`)
+	b.code(agentScreenKeys)
+	b.raw(`\s+)?`)
+	b.code(agentScreenTail)
 	s.between = b.open()
 	b.raw(`[\s\S]{0,700}?`)
 	b.close()
@@ -101,6 +109,9 @@ func agentScreenIsKnown(groups [][]byte) bool {
 	name := func(role string) string { return string(groups[agentScreen.names[role][0]]) }
 	declared := map[string]bool{}
 	for _, role := range agentScreenDeclares {
+		if groups[agentScreen.names[role][0]] == nil {
+			continue
+		}
 		if declared[name(role)] {
 			return false
 		}

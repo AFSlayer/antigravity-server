@@ -22,8 +22,8 @@ var (
 
 	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:if\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\.current\)\)return!0;)?)((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
-	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
-	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:[de],sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);return )[a-zA-Z0-9_$]+\(\)\|\|(a\.length===0&&!g\?null:)`)
+	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:\s*([a-zA-Z0-9_$]+)\(\s*"absolute right-1 top-0 flex h-full items-center gap-1"\s*,\s*([a-zA-Z0-9_$]+)\s*\|\|\s*([a-zA-Z0-9_$]+)\s*\?\s*"opacity-100"\s*:\s*"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\s*\)`)
+	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:[de],sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);(?:var ([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)(?:,[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\))*;)?return )([a-zA-Z0-9_$]+)(\(\))?\|\|(a\.length===0&&!g\?null:)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===\s*0\)return\s+([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileProjectSettingsExportRe       = regexp.MustCompile(`((?:export\s+)?)function ([a-zA-Z0-9_$]+)\(\)\{(var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),[de]=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=)([a-zA-Z0-9_$]+\("main"\))`)
@@ -36,11 +36,11 @@ var (
 			`[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{text:"Settings"\}\),[bc]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{key:[a-zA-Z0-9_$]+,(?:text:[a-zA-Z0-9_$]+,)?label:[^,]+,onClick:\(\)=>\{a\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\);[hk]\.push\([a-zA-Z0-9_$]+\)\}\}\)\),` +
 			`[gh]&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Fragment,null,[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{text:"Workspaces"\}\),[fg]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*\{key:[a-zA-Z0-9_$]+\.uri,(?:label|text):[a-zA-Z0-9_$]+\.name,[\r\n\s]*onClick:\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.uri;a\([a-zA-Z0-9_$]+\(\{workspaceUri:[a-zA-Z0-9_$]+\}\)\);[hk]\.push\(` + "`" + `workspace:\$\{[a-zA-Z0-9_$]+\}` + "`" + `\)\}\}\)\)\))` +
 			`(\),[\r\n\s]*m&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{offset:1-[bck],active:[bck]===[\r\n\s]*1,depth:1,exiting:[hk]\.exiting\.includes\(m\),onExited:\(\)=>\{[hk]\.onExited\(m\)\},header:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{onBack:[hk]\.pop\}\)\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Provider,\{value:!0\},)` +
-			`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m\))` +
+			`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m(?:,\s*[bck]===1)?\))` +
 			`(\)\)\)\};[\s\S]+?var a=([a-zA-Z0-9_$]+)\(\),b=!!a\.get\("settings"\)\?\.hideProjects[\s\S]{1,400}?(?:\{(?:settingsFeature:[a-zA-Z0-9_$]+,)?projectManagementFeature:g\}=(\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\))|f=([a-zA-Z0-9_$]+\(\)))[\s\S]{1,400}?,[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\([fg]\??\.projectsStateProvider\))`,
 	)
 	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
-	mobileConversationRowActionsRe = regexp.MustCompile(`className:\s*([a-zA-Z0-9_$]+)\(\s*"((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10"\s*,(?:\s*![a-zA-Z0-9_$]+\s*&&\s*"\[&>\*\]:pointer-events-auto"\s*,)?)\s*([a-zA-Z0-9_$]+)\s*\?\s*"hidden"\s*:\s*([a-zA-Z0-9_$]+)\s*\?\s*"opacity-100"\s*:\s*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\s*\)`)
+	mobileConversationRowActionsRe = regexp.MustCompile(`className:\s*([a-zA-Z0-9_$]+)\(\s*"((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10"\s*,(?:\s*!?[a-zA-Z0-9_$]+\s*&&\s*"[^"]*"\s*,)*)\s*([a-zA-Z0-9_$]+)\s*\?\s*"hidden"\s*:\s*([a-zA-Z0-9_$]+)\s*\?\s*"opacity-100"\s*:\s*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\s*\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),[\r\n\s]*handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)((?:,\s*handleRename:[a-zA-Z0-9_$]+)?)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
@@ -54,7 +54,8 @@ var (
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy [pP]ath"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":(?:([a-zA-Z0-9_$]+,className:"[^"]+","data-tooltip-id":[a-zA-Z0-9_$]+\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{name:"(edit_note|delete)"))?`)
 	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[([pq]),([a-zA-Z0-9_$]+)\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)([tu]=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,[ut]=[a-zA-Z0-9_$]+\|\|b;)`)
-	settingsRestoreCustomizationsRe  = regexp.MustCompile(`(?:([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};)|(if\s*\(\s*!\s*[a-zA-Z0-9_$]+\s*\)\s*return\s+([a-zA-Z0-9_$]+)\s*;\s*[a-zA-Z0-9_$]+\s*=\s*new Map\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*[a-zA-Z0-9_$]+\.delete\(\s*"Customizations"\s*\)\s*;\s*)(return\s+[a-zA-Z0-9_$]+\s*\})`)
+	settingsCustomizationsScreenRe   = regexp.MustCompile(`[a-zA-Z0-9_$]+\.get\(\s*"plugins"\s*\)\s*&&\s*\(\s*([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.filter\(\s*([a-zA-Z0-9_$]+)\s*=>\s*([a-zA-Z0-9_$]+)\s*!==\s*"Customizations"\s*\)\s*\)\s*;`)
+	settingsRestoreCustomizationsRe  = regexp.MustCompile(`(?:([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};)|(if\s*\(\s*!\s*[a-zA-Z0-9_$]+\s*\)\s*return\s+([a-zA-Z0-9_$]+)\s*;\s*(?:var\s+)?[a-zA-Z0-9_$]+\s*=\s*new Map\(\s*[a-zA-Z0-9_$]+\s*\)\s*;\s*[a-zA-Z0-9_$]+\.delete\(\s*"Customizations"\s*\)\s*;\s*)(return\s+[a-zA-Z0-9_$]+\s*\})`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
 
@@ -62,7 +63,7 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)\s*=\s*!!this\.storageService\.get\(\s*"didAskForNotificationPermission"\s*\)\s*;(\s*this\.notificationPermission\s*!==)`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"\},[\s\S]{1,600}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
+	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var (?:[a-zA-Z0-9_$]+=[^,{};]{1,60},){1,4}\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:(?:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"|` + "`flex-1 min-h-0 overflow-y-auto flex flex-col relative \\$\\{[a-zA-Z0-9_$]+\\?\"pb-1\":\"pb-2\"\\}`" + `)\},[\s\S]{1,900}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
 
 	// The input hands the picker to the model selector, which draws it at the end of its menu, where the toolbar is on
 	// top and the model selector is shown, and to its own toolbar otherwise. Group 1 is the name that decision goes by,
@@ -79,9 +80,13 @@ var (
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
-	mobileBackClearsSectionRe         = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
-	mobileHomeNewConvoRowRe           = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|((?:![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|)?[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),`)
-	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,(?:variant:"sidebar",)?surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
+	mobileBackClearsSectionRe = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
+	// Since 2.34 the row's icon comes first, its variant and whether it is selected depend on the layout, and it has a
+	// badge for its shortcut: groups 9 to 14 are that form's.
+	mobileHomeNewConvoRowRe = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)(?:,\s*[a-zA-Z0-9_$]+:[a-zA-Z0-9_$]+="[a-z]+")*\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|((?:![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|)?[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":(?:[a-zA-Z0-9_$]+\?"gap-1":)?"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&(?:` +
+		`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),` +
+		`|([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*)variant:([^,{}]{1,40}),\s*((?:className:[^,{}]{1,40},\s*)?text:"New Conversation",\s*(?:badge:[a-zA-Z0-9_$]+\([^(){}]{0,80}\),\s*)?)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([^,{}]{1,40}),)`)
+	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,\s*(?:variant:"sidebar",\s*)?surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
 
@@ -134,10 +139,10 @@ var (
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(?:(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:))|("data-testid"\s*:\s*"ask-question-writein"\s*,\s*value\s*:\s*[a-zA-Z0-9_$]+\s*,\s*onClick\s*:\s*([a-zA-Z0-9_$]+))(\s*,\s*onChange\s*:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\s*\|\|\s*[a-zA-Z0-9_$]+\s*===\s*void 0\s*\|\|\s*[a-zA-Z0-9_$]+\.isMultiSelect\s*\|\|\s*!document\.hasFocus\(\)\s*\|\|\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*&&\s*[a-zA-Z0-9_$]+\s*!==\s*[a-zA-Z0-9_$]+\.current)(\s*\|\|\s*[a-zA-Z0-9_$]+\.current\.get\(\s*[a-zA-Z0-9_$]+\s*\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
-	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*(?:[a-zA-Z0-9_$]+\.current|0)\s*&&\s*!\s*[a-zA-Z0-9_$]+\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*|!\s*[a-zA-Z0-9_$]+\s*\|\|\s*([a-zA-Z0-9_$]+)\.current\s*\|\|\s*)?)`)
-	pagingTrimWaitsRe                     = regexp.MustCompile(`(([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.startIndex\s*<\s*([a-zA-Z0-9_$]+)\.startIndex\s*\|\|\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*>\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*;\s*if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{`)
+	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*(?:[a-zA-Z0-9_$]+\.current|0)\s*&&\s*!\s*[a-zA-Z0-9_$]+(?:\s*&&\s*!\s*[a-zA-Z0-9_$]+)?\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*|!\s*[a-zA-Z0-9_$]+\s*\|\|\s*([a-zA-Z0-9_$]+)\.current\s*\|\|\s*|[a-zA-Z0-9_$]+\s*>\s*0\s*&&\s*[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*)?)`)
+	pagingTrimWaitsRe                     = regexp.MustCompile(`(([a-zA-Z0-9_$]+)\s*=\s*([a-zA-Z0-9_$]+)\.startIndex\s*<\s*([a-zA-Z0-9_$]+)\.startIndex\s*\|\|\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*>\s*[a-zA-Z0-9_$]+\.endIndexExclusive\s*;\s*if\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*,\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*[a-zA-Z0-9_$]+\s*&&\s*([a-zA-Z0-9_$]+)\(\s*[a-zA-Z0-9_$]+\.timing\.oppositeDirectionCooldownMs\s*\|\|\s*[a-zA-Z0-9_$]+\.timing\.retryDelayMs\s*\)\s*;\s*)else\s*\{|` + pagingTrimWaits234.pattern)
 	pagingGrowRadiusRe                    = regexp.MustCompile(`(trigger\s*:\s*\{\s*innerRadiusPx\s*:\s*)([0-9][0-9.eE]*)(\s*,\s*contractionSafetyPx\s*:)`)
-	pagingRowsKeptRe                      = regexp.MustCompile(`(componentDidUpdate\([a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\)\{([a-zA-Z0-9_$]+)=\s*this\.props\.viewportRef\.current;\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\?\.find\(\(\{element:\s*[a-zA-Z0-9_$]+\}\s*\)=>\s*[a-zA-Z0-9_$]+\.isConnected\);\s*)([a-zA-Z0-9_$]+&&\s*[a-zA-Z0-9_$]+&&\s*\([a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.element\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.offset,\s*Math\.abs\([a-zA-Z0-9_$]+\)>=\s*\.5&&\s*\([a-zA-Z0-9_$]+\.scrollTop\+=\s*[a-zA-Z0-9_$]+\)\))\}`)
+	pagingRowsKeptRe                      = regexp.MustCompile(`(componentDidUpdate\([a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\)\{([a-zA-Z0-9_$]+)=\s*this\.props\.viewportRef\.current;\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\?\.find\(\(\{element:\s*[a-zA-Z0-9_$]+\}\s*\)=>\s*[a-zA-Z0-9_$]+\.isConnected\);\s*)([a-zA-Z0-9_$]+&&\s*[a-zA-Z0-9_$]+&&\s*\([a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.element\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.getBoundingClientRect\(\)\.top-\s*[a-zA-Z0-9_$]+\.offset,\s*Math\.abs\([a-zA-Z0-9_$]+\)>=\s*\.5&&\s*\([a-zA-Z0-9_$]+\.scrollTop\+=\s*[a-zA-Z0-9_$]+\)\))\}|` + pagingRowsKept234.pattern)
 	scrollbarMeasureRe                    = regexp.MustCompile(`(var\s+([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\?\s*([a-zA-Z0-9_$]+)\.scrollLeft:\s*[a-zA-Z0-9_$]+\.scrollTop,\s*([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+\.scrollWidth:\s*[a-zA-Z0-9_$]+\.scrollHeight,\s*[a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\?\s*[a-zA-Z0-9_$]+\.clientWidth:\s*[a-zA-Z0-9_$]+\.clientHeight;\s*[a-zA-Z0-9_$]+\.pos=\s*[a-zA-Z0-9_$]+;\s*[a-zA-Z0-9_$]+\.scrollLength=\s*[a-zA-Z0-9_$]+;\s*[a-zA-Z0-9_$]+\.clientLength=\s*[a-zA-Z0-9_$]+;)`)
 	scrollbarTrackClickRe                 = regexp.MustCompile(`(Math\.min\(\s*[a-zA-Z0-9_$]+,\s*Math\.max\(\s*0,\s*[a-zA-Z0-9_$]+-\s*[a-zA-Z0-9_$]+/2\)\)/\s*[a-zA-Z0-9_$]+\*\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*)([a-zA-Z0-9_$]+)`)
 	scrollbarTimelineRe                   = regexp.MustCompile(`(function\s+[a-zA-Z0-9_$]+\(\)\{var\s+[a-zA-Z0-9_$]+=\s*globalThis\.ScrollTimeline;\s*return\s+typeof\s+[a-zA-Z0-9_$]+===\s*"function")(\?\s*[a-zA-Z0-9_$]+:\s*null\})`)
@@ -169,10 +174,10 @@ var (
 			`|catch\s*\(\s*([a-zA-Z0-9_$]+)\s*\)\s*\{\s*if\s*\(\s*` +
 			`([a-zA-Z0-9_$]+\(\)\s*,\s*console\.warn\(\s*"\[UserStatusSync\] Failed to fetch user status:"\s*,\s*[a-zA-Z0-9_$]+\s*\))\s*,\s*` +
 			`(!\s*[a-zA-Z0-9_$]+\(\))\s*\)\s*\{\s*` +
-			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};)\s*([a-zA-Z0-9_$]+\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
-			`\(\s*[a-zA-Z0-9_$]+\s*!==\s*"clearStatus"\s*\|\|\s*[a-zA-Z0-9_$]+\?\.\(\)\s*\|\|\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)\s*\}\s*\})` +
+			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};)\s*((?:[a-zA-Z0-9_$]+|\(\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\s*\))\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
+			`\(\s*(?:[a-zA-Z0-9_$]+\s*!==\s*"clearStatus"\s*\|\|\s*[a-zA-Z0-9_$]+\?\.\(\)\s*\|\||[a-zA-Z0-9_$]+\s*===\s*"clearStatus"\s*&&)\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)\s*\}\s*\})` +
 			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
-			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*` + userStatusSyncCallExpr + `\s*\}|(?:void\s+)?` + userStatusSyncCallExpr + `)\s*,\s*6E5\s*\)\s*;\s*` +
+			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*(` + userStatusSyncCallExpr + `)\s*\}|(?:void\s+)?(` + userStatusSyncCallExpr + `))\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
 	)
 
@@ -206,10 +211,10 @@ var (
 			`\s*:\s*"(?:\\u2014|—)"\s*\))`,
 	)
 	loopbackPreviewFeatureGateRe = regexp.MustCompile(
-		`(browserAuxPane:\s*\{\s*feature:\s*!1\s*,\s*applyFirst:\s*\[\s*\{\s*runtimeGating:\s*\{\s*host:\s*\[[^\]]+\])` +
+		`(browserAuxPane:\s*\{\s*feature:\s*!1\s*,\s*apply(?:First|All):\s*\[\s*\{\s*runtimeGating:\s*\{\s*host:\s*\[[^\]]+\])` +
 			`\s*,\s*userCohort:\s*\[\s*"google"\s*\]` +
 			`(\s*\}\s*,\s*feature:\s*)[a-zA-Z0-9_$]+` +
-			`(\s*\}\s*\]\s*,\s*applyAll:\s*\[[\s\S]{1,260}?\}\s*,\s*remoteConversationBrowserPane:\s*\{\s*feature:\s*!1\s*,\s*applyAll:\s*\[\s*\{\s*runtimeGating:\s*\{[^}]+\}\s*,\s*feature:\s*([a-zA-Z0-9_$]+))`,
+			`(\s*\}[\s\S]{1,900}?\}\s*,\s*remoteConversationBrowserPane:\s*\{\s*feature:\s*!1\s*,\s*applyAll:\s*\[\s*\{\s*runtimeGating:\s*\{[^}]+\}\s*,\s*feature:\s*([a-zA-Z0-9_$]+))`,
 	)
 	loopbackPreviewFetchFallbackRe = regexp.MustCompile(
 		`(,\s*fetchSandboxPort:\s*\(\s*\.\.\.([a-zA-Z0-9_$]+)\s*\)\s*=>\s*([a-zA-Z0-9_$]+)\(\s*async\s+([a-zA-Z0-9_$]+)\s*=>\s*)` +
@@ -284,7 +289,9 @@ const SidecarFrameSandbox = "allow-scripts allow-forms allow-popups allow-popups
 
 const (
 	userStatusSchemaDispatchExpr = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.UserStatusSchema\s*\)\s*\)\s*\)`
-	userStatusSyncCallExpr       = `[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+(?:\s*,\s*(?:[a-zA-Z0-9_$]+|"[a-zA-Z]+")){3,7}\s*\)`
+	// userStatusSyncCallExpr is a call of the function that fetches the status, which takes its arguments in an object
+	// since 2.34.
+	userStatusSyncCallExpr = `[a-zA-Z0-9_$]+\(\s*(?:[a-zA-Z0-9_$]+(?:\s*,\s*(?:[a-zA-Z0-9_$]+|"[a-zA-Z]+")){3,7}|\{(?:\s*[a-zA-Z0-9_$]+\s*:\s*(?:[a-zA-Z0-9_$]+|"[a-zA-Z]+")\s*,){3,9}\s*[a-zA-Z0-9_$]+\s*:\s*(?:[a-zA-Z0-9_$]+|"[a-zA-Z]+")\s*\})\s*\)`
 	// userStatusClearModeExpr is the mode check 2.32 puts before the dispatch
 	// that clears the status. The poll runs in that mode, so it still clears.
 	userStatusClearModeExpr = `(?:[a-zA-Z0-9_$]+\s*===\s*"clearStatus"\s*&&\s*)?`
@@ -293,6 +300,18 @@ const (
 	extensionOfAExpr       = `a\.slice\(\s*a\.lastIndexOf\(\s*"\."\s*\)\s*\+\s*1\s*\)\.toLowerCase\(\s*\)`
 	authStartupBackoffExpr = `setTimeout\(\s*[a-zA-Z0-9_$]+\s*,\s*1E3\s*\*\s*2\s*\*\*\s*[a-zA-Z0-9_$]+\s*\)`
 )
+
+// userStatusCalls is the call a retry makes: the first call at the first run and the poll's after it, where the two
+// differ by more than where the lines break. Up to 2.33 they are the same call.
+func userStatusCalls(first string, pollBraced, poll []byte) string {
+	if pollBraced != nil {
+		poll = pollBraced
+	}
+	if poll == nil || strings.Join(strings.Fields(string(poll)), "") == strings.Join(strings.Fields(first), "") {
+		return first
+	}
+	return `(_init?` + first + `:` + string(poll) + `)`
+}
 
 func renderUserStatusKeepOnError(errVar, warnExpr, credCheck, bridge, cancelVar, callExpr, timerVar string) string {
 	return renderUserStatusRetry(`catch(`+errVar+`){return `+warnExpr+credCheck+`,!1}`, bridge, cancelVar, callExpr, timerVar)
@@ -731,6 +750,14 @@ func All() []Patch {
 			FindRe:  mobileHomeNewConvoRowRe,
 			// The mobile home tells itself apart by the component's conciergeTestId, whatever the parameter is called.
 			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${3}(a||_agyHome)&&${4}variant:_agyHome?"ghost":"secondary",${5}href:_agyHome?void 0:${6},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${7}selected:!_agyHome&&${8},`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				start := string(g[1]) + `var _agyHome=` + string(g[2]) + `==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||` + string(g[3]) + `(a||_agyHome)&&`
+				onClick := `onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,`
+				if g[4] != nil {
+					return start + string(g[4]) + `variant:_agyHome?"ghost":"secondary",` + string(g[5]) + `href:_agyHome?void 0:` + string(g[6]) + `,` + onClick + string(g[7]) + `selected:!_agyHome&&` + string(g[8]) + `,`
+				}
+				return start + string(g[9]) + `variant:_agyHome?"ghost":(` + string(g[10]) + `),` + string(g[11]) + `href:_agyHome?void 0:` + string(g[12]) + `,` + onClick + string(g[13]) + `selected:!_agyHome&&(` + string(g[14]) + `),`
+			},
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
 			// The phone's home has asked for these rows since 2.29; one that does and is not matched is reported.
@@ -764,10 +791,20 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectKebabMenuRe,
-			Replace: `${5}${6}`,
+			Replace: `${5}${9}`,
+			// Since 2.34 the menu reads the touch check into a name before its return, and the return goes by that name.
+			Accept: func(g [][]byte) bool {
+				if g[5] == nil {
+					return true
+				}
+				if g[6] != nil {
+					return bytes.Equal(g[7], g[6]) && g[8] == nil
+				}
+				return g[8] != nil
+			},
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				if g[5] != nil {
-					return string(g[5]) + string(g[6])
+					return string(g[5]) + string(g[9])
 				}
 				return `,` + string(g[1]) + `=(0,` + string(g[2]) + `.useContext)(` + string(g[3]) + `),` + string(g[4]) + `=!1,`
 			},
@@ -995,13 +1032,30 @@ func All() []Patch {
 			Enabled: func(Options) bool { return true },
 			FindRe:  settingsRestoreCustomizationsRe,
 			Replace: `${1}=${2}=>${2};${5}`,
-			// 2.33 drops the tab in the hook that builds the list of screens, not in a helper of its own.
+			// 2.33 drops the tab in the hook that builds the list of screens, not in a helper of its own. 2.34 drops it
+			// from a copy of the list under another name, so the hook returns the list it was given.
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				if g[1] == nil {
+					if keep := "return " + string(g[4]) + "}"; string(g[5]) != keep {
+						return keep
+					}
 					return string(g[5])
 				}
 				return string(g[1]) + "=" + string(g[2]) + "=>" + string(g[2]) + ";"
 			},
+		},
+		// Since 2.34 the list of screens the settings show is filtered once more, by name.
+		{
+			ID:           "settings-restore-customizations-screen",
+			Desc:         "Keep the Customizations screen in the list of settings screens",
+			Target:       MainJS,
+			Kind:         Regexp,
+			Enabled:      func(Options) bool { return true },
+			FindRe:       settingsCustomizationsScreenRe,
+			Optional:     true,
+			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte(`!=="Customizations"`)) },
+			Accept:       func(g [][]byte) bool { return bytes.Equal(g[1], g[2]) && bytes.Equal(g[3], g[4]) },
+			Replace:      ``,
 		},
 		{
 			ID:      "suppress-conversation-unavailable-modal",
@@ -1230,6 +1284,8 @@ func All() []Patch {
 					followOn = "&&!" + string(g[7]) + ".current"
 				} else if g[8] != nil {
 					followOn = "&&!" + string(g[8]) + ".current"
+				} else if g[9] != nil {
+					followOn = "&&!" + string(g[9]) + ".current"
 				}
 				return string(g[1]) + "(" + pinned + ".current" + followOn + "&&window.__agyIsSpontaneousScroll?.(" + el + ")?" +
 					el + `.scrollTo({top:` + el + `.scrollHeight,behavior:"instant"}):(` + unpin + "))" + ":" + string(g[6])
@@ -1253,7 +1309,14 @@ func All() []Patch {
 			Kind:     Regexp,
 			FindRe:   pagingTrimWaitsRe,
 			Optional: true,
+			Accept:   func(g [][]byte) bool { return sameNames(g, pagingTrimWaits234.names) },
 			Replace:  `${1}else if(!${2}&&${3}.startIndex>${4}.startIndex&&window.__agyDeferTrim?.())${5}(250);else if(${3}.startIndex<${4}.startIndex&&window.__agyDeferGrow?.())${5}(100);else{`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[1] == nil {
+					return renderPagingTrimWaits234(g)
+				}
+				return string(g[1]) + `else if(!` + string(g[2]) + `&&` + string(g[3]) + `.startIndex>` + string(g[4]) + `.startIndex&&window.__agyDeferTrim?.())` + string(g[5]) + `(250);else if(` + string(g[3]) + `.startIndex<` + string(g[4]) + `.startIndex&&window.__agyDeferGrow?.())` + string(g[5]) + `(100);else{`
+			},
 		},
 		// When the window of loaded rows moves, the bundle puts the rows on screen back where they were as it commits the
 		// change, and relies on the browser's scroll anchoring for anything that shifts them after that. Tables do: each
@@ -1264,7 +1327,10 @@ func All() []Patch {
 		// it keep room for them on iOS. With that it is handed the component's way of finding the rows it chooses among,
 		// from which the tracker picks the row at the top of the screen to follow while the browser's anchoring is off.
 		// Bundles before 2.32 have no such component and go on moving the position themselves, and one that has it in
-		// a form this does not match is reported.
+		// a form this does not match is reported. Since 2.34 the component finds a row drawn again by its id, and keeps
+		// what it could not move above the top for its next move: the row it finds is handed over in the same way, and
+		// what it would have kept is the tracker's to make up. Left to the bundle, the rows on an iPhone moved a little
+		// whenever older rows loaded.
 		{
 			ID:       "paging-keeps-rows-after-render",
 			Desc:     "Keep the rows on screen in place when older rows load, through the second drawing of their tables",
@@ -1275,7 +1341,14 @@ func All() []Patch {
 			Precondition: func(b []byte) bool {
 				return bytes.Contains(b, []byte("getAnchorCandidates")) && bytes.Contains(b, []byte("getSnapshotBeforeUpdate"))
 			},
+			Accept:  func(g [][]byte) bool { return sameNames(g, pagingRowsKept234.names) },
 			Replace: `${1}window.__agyKeepRows?(window.__agyRowsDrawn?.(${2},this.props.getAnchorCandidates),${2}&&${3}&&window.__agyKeepRows(${2},${3}.element,${3}.offset)):${4}}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[1] == nil {
+					return renderPagingRowsKept234(g)
+				}
+				return string(g[1]) + `window.__agyKeepRows?(window.__agyRowsDrawn?.(` + string(g[2]) + `,this.props.getAnchorCandidates),` + string(g[2]) + `&&` + string(g[3]) + `&&window.__agyKeepRows(` + string(g[2]) + `,` + string(g[3]) + `.element,` + string(g[3]) + `.offset)):` + string(g[4]) + `}`
+			},
 		},
 		// The bundle asks for older rows once the first row is within 600 px of the screen. Drawing them takes a phone
 		// 0.3 to 0.5 s, and a flick covers that distance sooner, so the reader arrived at the top of what was loaded
@@ -1475,7 +1548,7 @@ func All() []Patch {
 				if g[6] != nil {
 					return renderUserStatusRetry(
 						`catch(`+string(g[6])+`){if(`+string(g[7])+`,`+string(g[8])+`){`+string(g[9])+`return `+string(g[10])+`(`+string(g[11])+`,!1)}return!1}`,
-						string(g[12]), string(g[13]), string(g[14]), string(g[15]),
+						string(g[12]), string(g[13]), userStatusCalls(string(g[14]), g[16], g[17]), string(g[15]),
 					)
 				}
 				credCheck := ""

@@ -120,9 +120,17 @@ var (
 		s.replace = "contextUsageIndicatorEnabled:{feature:{visible:!0},important:[${" + strconv.Itoa(b.names["important"][0]) + "}]}"
 		return s
 	}()
+	// Group 1 is the theme, which 2.34 no longer lists in Chat Layout.
 	contextIndicatorSettingInChatRe = func() *regexp.Regexp {
 		var b shapeBuilder
-		b.code(`{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`)
+		b.code(`{title:"Chat",settings:["verboseConversationSteps"]},{title:"Chat Layout",settings:[`)
+		b.raw(`\s*`)
+		b.open()
+		b.raw(`(?:`)
+		b.code(`"themeMode",`)
+		b.raw(`\s*)?`)
+		b.close()
+		b.code(`"conversationWidth","artifactWidth","contextUsageIndicatorEnabled"]}`)
 		return regexp.MustCompile(b.String())
 	}()
 )
@@ -139,7 +147,7 @@ var contextIndicatorSettingDescription = func() (s struct {
 	return s
 }()
 
-const contextIndicatorSettingInChat = `{title:"Chat",settings:["verboseConversationSteps","contextUsageIndicatorEnabled"]},{title:"Chat Layout",settings:["themeMode","conversationWidth","artifactWidth"]}`
+const contextIndicatorSettingInChat = `{title:"Chat",settings:["verboseConversationSteps","contextUsageIndicatorEnabled"]},{title:"Chat Layout",settings:[${1}"conversationWidth","artifactWidth"]}`
 
 // contextIndicatorQuery picks the conversation's usage out of its state, and says, as the 2.29 indicator did, whether
 // the conversation was compacted since the usage was counted: a checkpoint step (type 23) that is done (status 3)

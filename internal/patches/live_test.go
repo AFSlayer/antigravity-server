@@ -40,6 +40,11 @@ var rowsFromPropRe = regexp.MustCompile(`getSnapshotBeforeUpdate\([a-zA-Z0-9_$]+
 // first two of several, with the bottom padding it has had: pb-2 up to 2.28 and pb-4 since.
 var promptWrapperRe = regexp.MustCompile(`relative w-full px-4 pb-[24](?:",\s*"| )flex-shrink-0`)
 
+// homePromptWrapperRe matches the classes of the element around the home screen's prompt: one string up to 2.33, and
+// since 2.34 a template that has smaller padding while the keyboard is up, where there is no home indicator to keep
+// clear of.
+var homePromptWrapperRe = regexp.MustCompile(`"shrink-0 p-2"|` + "`shrink-0 \\$\\{[a-zA-Z0-9_$]+\\?\"px-2 py-1\":\"p-2\"\\}`")
+
 // rowSizedInCqhRe matches the inline height scroll-input-tracker recognizes tall rows by. Since 2.30 the bundle builds
 // it in a helper that the rows' minHeight calls.
 var rowSizedInCqhRe = regexp.MustCompile(`minHeight:[^{}]{0,80}cqh|return` + "`" + `calc\(\d+cqh`)
@@ -118,7 +123,7 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 	if !regexpMatch(promptWrapperRe, mainJS) {
 		t.Error("the bundle no longer has the element around a conversation's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
 	}
-	if !bytes.Contains(mainJS, []byte(`"shrink-0 p-2"`)) {
+	if !regexpMatch(homePromptWrapperRe, mainJS) {
 		t.Error("the bundle no longer has the element around the home screen's prompt with the classes safe-area-insets looks for; on a phone the prompt sits in the home indicator's area and leaves a gap above the keyboard")
 	}
 
