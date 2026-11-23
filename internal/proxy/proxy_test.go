@@ -1695,3 +1695,34 @@ func TestProxyPassthroughWebSocketPreventsFalseIdleAndRequiresOrigin(t *testing.
 		t.Fatal("expected IsIdle(0) == true after pass-through WebSocket closed")
 	}
 }
+
+func TestProxyInjectsEmptyAppConfigCSRFToken(t *testing.T) {
+	ls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, `<!doctype html><html><head><script>window.__APP_CONFIG__ = {"productName":"antigravity","csrfToken":"","appVersion":"2.34.0"};</script></head><body></body></html>`)
+	}))
+	t.Cleanup(ls.Close)
+
+	p, err := New(Options{
+		TargetPort:      upstreamPort(t, ls),
+		TargetCSRFToken: "injected-uuid-123",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p.Handler())
+	t.Cleanup(front.Close)
+
+	// First request populates cache, second hits fast-path; both must carry the injected token.
+	for i := 0; i < 2; i++ {
+		resp := get(t, front.URL, "/", "text/html")
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"csrfToken":"injected-uuid-123"`) {
+			t.Fatalf("attempt %d: expected injected csrfToken in HTML, got:\n%s", i+1, string(body))
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -384,6 +386,9 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		p.wsTransportMissing.Store(transportPatchMissing(report))
 	}
 	p.report(target, report)
+	if target == patches.HTML {
+		patched = injectAppConfigCSRFToken(patched, p.opts.TargetCSRFToken)
+	}
 
 	var tag string
 	if target == patches.MainJS {
@@ -685,4 +690,42 @@ func errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 
 	w.WriteHeader(http.StatusBadGateway)
 	_, _ = w.Write([]byte("Antigravity is not reachable. Is the language server still running?"))
+}
+
+var (
+	appConfigAnchor      = []byte("window.__APP_CONFIG__")
+	scriptEndTag         = []byte("</script>")
+	emptyAppConfigCSRFRe = regexp.MustCompile(`"csrfToken"\s*:\s*""`)
+)
+
+// injectAppConfigCSRFToken fills an empty csrfToken in window.__APP_CONFIG__
+// when Antigravity 2.34+ redacts it on GET / for #t= bootstrap-only desktop flows.
+func injectAppConfigCSRFToken(html []byte, token string) []byte {
+	if token == "" {
+		return html
+	}
+	anchor := bytes.Index(html, appConfigAnchor)
+	if anchor < 0 {
+		return html
+	}
+	tail := html[anchor:]
+	end := bytes.Index(tail, scriptEndTag)
+	if end < 0 {
+		end = len(tail)
+	}
+	segment := tail[:end]
+	loc := emptyAppConfigCSRFRe.FindIndex(segment)
+	if loc == nil {
+		return html
+	}
+	encoded, err := json.Marshal(token)
+	if err != nil {
+		return html
+	}
+	replacement := append([]byte(`"csrfToken":`), encoded...)
+	out := make([]byte, 0, len(html)-(loc[1]-loc[0])+len(replacement))
+	out = append(out, html[:anchor+loc[0]]...)
+	out = append(out, replacement...)
+	out = append(out, html[anchor+loc[1]:]...)
+	return out
 }
