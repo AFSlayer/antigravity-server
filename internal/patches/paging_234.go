@@ -6,7 +6,11 @@ package patches
 // one pattern takes either.
 
 // The paging's update decision: whether to wait before asking for the new window, which the trim and the growth above
-// are held at as before. grows is whether rows are added at the top, growsEnd whether they are at the bottom.
+// are held at as before. grows is whether rows are added at the top, growsEnd whether they are at the bottom. Since
+// 2.35 a window it waits for first clears what is shown of loads at the ends it does not grow, with the two names
+// negated; those are written as roles of their own, which pagingTrimWaitsIsKnown holds to grows and growsEnd. The waits
+// added here leave that status as it is: they ask again in a moment, and the decision clears it once it no longer
+// waits for the tracker, so what is shown of a finished load stays for that moment longer.
 var pagingTrimWaits234 = func() (s struct {
 	pattern string
 	names   map[string][]int
@@ -14,7 +18,11 @@ var pagingTrimWaits234 = func() (s struct {
 }) {
 	b := shapeBuilder{groups: pagingTrimWaitsGroups}
 	s.upTo = b.open()
-	b.code(`var «start»=«next».startIndex,«grows»=«start»<«now».startIndex;if(«skip»(«a»,«next»,«b»))(«grows»||«growsEnd»)&&«retry»(«config»`)
+	b.code(`var «start»=«next».startIndex,«grows»=«start»<«now».startIndex;if(«skip»(«a»,«next»,«b»))`)
+	b.raw(`(?:\s*`)
+	b.code(`«settle»(!«settleGrows»,!«settleGrowsEnd»),`)
+	b.raw(`)?\s*`)
+	b.code(`(«grows»||«growsEnd»)&&«retry»(«config»`)
 	// Written whole, as the minifier does, so that the search starts from the few places that read it.
 	b.raw(`\.timing\.oppositeDirectionCooldownMs\s*`)
 	b.code(`||«config».timing.retryDelayMs);`)
@@ -24,6 +32,19 @@ var pagingTrimWaits234 = func() (s struct {
 	s.pattern, s.names = b.String(), b.names
 	return s
 }()
+
+// pagingTrimWaitsIsKnown says whether a match of either form is the paging decision: every role one name, and in the
+// 2.35 form the call that clears the loads' status negating the same two names the retry goes by.
+func pagingTrimWaitsIsKnown(g [][]byte) bool {
+	if !sameNames(g, pagingTrimWaits234.names) {
+		return false
+	}
+	at := func(role string) []byte { return g[pagingTrimWaits234.names[role][0]] }
+	if at("settle") == nil {
+		return true
+	}
+	return string(at("settleGrows")) == string(at("grows")) && string(at("settleGrowsEnd")) == string(at("growsEnd"))
+}
 
 // pagingTrimWaitsGroups is the number of groups in the forms before 2.34.
 const pagingTrimWaitsGroups = 5
