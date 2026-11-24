@@ -127,3 +127,60 @@ func TestAgentScreenRefreshNames(t *testing.T) {
 		}
 	}
 }
+
+// The WebSocket transport and the doc row are matched token for token, so a release that breaks their lines elsewhere
+// is still matched, in every form the transport has had.
+func TestTransportAndDocRowTolerateLineBreaks(t *testing.T) {
+	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for _, c := range []struct{ id, src string }{
+		{"websocket-transport-default", `function n(){return new URLSearchParams(location.search).get("useWebSocket")==="true"}function Yhc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true":a.get("wsTransport")==="2"}`},
+		{"websocket-transport-default", `function Phc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true"?"explicit":"off":a.get("wsTransport")==="3"?"hub":"off"}`},
+		{"websocket-transport-default", v235WebSocketTransport},
+		{"settings-doc-row-editor", v235DocRow},
+	} {
+		base, status := applyWithStatus(t, c.id, c.src, Options{})
+		if status != StatusApplied {
+			t.Errorf("%s: status %v without a line break", c.id, status)
+			continue
+		}
+		positions := lineBreakPositions(c.src)
+		if len(positions) < 5 {
+			t.Errorf("%s: only %d break positions", c.id, len(positions))
+		}
+		for _, pos := range positions {
+			out, status := applyWithStatus(t, c.id, c.src[:pos]+"\n"+c.src[pos:], Options{})
+			if status != StatusApplied || compact(out) != compact(base) {
+				t.Errorf("%s: status %v with a line break at offset %d: %q", c.id, status, pos, c.src[max(0, pos-30):min(len(c.src), pos+30)])
+				break
+			}
+		}
+	}
+}
+
+// The transport parameter is read from the URLSearchParams useWebSocket was read from, and the doc row's flags from its
+// own description.
+func TestTransportAndDocRowNames(t *testing.T) {
+	other := `function Phc(){var a=new URLSearchParams(window.location.search),b=a.get("useWebSocket");return b!==null?b==="true"?"explicit":"off":c.get("wsTransport")==="3"?"hub":"off"}`
+	if _, status := applyWithStatus(t, "websocket-transport-default", other, Options{}); status == StatusApplied {
+		t.Error("wsTransport read from another object is taken")
+	}
+	row := strings.Replace(v235DocRow, `r=!!d||`, `r=!!x||`, 1)
+	if row == v235DocRow {
+		t.Fatal("nothing was changed")
+	}
+	if _, status := applyWithStatus(t, "settings-doc-row-editor", row, Options{}); status == StatusApplied {
+		t.Error("a doc row whose flag reads another description is taken")
+	}
+}
+
+// The agents' fetch function passed without being read is not the run either, the other way round from the case in
+// TestAntigravity235PatchShapes.
+func TestAgentRunFetchOnlyPassed(t *testing.T) {
+	half := strings.Replace(v234AgentScreen, `getAgentScripts:t,`, ``, 1)
+	if half == v234AgentScreen {
+		t.Fatal("nothing was changed")
+	}
+	if loc := agentScreen.re.FindStringSubmatchIndex(half); loc != nil && agentScreenIsKnown(submatches([]byte(half), loc)) {
+		t.Error("a run that passes the fetch function and does not read it is taken")
+	}
+}
