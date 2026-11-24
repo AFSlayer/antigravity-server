@@ -35,13 +35,19 @@ func agentRoutingIsKnown(groups [][]byte) bool {
 // the run is matched whole and not by its ends: a run with one more step in it, or one that reads something else of
 // the screen's, is not this code, and is reported as not found.
 //
-// Since 2.34 the start also reads whether the keyboard is up, between the app and its settings.
+// Since 2.34 the start also reads whether the keyboard is up, between the app and its settings; 2.35 writes that without
+// the comparison to undefined. 2.35 reads the agents without passing them the function that fetches them, and no longer
+// fetches them again when the selector is opened.
 const (
-	agentScreenStart  = `«screen»=()=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),`
-	agentScreenKeys   = `«keyboard»=«useTouch»();«keyboard»=«useKeyboard»(«keyboard»)!==void 0;var`
-	agentScreenTail   = `«tips»=«app».get("tipCards"),«input»=«app».get("inputComponent");`
-	agentPickerRun    = `var{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,getAgentScripts:«read»,globalScriptsDir:«global»,workspaceScriptsDir:«workspace»}=«agents»(),{data:«data»,refetch:«again»,isLoading:«loading»,error:«error»}=«fetch»({fire:«read»}),«all»=(0,«React».useMemo)(()=>«data»?.agentCustomizations??[],[«data»]),«offered»=(0,«React».useMemo)(()=>«all».filter(«one»=>!«one».agent?.disabled),[«all»]);«inStep»({isLoadingAgentScripts:«loading»,agentScriptsError:«error»,selectedAgentScriptItem:«chosen»,enabledCustomizations:«offered»,setSelectedAgentScriptItem:«choose»});«askedFor»({initialCustomSubagent:«asked»,agentCustomizations:«all»,setSelectedAgentScriptItem:«choose»});var{registerOpenSelector:«register»}=«modal»();(0,«React».useEffect)(()=>{var «handle»=«register»(()=>{«again»()});return()=>«handle».dispose()},[«register»,«again»]);«input»=«shown»({agentScriptsEnabled:«enabled»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»,hideAgentSelectorIfEmpty:«input»?.hideAgentSelectorIfEmpty,agentCustomizationsCount:«all».length,selectedAgentScriptItem:«chosen»})?«React».createElement(«picker»,{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,globalScriptsDir:«global»,workspaceScriptsDir:«workspace»,agentCustomizations:«all»,refreshAgentScripts:«again»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»}):void 0;`
-	agentScreenReturn = `return «React».createElement(«React».Fragment`
+	agentScreenStart      = `«screen»=()=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),`
+	agentScreenKeys       = `«keyboard»=«useTouch»();«keyboard»=«useKeyboard»(«keyboard»)`
+	agentScreenTail       = `«tips»=«app».get("tipCards"),«input»=«app».get("inputComponent");`
+	agentPickerRunStart   = `var{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,`
+	agentPickerRunFetch   = `globalScriptsDir:«global»,workspaceScriptsDir:«workspace»}=«agents»(),{data:«data»,refetch:«again»,isLoading:«loading»,error:«error»}=«fetch»(`
+	agentPickerRunChoice  = `),«all»=(0,«React».useMemo)(()=>«data»?.agentCustomizations??[],[«data»]),«offered»=(0,«React».useMemo)(()=>«all».filter(«one»=>!«one».agent?.disabled),[«all»]);«inStep»({isLoadingAgentScripts:«loading»,agentScriptsError:«error»,selectedAgentScriptItem:«chosen»,enabledCustomizations:«offered»,setSelectedAgentScriptItem:«choose»});«askedFor»({initialCustomSubagent:«asked»,agentCustomizations:«all»,setSelectedAgentScriptItem:«choose»});`
+	agentPickerRunRefresh = `var{registerOpenSelector:«register»}=«modal»();(0,«refreshReact».useEffect)(()=>{var «handle»=«register»(()=>{«refreshAgain»()});return()=>«handle».dispose()},[«register»,«refreshAgain»]);`
+	agentPickerRunEnd     = `«input»=«shown»({agentScriptsEnabled:«enabled»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»,hideAgentSelectorIfEmpty:«input»?.hideAgentSelectorIfEmpty,agentCustomizationsCount:«all».length,selectedAgentScriptItem:«chosen»})?«React».createElement(«picker»,{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,globalScriptsDir:«global»,workspaceScriptsDir:«workspace»,agentCustomizations:«all»,refreshAgentScripts:«again»,isLoadingAgentScripts:«loading»,agentScriptsError:«error»}):void 0;`
+	agentScreenReturn     = `return «React».createElement(«React».Fragment`
 )
 
 // The names the screen's start declares. keyboard is declared only by a start that reads it.
@@ -63,6 +69,8 @@ var agentScreen = func() (s struct {
 	b.code(agentScreenStart)
 	b.raw(`\s*(?:`)
 	b.code(agentScreenKeys)
+	b.raw(`(?:\s*!==\s*void\s+0)?\s*`)
+	b.code(`;var`)
 	b.raw(`\s+)?`)
 	b.code(agentScreenTail)
 	s.between = b.open()
@@ -70,7 +78,19 @@ var agentScreen = func() (s struct {
 	b.close()
 	b.close()
 	s.run = b.open()
-	b.code(agentPickerRun)
+	b.code(agentPickerRunStart)
+	b.raw(`(?:\s*`)
+	b.code(`getAgentScripts:«read»,`)
+	b.raw(`)?\s*`)
+	b.code(agentPickerRunFetch)
+	b.raw(`(?:\s*`)
+	b.code(`{fire:«read»}`)
+	b.raw(`)?\s*`)
+	b.code(agentPickerRunChoice)
+	b.raw(`(?:\s*`)
+	b.code(agentPickerRunRefresh)
+	b.raw(`)?\s*`)
+	b.code(agentPickerRunEnd)
 	b.close()
 	s.after = b.open()
 	b.raw(`\s*`)
@@ -107,6 +127,10 @@ func agentScreenIsKnown(groups [][]byte) bool {
 		return false
 	}
 	name := func(role string) string { return string(groups[agentScreen.names[role][0]]) }
+	// The refresh on opening the selector, which 2.35 dropped, reads React and the refetch of the run's own.
+	if groups[agentScreen.names["refreshReact"][0]] != nil && (name("refreshReact") != name("React") || name("refreshAgain") != name("again")) {
+		return false
+	}
 	declared := map[string]bool{}
 	for _, role := range agentScreenDeclares {
 		if groups[agentScreen.names[role][0]] == nil {

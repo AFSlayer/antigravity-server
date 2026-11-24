@@ -53,7 +53,7 @@ var (
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c,description:([a-zA-Z0-9_$]+),badge:([a-zA-Z0-9_$]+)[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy [pP]ath"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":(?:([a-zA-Z0-9_$]+,className:"[^"]+","data-tooltip-id":[a-zA-Z0-9_$]+\},[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{name:"(edit_note|delete)"))?`)
-	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[([pq]),([a-zA-Z0-9_$]+)\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)([tu]=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,[ut]=[a-zA-Z0-9_$]+\|\|b;)`)
+	settingsDocRowEditorRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\{title:a,displayPath:b,copyPath:c,description:([a-zA-Z0-9_$]+),content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n\}\)\{var \[([pq]),([a-zA-Z0-9_$]+)\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)([a-zA-Z0-9_$]+=!![a-zA-Z0-9_$]+\|\|!!f\|\|!!g,[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\|\|b;)`)
 	// The statement is matched from where the one before it ends, so that what it is removed from still reads. Its
 	// repeats are bounded so that a bundle without it is searched only near each "Customizations".
 	settingsCustomizationsScreenRe   = regexp.MustCompile(`([;{}]\s{0,8})[a-zA-Z0-9_$]{1,64}\.get\(\s{0,8}"plugins"\s{0,8}\)\s{0,8}&&\s{0,8}\(\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}=\s{0,8}([a-zA-Z0-9_$]{1,64})\.filter\(\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}=>\s{0,8}([a-zA-Z0-9_$]{1,64})\s{0,8}!==\s{0,8}"Customizations"\s{0,8}\)\s{0,8}\)\s{0,8};`)
@@ -150,7 +150,7 @@ var (
 	scrollbarTrackClickRe                 = regexp.MustCompile(`(Math\.min\(\s*[a-zA-Z0-9_$]+,\s*Math\.max\(\s*0,\s*[a-zA-Z0-9_$]+-\s*[a-zA-Z0-9_$]+/2\)\)/\s*[a-zA-Z0-9_$]+\*\s*[a-zA-Z0-9_$]+,\s*[a-zA-Z0-9_$]+\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*)([a-zA-Z0-9_$]+)`)
 	scrollbarTimelineRe                   = regexp.MustCompile(`(function\s+[a-zA-Z0-9_$]+\(\)\{var\s+[a-zA-Z0-9_$]+=\s*globalThis\.ScrollTimeline;\s*return\s+typeof\s+[a-zA-Z0-9_$]+===\s*"function")(\?\s*[a-zA-Z0-9_$]+:\s*null\})`)
 	scrollbarDragRe                       = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\s*([a-zA-Z0-9_$]+)\.current\.startScrollPos\s*\+\s*\(\s*\(\s*([a-zA-Z0-9_$]+)\s*\?\s*[a-zA-Z0-9_$]+\.clientX\s*:\s*([a-zA-Z0-9_$]+)\.clientY\s*\)\s*-\s*[a-zA-Z0-9_$]+\.current\.startCoord\s*\)\s*/\s*([a-zA-Z0-9_$]+)\s*\*\s*([a-zA-Z0-9_$]+(?:\.current)?)\.maxScrollPos\s*,\s*[a-zA-Z0-9_$]+\s*\?\s*([a-zA-Z0-9_$]+)\.scrollLeft=\s*[a-zA-Z0-9_$]+\s*:\s*[a-zA-Z0-9_$]+\.scrollTop=\s*[a-zA-Z0-9_$]+\s*,`)
-	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}`)
+	websocketTransportDefaultRe           = regexp.MustCompile(`(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=new URLSearchParams\((?:window\.)?location\.search\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true")(?:(\?"explicit":"off")(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="3"\?"hub":"off"|(:[a-zA-Z0-9_$]+\.get\("wsTransport"\))==="2")\}|(function [a-zA-Z0-9_$]+\(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=\(?new URLSearchParams\((?:window\.)?location\.search\)\)?\.get\("useWebSocket"\);return [a-zA-Z0-9_$]+!==null\?[a-zA-Z0-9_$]+==="true"\?"explicit":"off":)"default"\}`)
 	websocketLivenessProbeRe              = regexp.MustCompile(`(type:\s*"ping"\s*\}\s*\)\s*\)\s*;\s*var\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\.inboundFrameSeq\s*;\s*[a-zA-Z0-9_$]+\.probeTimer\s*=\s*setTimeout\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?no frames for \d+ms and ping unanswered; closing socket[\s\S]{0,200}?\}\s*,\s*)(\d+(?:E\d+)?)(\)\s*\}\s*else\s+[a-zA-Z0-9_$]+\s*\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}\s*,\s*\d+(?:E\d+)?\s*\)\s*\})`)
 	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([de]),c=[de];try\{let\s+([de])=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[de]\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([de]\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
 	authStartupRetryRe                    = regexp.MustCompile(
@@ -1315,7 +1315,7 @@ func All() []Patch {
 			// A bundle with this paging code that the pattern does not fit is reported: 2.34's was not, and was taken
 			// as one without it.
 			Precondition: func(b []byte) bool { return bytes.Contains(b, []byte("oppositeDirectionCooldownMs")) },
-			Accept:       func(g [][]byte) bool { return sameNames(g, pagingTrimWaits234.names) },
+			Accept:       pagingTrimWaitsIsKnown,
 			Replace:      `${1}else if(!${2}&&${3}.startIndex>${4}.startIndex&&window.__agyDeferTrim?.())${5}(250);else if(${3}.startIndex<${4}.startIndex&&window.__agyDeferGrow?.())${5}(100);else{`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				if g[1] == nil {
@@ -1463,7 +1463,12 @@ func All() []Patch {
 			// no second group and is handled by ReplaceMatch. Group 4 only exists
 			// in the older spelling.
 			Replace: `${1}${2}${3}==="1"?"off":"explicit"}`,
+			// 2.35 has no wsTransport parameter and defaults to "default", which is the hub's dial timeout and fetch
+			// fallback under another name; the parameter is read again so that wsTransport=1 still turns it off.
 			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[5] != nil {
+					return string(g[5]) + `new URLSearchParams(window.location.search).get("wsTransport")==="1"?"off":"explicit"}`
+				}
 				if g[4] != nil {
 					return string(g[1]) + string(g[4]) + `!=="1"}`
 				}

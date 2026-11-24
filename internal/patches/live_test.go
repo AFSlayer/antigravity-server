@@ -23,9 +23,9 @@ var findBarInputRe = regexp.MustCompile(`"input",\s*\{[^{}]*"aria-label":\s*"Fin
 
 // userMessageButtonsOnTouchRe and autoscrollPhysicalDistanceRe match what 2.31 does itself in place of
 // mobile-user-message-actions and autoscroll-distance-fix: user message buttons that only hide where the screen can
-// hover, in their container up to 2.32 and in user-message-actions since 2.33, and a hook that measures the distance to
-// the bottom from the position.
-var userMessageButtonsOnTouchRe = regexp.MustCompile(`(?:user-input-buttons-container[^"]*"|"data-testid":\s*"user-message-actions"[^;]{0,300}?)\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
+// hover, in their container up to 2.32 and in user-message-actions since 2.33, where 2.35 puts the classes of an inline
+// layout before them, and a hook that measures the distance to the bottom from the position.
+var userMessageButtonsOnTouchRe = regexp.MustCompile(`(?:user-input-buttons-container[^"]*"|"data-testid":\s*"user-message-actions"[^;]{0,800}?)\s*,\s*"can-hover:opacity-0 can-hover:pointer-events-none`)
 var autoscrollPhysicalDistanceRe = regexp.MustCompile(`=Math\.max\(0,\s*[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight\),\s*[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+-[a-zA-Z0-9_$]+<=[a-zA-Z0-9_$]+,`)
 
 // viewportInnerRe matches the one element the bundle puts inside the conversation's viewport, which is the first thing
@@ -37,8 +37,9 @@ var viewportInnerRe = regexp.MustCompile(`"data-testid":\s*"autoscroll-viewport"
 var rowsFromPropRe = regexp.MustCompile(`getSnapshotBeforeUpdate\([a-zA-Z0-9_$]+\)\s*\{[^{}]{0,300}?\.getAnchorCandidates\b`)
 
 // promptWrapperRe matches the classes of the element around a conversation's prompt, written as one string or as the
-// first two of several, with the bottom padding it has had: pb-2 up to 2.28 and pb-4 since.
-var promptWrapperRe = regexp.MustCompile(`relative w-full px-4 pb-[24](?:",\s*"| )flex-shrink-0`)
+// first two of several, with the bottom padding it has had: pb-2 up to 2.28 and pb-4 since. Since 2.35 the padding is a
+// class of its own, pb-4 with the keyboard down and a smaller pb-1 of the bundle's own with it up.
+var promptWrapperRe = regexp.MustCompile(`relative w-full px-4 pb-[24](?:",\s*"| )flex-shrink-0|relative w-full px-4",\s*[a-zA-Z0-9_$]+\?"pb-1":"pb-4",\s*"flex-shrink-0`)
 
 // homePromptWrapperRe matches the classes of the element around the home screen's prompt: one string up to 2.33, and
 // since 2.34 a template that has smaller padding while the keyboard is up, where there is no home indicator to keep
