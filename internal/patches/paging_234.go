@@ -8,7 +8,9 @@ package patches
 // The paging's update decision: whether to wait before asking for the new window, which the trim and the growth above
 // are held at as before. grows is whether rows are added at the top, growsEnd whether they are at the bottom. Since
 // 2.35 a window it waits for first clears what is shown of loads at the ends it does not grow, with the two names
-// negated; those are written as roles of their own, which pagingTrimWaitsIsKnown holds to grows and growsEnd.
+// negated; those are written as roles of their own, which pagingTrimWaitsIsKnown holds to grows and growsEnd. The waits
+// added here leave that status as it is: they ask again in a moment, and the decision clears it once it no longer
+// waits for the tracker, so what is shown of a finished load stays for that moment longer.
 var pagingTrimWaits234 = func() (s struct {
 	pattern string
 	names   map[string][]int

@@ -102,3 +102,28 @@ func TestAntigravity235PatchesTolerateLineBreaks(t *testing.T) {
 		}
 	}
 }
+
+// The refresh on opening the selector, which 2.34 has and 2.35 dropped, is taken only where it reads the screen's
+// React and refetches through the run's own refetch.
+func TestAgentScreenRefreshNames(t *testing.T) {
+	known := func(src string) bool {
+		loc := agentScreen.re.FindStringSubmatchIndex(src)
+		return loc != nil && agentScreenIsKnown(submatches([]byte(src), loc))
+	}
+	if !known(v234AgentScreen) {
+		t.Fatal("the 2.34 screen is not taken")
+	}
+	refresh := `(0,E.useEffect)(()=>{var D=B(()=>{x()});`
+	for name, other := range map[string]string{
+		"another React":   `(0,F.useEffect)(()=>{var D=B(()=>{x()});`,
+		"another refetch": `(0,E.useEffect)(()=>{var D=B(()=>{y()});`,
+	} {
+		changed := strings.Replace(v234AgentScreen, refresh, other, 1)
+		if changed == v234AgentScreen {
+			t.Fatalf("%s: nothing was changed", name)
+		}
+		if known(changed) {
+			t.Errorf("a refresh with %s is taken", name)
+		}
+	}
+}
