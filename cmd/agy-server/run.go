@@ -909,7 +909,8 @@ func (r *runner) resetPassword(creds *auth.Credentials) (string, error) {
 const desktopUnsupportedURL = ui.DesktopUnsupportedURL
 
 // localTokenMissing reports whether local mode found the language server without the token every request to it
-// needs. Server mode always has one: it passes its own, or reads the saved one for a server it reuses.
+// needs. Server mode is left out: it starts its own server with a token, and for a running one it reuses it fills in
+// the token it saved before, which is wrong when that server was started by the desktop app.
 func localTokenMissing(mode runMode, instance *lsproc.Instance) bool {
 	return mode == modeLocal && instance != nil && instance.CSRFToken == ""
 }

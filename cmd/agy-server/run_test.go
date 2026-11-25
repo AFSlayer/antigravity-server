@@ -784,7 +784,8 @@ func TestPrintReadyExplainsMissingToken(t *testing.T) {
 	}
 }
 
-// Only local mode can find a language server without its token: server mode passes its own or reads the saved one.
+// The notice is for local mode only. Server mode starts its own language server with a token, or fills in the saved
+// one for a running server it reuses, so it never reports the token as missing.
 func TestLocalTokenMissing(t *testing.T) {
 	for _, tc := range []struct {
 		mode     runMode
