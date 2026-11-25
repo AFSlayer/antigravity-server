@@ -136,15 +136,20 @@ func (c *checklist) checkRunning() *lsproc.Instance {
 	}
 
 	c.ok("Language server running (pid %d, port %d)", instance.PID, instance.Port)
-	if instance.CSRFToken == "" {
-		c.bad("Language server has no CSRF token, requests will be rejected")
-		c.note("If the Antigravity desktop app started it: since 2.34.0 the app keeps the token from other programs, so local mode cannot use it")
-		c.note("See " + desktopUnsupportedURL)
-		c.note("If something else started it, restart it through agy-server so a token is passed")
-	} else {
-		c.ok("CSRF token is present")
-	}
+	c.checkToken(instance)
 	return instance
+}
+
+// checkToken reports whether agy-server can read the token every request to the language server needs.
+func (c *checklist) checkToken(instance *lsproc.Instance) {
+	if instance.CSRFToken != "" {
+		c.ok("CSRF token is present")
+		return
+	}
+	c.bad("Language server has no CSRF token, requests will be rejected")
+	c.note("If the Antigravity desktop app started it: since 2.34.0 the app keeps the token from other programs, so agy-server cannot use it")
+	c.note("See " + desktopUnsupportedURL)
+	c.note("If something else started it, stop it so agy-server starts its own with a token")
 }
 
 func (c *checklist) checkPatches(cfg *config.Config, instance *lsproc.Instance) {

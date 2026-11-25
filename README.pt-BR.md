@@ -32,7 +32,7 @@ Os dois não são exclusivos. O `agy-server` apenas habilita a mesma configuraç
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interface web mobile** | O bundle de desktop como está | **61 patches de runtime** para toque |
+| **Interface web mobile** | O bundle de desktop como está | **Mais de 100 patches de runtime** para toque |
 | **Controle de conversas** | Sem excluir, fixar ou arquivar no celular | **Excluir, Renomear, Fixar e Arquivar** pelo menu kebab e pela barra de título |
 | **Navegação de projetos** | Sem botão `(+)`; troca pelo input inferior | **Botão `(+)` restaurado** no cabeçalho dos projetos |
 | **Ações de mensagem** | Desfazer e Copiar escondidos sob hover | **Desfazer (`↶`) e Copiar (`📋`)** sempre visíveis no toque |
@@ -70,10 +70,10 @@ Ao acessar o servidor pela primeira vez:
 
 ---
 
-### Opção 2: Modo Desktop Companion (macOS, Windows, Linux Desktop)
+### Modo Desktop Companion: não funciona mais
 
 > [!WARNING]
-> **Não é compatível com o aplicativo de desktop do Antigravity 2.34.0 ou posterior.** Desde a 2.34.0, o aplicativo não compartilha mais com outros programas o token de acesso do seu servidor de linguagem, então o `agy-server` não consegue se conectar e a interface web fica em branco. Veja [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+> **O modo desktop companion não funciona mais.** Desde a 2.34.0, o aplicativo de desktop do Antigravity não compartilha com outros programas o token de acesso do seu servidor de linguagem e se atualiza sozinho, então o `agy-server` não consegue se conectar e a interface web fica em branco. Veja [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
 >
 > Para usar no celular o Antigravity do seu desktop, use o acesso remoto oficial do Google em `antigravity.google.com`. Se quiser os patches para celular, rode o `agy-server` em um servidor, como na Opção 1.
 
@@ -200,7 +200,7 @@ server {
 
 ## Patches de Experiência Mobile (UX)
 
-O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém 61 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
+O pacote web servido pelo Antigravity — seja pela ponte remota oficial ou pelo `agy-server` — é desenvolvido apenas para desktop. O `agy-server` reescreve o pacote dinamicamente em tempo real. O registro em [`internal/patches/registry.go`](internal/patches/registry.go) contém mais de 100 patches responsáveis por experiência ao toque, uploads, navegação, autenticação, estabilidade de conexão e invalidação de cache. Amostra de patches:
 
 | Categoria | Comportamento do Pacote Desktop | Patch do agy-server |
 | :--- | :--- | :--- |
@@ -227,7 +227,7 @@ Execute `agy-server doctor` para verificar o status de todos os patches em rela�
 ## Comandos CLI
 
 ```
-agy-server                      Modo desktop companion, sem suporte desde o Antigravity 2.34
+agy-server                      Modo desktop companion, que não funciona mais
 agy-server serve                Executa como daemon em servidor headless
 agy-server update               Verifica e atualiza o language_server oficial
 agy-server doctor               Diagnostica o estado do sistema e patches

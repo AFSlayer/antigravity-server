@@ -32,7 +32,7 @@ Googleは`antigravity.google.com`で公式のリモートブリッジを提供�
 
 | | 公式リモート（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **モバイルWeb UI** | デスクトップバンドルそのまま | タッチ向け**ランタイムパッチ61件** |
+| **モバイルWeb UI** | デスクトップバンドルそのまま | タッチ向け**ランタイムパッチ100件以上** |
 | **会話管理** | モバイルで削除・ピン留め・アーカイブ不可 | ケバブメニューとタイトルバーから**削除、名前変更、ピン留め、アーカイブ** |
 | **プロジェクト移動** | プロジェクト`(+)`ボタンなし；下部入力欄で切り替え | プロジェクト一覧ヘッダーに**`(+)`ボタンを復元** |
 | **メッセージアクション** | Undo・Copyがホバーの裏に隠れる | タッチで**Undo（`↶`）・Copy（`📋`）を常時表示** |
@@ -70,10 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ---
 
-### オプション2: デスクトップコンパニオン（macOS、Windows、Linuxデスクトップ）
+### デスクトップコンパニオン：動作しなくなりました
 
 > [!WARNING]
-> **Antigravityデスクトップアプリ2.34.0以降には対応していません。** 2.34.0からデスクトップアプリが言語サーバーのアクセストークンを他のプログラムに渡さなくなったため、`agy-server`は接続できず、Web UIは空白のままになります。詳しくは[#98](https://github.com/AFSlayer/antigravity-server/issues/98)をご覧ください。
+> **デスクトップコンパニオンは動作しなくなりました。** 2.34.0からAntigravityデスクトップアプリは言語サーバーのアクセストークンを他のプログラムに渡さず、アプリは自動で更新されるため、`agy-server`は接続できず、Web UIは空白のままになります。詳しくは[#98](https://github.com/AFSlayer/antigravity-server/issues/98)をご覧ください。
 >
 > デスクトップのAntigravityをスマートフォンから使うには、Google公式のリモート機能 `antigravity.google.com` をご利用ください。モバイル向けパッチが必要な場合は、オプション1のようにサーバーで`agy-server`を実行してください。
 
@@ -238,7 +238,7 @@ Antigravity内部には`language_server`という独立バイナリが含まれ�
 
 ## モバイルUXパッチ詳細
 
-公式リモートブリッジや`agy-server`経由で提供されるWebバンドルは本来デスクトップ向けです。`agy-server`は[`internal/patches/registry.go`](internal/patches/registry.go)に定義されたパッチにより、通信経路上で動的にバンドルを書き換えて最適化します。レジストリには61件のパッチが登録されており、タッチUX、アップロード、ナビゲーション、サインイン、接続安定性、キャッシュ無効化などを担当しています。代表的なパッチ一覧：
+公式リモートブリッジや`agy-server`経由で提供されるWebバンドルは本来デスクトップ向けです。`agy-server`は[`internal/patches/registry.go`](internal/patches/registry.go)に定義されたパッチにより、通信経路上で動的にバンドルを書き換えて最適化します。レジストリには100件を超えるパッチが登録されており、タッチUX、アップロード、ナビゲーション、サインイン、接続安定性、キャッシュ無効化などを担当しています。代表的なパッチ一覧：
 
 | 分類 | デスクトップバンドルのデフォルト動作 | agy-server パッチ適用後の動作 |
 | :--- | :--- | :--- |
@@ -265,7 +265,7 @@ Antigravity内部には`language_server`という独立バイナリが含まれ�
 ## CLIコマンド
 
 ```
-agy-server                      デスクトップコンパニオンモード、Antigravity 2.34以降は非対応
+agy-server                      デスクトップコンパニオンモード、動作しなくなりました
 agy-server serve                ヘッドレスサーバーデーモンとして実行
 agy-server update               Google公式最新language_serverの確認と更新
 agy-server doctor               パッチ整合性およびシステム状態の診断

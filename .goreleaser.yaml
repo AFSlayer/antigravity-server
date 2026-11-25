@@ -82,9 +82,10 @@ release:
     curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install.sh | bash
     ```
 
-    **Desktop companion: not supported with the Antigravity desktop app 2.34.0 or later.**
-    Since 2.34.0 the desktop app keeps its language server's access token from other
-    programs, so `agy-server` cannot connect to it and the web UI stays blank. To reach
+    **The desktop companion no longer works.**
+    Since 2.34.0 the Antigravity desktop app keeps its language server's access token
+    from other programs, and the app updates itself, so `agy-server` cannot connect to
+    it and the web UI stays blank. To reach
     the Antigravity on your desktop from a phone, use Google's official remote at
     `antigravity.google.com`. See [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
 

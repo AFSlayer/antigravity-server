@@ -158,9 +158,11 @@
         <p class="error" id="error" role="alert"></p>
       </form>
 
+      {{ if .QRTip }}
       <p class="hint">
         Tip: scan the QR code shown by <code>agy-server</code> to sign in without typing.
       </p>
+      {{ end }}
     </main>
 
     <script>

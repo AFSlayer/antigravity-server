@@ -32,7 +32,7 @@
 
 | | 공식 원격 (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **모바일 웹 UI** | 데스크톱 번들 그대로 | 터치용 **런타임 패치 61개** |
+| **모바일 웹 UI** | 데스크톱 번들 그대로 | 터치용 **런타임 패치 100개 이상** |
 | **대화 관리** | 모바일에서 삭제·고정·보관 불가 | 케밥 메뉴와 타이틀바에서 **삭제, 이름 변경, 고정, 보관** |
 | **프로젝트 이동** | 프로젝트 `(+)` 버튼 없음; 하단 입력창으로 전환 | 프로젝트 목록 헤더에 **`(+)` 버튼 복원** |
 | **메시지 액션** | 되돌리기·복사가 호버 뒤에 숨음 | 터치에서 **되돌리기(`↶`)·복사(`📋`) 상시 노출** |
@@ -70,10 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ---
 
-### 옵션 2: 데스크톱 컴패니언 (macOS, Windows, Linux 데스크톱)
+### 데스크톱 컴패니언: 더 이상 동작하지 않음
 
 > [!WARNING]
-> **Antigravity 데스크톱 앱 2.34.0 이상에서는 지원하지 않습니다.** 2.34.0부터 데스크톱 앱이 언어 서버의 접근 토큰을 다른 프로그램에 내주지 않아서 `agy-server`가 연결할 수 없고, 웹 UI가 빈 화면으로 남습니다. 자세한 내용은 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)을 참고하세요.
+> **데스크톱 컴패니언은 더 이상 동작하지 않습니다.** 2.34.0부터 Antigravity 데스크톱 앱이 언어 서버의 접근 토큰을 다른 프로그램에 내주지 않고, 앱은 스스로 업데이트되기 때문에 `agy-server`가 연결할 수 없어 웹 UI가 빈 화면으로 남습니다. 자세한 내용은 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)을 참고하세요.
 >
 > 데스크톱의 Antigravity를 스마트폰에서 쓰려면 Google 공식 원격 기능 `antigravity.google.com`을 사용하세요. 모바일 패치가 필요하면 옵션 1처럼 서버에서 `agy-server`를 실행하세요.
 
@@ -238,7 +238,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 
 ## 모바일 UX 패치 상세
 
-공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 61개가 등록되어 있으며, 터치 UX 개선, 대용량 업로드, 내비게이션, 로그인, 연결 안정성 및 캐시 무효화를 담당합니다. 그중 일부:
+공식 원격 브릿지든 `agy-server`든, 안티그래비티가 내려주는 웹 번들은 데스크톱용 하나입니다. `agy-server`는 [`internal/patches/registry.go`](internal/patches/registry.go)의 패치로 그 번들을 지나가는 중에 고쳐 씁니다. 레지스트리에는 100개가 넘는 패치가 등록되어 있으며, 터치 UX 개선, 대용량 업로드, 내비게이션, 로그인, 연결 안정성 및 캐시 무효화를 담당합니다. 그중 일부:
 
 | 분류 | 데스크톱 번들 기본 동작 | agy-server 패치 동작 |
 | :--- | :--- | :--- |
@@ -265,7 +265,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 ## CLI 명령어
 
 ```
-agy-server                      데스크톱 컴패니언 모드, Antigravity 2.34부터 지원 안 함
+agy-server                      데스크톱 컴패니언 모드, 더 이상 동작하지 않음
 agy-server serve                헤드리스 서버 데몬으로 백그라운드 구동
 agy-server update               구글 공식 최신 language_server 확인 및 업그레이드
 agy-server doctor               패치 무결성 및 시스템 상태 진단

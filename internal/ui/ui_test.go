@@ -525,3 +525,18 @@ func TestLocalPageExplainsMissingToken(t *testing.T) {
 		t.Fatalf("notice shown although the token was found")
 	}
 }
+
+// The login page suggests the QR code only where one is shown: the control panel of local mode.
+func TestLoginPageQRTip(t *testing.T) {
+	render := func(qrTip bool) string {
+		rec := httptest.NewRecorder()
+		LoginPage(qrTip)(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		return rec.Body.String()
+	}
+	if !strings.Contains(render(true), "scan the QR code") {
+		t.Fatal("QR tip missing where a QR code is shown")
+	}
+	if strings.Contains(render(false), "scan the QR code") {
+		t.Fatal("QR tip shown where no QR code is")
+	}
+}

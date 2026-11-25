@@ -32,7 +32,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 
 | | Official remote (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Mobile web UI** | The desktop bundle as-is | **61 named runtime patches** for touch |
+| **Mobile web UI** | The desktop bundle as-is | **100+ named runtime patches** for touch |
 | **Conversation control** | No delete, pin, or archive on mobile | **Delete, Rename, Pin, Archive** from the kebab menu and titlebar |
 | **Project navigation** | No project `(+)` button; switch via the bottom input | **Restored `(+)` button** in project list headers |
 | **Message actions** | Undo and Copy live behind hover states | **Undo (`↶`) and Copy (`📋`)** always visible on touch |
@@ -70,10 +70,10 @@ When accessing your server for the first time:
 
 ---
 
-### Option 2: Desktop Companion (macOS, Windows, Linux Desktop)
+### Desktop Companion: No Longer Works
 
 > [!WARNING]
-> **Not supported with the Antigravity desktop app 2.34.0 or later.** Since 2.34.0 the desktop app keeps its language server's access token from other programs, so `agy-server` cannot connect to it and the web UI stays blank. See [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+> **The desktop companion no longer works.** Since 2.34.0 the Antigravity desktop app keeps its language server's access token from other programs, and the app updates itself, so `agy-server` cannot connect to it and the web UI stays blank. See [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
 >
 > To reach the Antigravity on your desktop from a phone, use Google's official remote at `antigravity.google.com`. For the mobile patches, run `agy-server` on a server as in Option 1.
 
@@ -238,7 +238,7 @@ Antigravity includes a standalone binary named `language_server`. When run with 
 
 ## Mobile UX Patches
 
-The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds 61 patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
+The web bundle Antigravity serves — through the official remote bridge or through `agy-server` — is the desktop one. `agy-server` rewrites it in flight. The registry in [`internal/patches/registry.go`](internal/patches/registry.go) holds over a hundred patches, with touch UX, uploads, navigation, sign-in, connection health and cache busting. A sample:
 
 | Category | Desktop Bundle Behavior | agy-server Patch |
 | :--- | :--- | :--- |
@@ -265,7 +265,7 @@ Run `agy-server doctor` to inspect the status of all patches against your instal
 ## CLI Commands
 
 ```
-agy-server                      Desktop companion mode, unsupported since Antigravity 2.34
+agy-server                      Desktop companion mode, which no longer works
 agy-server serve                Run as a headless server daemon
 agy-server update               Check and update language_server to latest upstream
 agy-server doctor               Verify patch integrity and system status

@@ -404,7 +404,7 @@ func (r *runner) start(runCtx context.Context) error {
 		Sessions:     r.authState.sessions,
 		Trusted:      trusted,
 		PublicURL:    r.cfg.PublicURL,
-		LoginPage:    ui.LoginPage(),
+		LoginPage:    ui.LoginPage(r.mode == modeLocal && !localTokenMissing(r.mode, instance)),
 		IsPublic:     assets.IsPublicPath,
 		AllowSidecar: p.ValidateSidecarCapability,
 	})
@@ -541,10 +541,10 @@ func (r *runner) start(runCtx context.Context) error {
 	}
 
 	statusCtx, statusCancel := context.WithTimeout(runCtx, 5*time.Second)
-	signedIn := coordinator.SignedIn(statusCtx)
+	needsSignIn := !tokenMissing && coordinator.NeedsSignIn(statusCtx)
 	statusCancel()
 
-	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn, tokenMissing)
+	r.printReady(publicPort, controlURL, r.announceGenerated, needsSignIn, tokenMissing)
 
 	if r.mode == modeLocal && controlURL != "" {
 		go openBrowser(controlURL)
@@ -663,6 +663,9 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 	filter := lsproc.Filter{BinaryPath: binary}
 
 	if instance, err := lsproc.FindMatching(filter); err == nil {
+		if err := reusableInstance(binary, instance); err != nil {
+			return nil, err
+		}
 		info("Reusing the language server already running from %s", dim(binary))
 		r.reusedPID = instance.PID
 		r.syncInstanceCSRFToken(instance)
@@ -813,20 +816,29 @@ func (r *runner) loadOrCreateCSRFToken() string {
 	return token
 }
 
+// reusableInstance refuses a running language server whose command line carries no token. agy-server passes one to
+// every server it starts, so such a server was started by something else, most likely the desktop app, which has kept
+// its token from other programs since Antigravity 2.34.0, and every request to it would be rejected.
+func reusableInstance(binary string, instance *lsproc.Instance) error {
+	if instance.CSRFToken != "" {
+		return nil
+	}
+	return errWithHints(
+		fmt.Sprintf("The language server already running from %s has no token agy-server can use.", binary),
+		"It was most likely started by the Antigravity desktop app, which keeps the token from other programs since 2.34.0.",
+		"Quit the desktop app and run 'agy-server serve' again, so agy-server starts a language server of its own.",
+		"See "+desktopUnsupportedURL)
+}
+
+// syncInstanceCSRFToken saves the token of a running server it reuses, so the next start passes the same one.
 func (r *runner) syncInstanceCSRFToken(instance *lsproc.Instance) {
-	if instance == nil {
+	if instance == nil || instance.CSRFToken == "" {
 		return
 	}
 	tokenPath := r.cfg.Path("csrf-token.txt")
-	if instance.CSRFToken != "" {
-		if data, err := os.ReadFile(tokenPath); err != nil || strings.TrimSpace(string(data)) != instance.CSRFToken {
-			if err := os.WriteFile(tokenPath, []byte(instance.CSRFToken+"\n"), 0o600); err != nil {
-				warn("could not update csrf token from running instance: %v", err)
-			}
-		}
-	} else {
-		if data, err := os.ReadFile(tokenPath); err == nil {
-			instance.CSRFToken = strings.TrimSpace(string(data))
+	if data, err := os.ReadFile(tokenPath); err != nil || strings.TrimSpace(string(data)) != instance.CSRFToken {
+		if err := os.WriteFile(tokenPath, []byte(instance.CSRFToken+"\n"), 0o600); err != nil {
+			warn("could not update csrf token from running instance: %v", err)
 		}
 	}
 }
@@ -909,17 +921,18 @@ func (r *runner) resetPassword(creds *auth.Credentials) (string, error) {
 const desktopUnsupportedURL = ui.DesktopUnsupportedURL
 
 // localTokenMissing reports whether local mode found the language server without the token every request to it
-// needs. Server mode is left out: it starts its own server with a token, and for a running one it reuses it fills in
-// the token it saved before, which is wrong when that server was started by the desktop app.
+// needs. Server mode never runs without one: it starts its own server with a token, and refuses to reuse a running one
+// that has none.
 func localTokenMissing(mode runMode, instance *lsproc.Instance) bool {
 	return mode == modeLocal && instance != nil && instance.CSRFToken == ""
 }
 
-// printReady prints the addresses, the password and what is still needed. tokenMissing is set when local mode found
-// the language server without the token every request to it needs: the desktop app has kept it from other programs
-// since 2.34.0, so the web UI would stay blank. A sign-in check cannot be answered without it either, so the reason is
-// printed instead of the sign-in hint.
-func (r *runner) printReady(publicPort int, controlURL, generated string, signedIn, tokenMissing bool) {
+// printReady prints the addresses, the password and what is still needed. needsSignIn is set only when the language
+// server answered that it holds no credentials, so a check that timed out or failed asks for nothing. tokenMissing is
+// set when local mode found the language server without the token every request to it needs: the desktop app has
+// kept it from other programs since 2.34.0, so the web UI would stay blank, and the reason is printed instead of the
+// sign-in and QR hints.
+func (r *runner) printReady(publicPort int, controlURL, generated string, needsSignIn, tokenMissing bool) {
 	fmt.Println()
 	step("%s ready", bold(r.mode.String()))
 	fmt.Println()
@@ -954,7 +967,7 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 		info("%s Since 2.34.0 the desktop app keeps the token from other programs, so local mode cannot use it.", dim("→"))
 		info("%s Use Google's official remote at antigravity.google.com, or run 'agy-server serve' on a server.", dim("→"))
 		info("%s %s", dim("→"), cyan(desktopUnsupportedURL))
-	case !signedIn:
+	case needsSignIn:
 		fmt.Println()
 		warn("Antigravity is not signed in to Google yet.")
 		info("%s Open %s and follow the three steps.", dim("→"),

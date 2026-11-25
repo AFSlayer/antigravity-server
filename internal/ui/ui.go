@@ -83,13 +83,15 @@ func patchWarning(report patches.Report) string {
 		len(missing))
 }
 
-// LoginPage renders the password prompt.
-func LoginPage() auth.LoginPageFunc {
+// LoginPage renders the password prompt. qrTip adds the hint to scan the control panel's QR code instead, which only
+// local mode shows, and only when it can reach the language server.
+func LoginPage(qrTip bool) auth.LoginPageFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = tmpl.ExecuteTemplate(w, "login.html", map[string]any{
 			"LoginAPIPath": auth.LoginAPIPath,
+			"QRTip":        qrTip,
 		})
 	}
 }
