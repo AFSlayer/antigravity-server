@@ -20,6 +20,12 @@ function Write-Fail($message) {
 Write-Host ""
 Write-Host "  Antigravity Server" -ForegroundColor White
 Write-Host ""
+Write-Host "  ! Not supported with the Antigravity desktop app 2.34.0 or later." -ForegroundColor Yellow
+Write-Host "    Since 2.34.0 the desktop app keeps its language server's access token from other"
+Write-Host "    programs, so agy-server cannot connect to it and the web UI stays blank."
+Write-Host "    Use Google's official remote at antigravity.google.com instead." -ForegroundColor DarkGray
+Write-Host "    https://github.com/AFSlayer/antigravity-server/issues/98" -ForegroundColor DarkGray
+Write-Host ""
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     'AMD64' { 'amd64' }

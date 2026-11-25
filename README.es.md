@@ -72,23 +72,10 @@ Al acceder al servidor por primera vez:
 
 ### Opción 2: Compañero de Escritorio (macOS, Windows, Linux Desktop)
 
-Para compartir tu instancia local en la misma red Wi-Fi:
-
-```bash
-# macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-```
-
-`agy-server` abre un panel de control con un código QR para conectar tu móvil sin escribir contraseña.
-
-<div align="center">
-<img src="docs/assets/control-panel.png" width="320" alt="Control Panel" />
-</div>
+> [!WARNING]
+> **No es compatible con la aplicación de escritorio de Antigravity 2.34.0 o posterior.** Desde la 2.34.0, la aplicación ya no comparte con otros programas el token de acceso de su servidor de lenguaje, así que `agy-server` no puede conectarse y la interfaz web queda en blanco. Consulta [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+>
+> Para usar desde el móvil el Antigravity de tu escritorio, usa el acceso remoto oficial de Google en `antigravity.google.com`. Si quieres los parches móviles, ejecuta `agy-server` en un servidor como en la Opción 1.
 
 ---
 
@@ -240,7 +227,7 @@ Ejecute `agy-server doctor` para verificar la integridad de todos los parches ap
 ## Comandos CLI
 
 ```
-agy-server                      Inicia en modo compañero de escritorio (red local)
+agy-server                      Modo compañero de escritorio, sin soporte desde Antigravity 2.34
 agy-server serve                Ejecuta como demonio en servidor headless
 agy-server update               Comprueba y actualiza language_server a la última versión
 agy-server doctor               Diagnostica el estado del sistema y parches

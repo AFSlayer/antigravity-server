@@ -72,23 +72,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ### 方案 2：桌面伴侣模式（macOS、Windows、Linux 桌面）
 
-将本地电脑上运行的 Antigravity 共享给同一局域网下的手机：
-
-```bash
-# macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-```
-
-`agy-server` 将打开包含二维码的本地控制面板。使用同一 Wi-Fi 下的手机扫描二维码即可免密直连。
-
-<div align="center">
-<img src="docs/assets/control-panel.png" width="320" alt="Control Panel" />
-</div>
+> [!WARNING]
+> **不支持 Antigravity 桌面应用 2.34.0 及以上版本。** 从 2.34.0 起，桌面应用不再把语言服务器的访问令牌交给其他程序，`agy-server` 因此无法连接，网页界面会一直空白。详见 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)。
+>
+> 如需在手机上使用桌面上的 Antigravity，请使用 Google 官方远程功能 `antigravity.google.com`。如需移动端补丁，请按方案 1 在服务器上运行 `agy-server`。
 
 ---
 
@@ -256,7 +243,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 ## CLI 命令
 
 ```
-agy-server                      以桌面伴侣模式启动（局域网）
+agy-server                      桌面伴侣模式，自 Antigravity 2.34 起不再支持
 agy-server serve                作为无头服务器守护进程运行
 agy-server update               检查并升级 Google 官方 language_server
 agy-server doctor               诊断补丁完整性与系统状态

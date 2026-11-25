@@ -541,7 +541,7 @@ func (r *runner) start(runCtx context.Context) error {
 	signedIn := coordinator.SignedIn(statusCtx)
 	statusCancel()
 
-	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn)
+	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn, r.mode == modeLocal && instance.CSRFToken == "")
 
 	if r.mode == modeLocal && controlURL != "" {
 		go openBrowser(controlURL)
@@ -902,7 +902,14 @@ func (r *runner) resetPassword(creds *auth.Credentials) (string, error) {
 	return password, nil
 }
 
-func (r *runner) printReady(publicPort int, controlURL, generated string, signedIn bool) {
+// desktopUnsupportedURL explains why local mode cannot attach to the desktop app from Antigravity 2.34.0 on.
+const desktopUnsupportedURL = "https://github.com/AFSlayer/antigravity-server/issues/98"
+
+// printReady prints the addresses, the password and what is still needed. tokenMissing is set when local mode found
+// the language server without the token every request to it needs: the desktop app has kept it from other programs
+// since 2.34.0, so the web UI would stay blank. A sign-in check cannot be answered without it either, so the reason is
+// printed instead of the sign-in hint.
+func (r *runner) printReady(publicPort int, controlURL, generated string, signedIn, tokenMissing bool) {
 	fmt.Println()
 	step("%s ready", bold(r.mode.String()))
 	fmt.Println()
@@ -930,7 +937,14 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 		}
 	}
 
-	if !signedIn {
+	switch {
+	case tokenMissing:
+		fmt.Println()
+		warn("No access token was found for the Antigravity language server, so the web UI will stay blank.")
+		info("%s Since 2.34.0 the desktop app keeps the token from other programs, so local mode cannot use it.", dim("→"))
+		info("%s Use Google's official remote at antigravity.google.com, or run 'agy-server serve' on a server.", dim("→"))
+		info("%s %s", dim("→"), cyan(desktopUnsupportedURL))
+	case !signedIn:
 		fmt.Println()
 		warn("Antigravity is not signed in to Google yet.")
 		info("%s Open %s and follow the three steps.", dim("→"),

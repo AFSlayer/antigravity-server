@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -719,5 +720,54 @@ func TestLoopbackPortPolicy(t *testing.T) {
 	own.failed = true
 	if !lp.reserved(ctx, devPort) {
 		t.Error("a failed walk of the language server's ports did not reserve a tree port")
+	}
+}
+
+// printReadyOutput runs printReady with its output captured.
+func printReadyOutput(t *testing.T, r *runner, signedIn, tokenMissing bool) string {
+	t.Helper()
+	orig := os.Stdout
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = wPipe
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(rPipe)
+		done <- string(b)
+	}()
+	r.printReady(8765, "", "", signedIn, tokenMissing)
+	os.Stdout = orig
+	_ = wPipe.Close()
+	out := <-done
+	_ = rPipe.Close()
+	return out
+}
+
+// Local mode that found the language server without its token says why the web UI will stay blank, in place of the
+// sign-in hint a check without the token cannot back up; with the token, the sign-in hint is shown as before.
+func TestPrintReadyExplainsMissingToken(t *testing.T) {
+	t.Setenv("AGY_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.PublicURL = "https://agy.example.com"
+	r := &runner{mode: modeLocal, cfg: cfg}
+
+	out := printReadyOutput(t, r, false, true)
+	if !strings.Contains(out, "No access token was found") || !strings.Contains(out, desktopUnsupportedURL) {
+		t.Fatalf("missing token not explained:\n%s", out)
+	}
+	if strings.Contains(out, "not signed in") {
+		t.Fatalf("sign-in hint shown although the check had no token:\n%s", out)
+	}
+
+	out = printReadyOutput(t, r, false, false)
+	if !strings.Contains(out, "not signed in") || strings.Contains(out, "No access token was found") {
+		t.Fatalf("with a token, the sign-in hint should be shown alone:\n%s", out)
+	}
+
+	out = printReadyOutput(t, r, true, false)
+	if strings.Contains(out, "not signed in") || strings.Contains(out, "No access token was found") {
+		t.Fatalf("signed in with a token, nothing should be asked:\n%s", out)
 	}
 }
