@@ -20,9 +20,10 @@ function Write-Fail($message) {
 Write-Host ""
 Write-Host "  Antigravity Server" -ForegroundColor White
 Write-Host ""
-Write-Host "  ! Not supported with the Antigravity desktop app 2.34.0 or later." -ForegroundColor Yellow
-Write-Host "    Since 2.34.0 the desktop app keeps its language server's access token from other"
-Write-Host "    programs, so agy-server cannot connect to it and the web UI stays blank."
+Write-Host "  ! The desktop companion no longer works." -ForegroundColor Yellow
+Write-Host "    Since 2.34.0 the Antigravity desktop app keeps its language server's access token"
+Write-Host "    from other programs, and the app updates itself, so agy-server cannot connect to it"
+Write-Host "    and the web UI stays blank."
 Write-Host "    Use Google's official remote at antigravity.google.com instead." -ForegroundColor DarkGray
 Write-Host "    https://github.com/AFSlayer/antigravity-server/issues/98" -ForegroundColor DarkGray
 Write-Host ""
@@ -63,16 +64,10 @@ try {
         Write-Step 'Added it to your PATH (restart your terminal to use "agy-server")'
     }
 
-    if (-not $NoStart) {
-        Write-Host ""
-        Write-Info 'Starting... a control panel with a QR code will open in your browser.'
-        Write-Host ""
-        & $installed
-    } else {
-        Write-Host ""
-        Write-Info 'Run it with: agy-server'
-        Write-Host ""
-    }
+    # -NoStart is kept so that older instructions still run; it never starts now.
+    Write-Host ""
+    Write-Info 'Not started, since it cannot attach to the desktop app, as noted above.'
+    Write-Host ""
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

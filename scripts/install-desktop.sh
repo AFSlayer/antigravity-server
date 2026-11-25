@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO="AFSlayer/antigravity-server"
 BINARY_URL="${AGY_BINARY_URL:-}"
-START="yes"
 
 BOLD=$'\033[1m'
 DIM=$'\033[90m'
@@ -27,7 +26,6 @@ Antigravity Server — desktop installer
 Usage: install-desktop.sh [options]
 
   --dir DIR      Install location (default: /usr/local/bin, or ~/.local/bin)
-  --no-start     Install only, do not launch
   --help         Show this message
 
 Because this script downloads with curl, macOS does not quarantine the binary,
@@ -39,7 +37,8 @@ TARGET_DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dir) TARGET_DIR="${2:?--dir needs a value}"; shift 2 ;;
-    --no-start) START="no"; shift ;;
+    # Kept so that older instructions still run; it never starts now.
+    --no-start) shift ;;
     --help | -h) usage; exit 0 ;;
     *) die "Unknown option: $1 (try --help)" ;;
   esac
@@ -75,9 +74,10 @@ pick_target_dir() {
 }
 
 printf '\n  %sAntigravity Server%s\n\n' "$BOLD" "$OFF"
-say "${YELLOW}!${OFF} ${BOLD}Not supported with the Antigravity desktop app 2.34.0 or later.${OFF}"
-say "  Since 2.34.0 the desktop app keeps its language server's access token from other"
-say "  programs, so agy-server cannot connect to it and the web UI stays blank."
+say "${YELLOW}!${OFF} ${BOLD}The desktop companion no longer works.${OFF}"
+say "  Since 2.34.0 the Antigravity desktop app keeps its language server's access token"
+say "  from other programs, and the app updates itself, so agy-server cannot connect to it"
+say "  and the web UI stays blank."
 say "  ${DIM}Use Google's official remote at antigravity.google.com instead.${OFF}"
 say "  ${DIM}https://github.com/AFSlayer/antigravity-server/issues/98${OFF}"
 printf '\n'
@@ -114,11 +114,6 @@ case ":$PATH:" in
     ;;
 esac
 
-if [ "$START" = "yes" ]; then
-  printf '\n'
-  say "Starting… a control panel with a QR code will open in your browser."
-  printf '\n'
-  exec "$TARGET_DIR/agy-server"
-fi
-
-printf '\n  Run it with: %sagy-server%s\n\n' "$CYAN" "$OFF"
+printf '\n'
+say "Not started, since it cannot attach to the desktop app, as noted above."
+printf '\n'

@@ -32,7 +32,7 @@ Google 现已在 `antigravity.google.com` 推出官方远程桥接：用同一�
 
 | | 官方远程（`antigravity.google.com`） | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **61 个运行时补丁** |
+| **移动端网页界面** | 原样的桌面网页包 | 面向触屏的 **100 多个运行时补丁** |
 | **对话管理** | 移动端无法删除、置顶或归档 | 在 kebab 菜单与标题栏中**删除、重命名、置顶、归档** |
 | **项目导航** | 缺少项目 `(+)` 按钮；需在底部输入框切换 | 在项目列表顶部**恢复 `(+)` 按钮** |
 | **消息操作** | 撤销与复制藏在鼠标悬停之后 | 触屏上**常显撤销（`↶`）与复制（`📋`）** |
@@ -70,10 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ---
 
-### 方案 2：桌面伴侣模式（macOS、Windows、Linux 桌面）
+### 桌面伴侣模式：已无法使用
 
 > [!WARNING]
-> **不支持 Antigravity 桌面应用 2.34.0 及以上版本。** 从 2.34.0 起，桌面应用不再把语言服务器的访问令牌交给其他程序，`agy-server` 因此无法连接，网页界面会一直空白。详见 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)。
+> **桌面伴侣模式已无法使用。** 从 2.34.0 起，Antigravity 桌面应用不再把语言服务器的访问令牌交给其他程序，而且应用会自动更新，因此 `agy-server` 无法连接，网页界面会一直空白。详见 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)。
 >
 > 如需在手机上使用桌面上的 Antigravity，请使用 Google 官方远程功能 `antigravity.google.com`。如需移动端补丁，请按方案 1 在服务器上运行 `agy-server`。
 
@@ -216,7 +216,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 
 ## 移动端 UX 补丁详情
 
-无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 61 项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
+无论是官方远程桥接还是通过 `agy-server`，Antigravity 提供的 Web 资源包均为桌面版本。`agy-server` 通过 [`internal/patches/registry.go`](internal/patches/registry.go) 中的补丁在运行时动态重写资源包。注册表中包含 100 多项补丁，涵盖触控 UX 优化、大文件上传、导航、登录、连接稳定性及缓存刷新。精选补丁对照：
 
 | 分类 | 桌面端原生行为 | agy-server 补丁优化行为 |
 | :--- | :--- | :--- |
@@ -243,7 +243,7 @@ Antigravity 内部包含名为 `language_server` 的独立二进制程序。使�
 ## CLI 命令
 
 ```
-agy-server                      桌面伴侣模式，自 Antigravity 2.34 起不再支持
+agy-server                      桌面伴侣模式，已无法使用
 agy-server serve                作为无头服务器守护进程运行
 agy-server update               检查并升级 Google 官方 language_server
 agy-server doctor               诊断补丁完整性与系统状态

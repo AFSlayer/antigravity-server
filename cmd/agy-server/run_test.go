@@ -100,11 +100,31 @@ func TestSyncInstanceCSRFToken(t *testing.T) {
 		t.Errorf("want %q, got %q", "token-inst-2-updated", string(data))
 	}
 
-	// Case 4: Running instance has empty token, disk has token -> fills instance token
+	// Case 4: Running instance has no token -> nothing is filled in and the saved token stays. Such a server is not
+	// reused at all (see TestReusableInstanceNeedsToken); a saved token would only be a stale one.
 	inst3 := &lsproc.Instance{CSRFToken: ""}
 	r.syncInstanceCSRFToken(inst3)
-	if inst3.CSRFToken != "token-inst-2-updated" {
-		t.Errorf("want %q, got %q", "token-inst-2-updated", inst3.CSRFToken)
+	if inst3.CSRFToken != "" {
+		t.Errorf("a token was filled in: %q", inst3.CSRFToken)
+	}
+	if data, err = os.ReadFile(tokenPath); err != nil || strings.TrimSpace(string(data)) != "token-inst-2-updated" {
+		t.Errorf("saved token changed: %q, %v", string(data), err)
+	}
+}
+
+// Server mode reuses a running language server only when its command line carries a token, as every server agy-server
+// starts does; one without, such as the desktop app's since 2.34.0, would reject every request.
+func TestReusableInstanceNeedsToken(t *testing.T) {
+	if err := reusableInstance("/bin/ls", &lsproc.Instance{PID: 1, Port: 2, CSRFToken: "t"}); err != nil {
+		t.Fatalf("a server with a token was refused: %v", err)
+	}
+	err := reusableInstance("/opt/Antigravity/resources/bin/language_server", &lsproc.Instance{PID: 1, Port: 2})
+	ue, ok := err.(*userError)
+	if !ok {
+		t.Fatalf("a server without a token was reused: %v", err)
+	}
+	if !strings.Contains(ue.msg, "/opt/Antigravity/resources/bin/language_server") || !strings.Contains(strings.Join(ue.hints, "\n"), desktopUnsupportedURL) {
+		t.Fatalf("the refusal does not name the binary or point to #98: %+v", ue)
 	}
 }
 
@@ -724,7 +744,7 @@ func TestLoopbackPortPolicy(t *testing.T) {
 }
 
 // printReadyOutput runs printReady with its output captured.
-func printReadyOutput(t *testing.T, r *runner, controlURL string, signedIn, tokenMissing bool) string {
+func printReadyOutput(t *testing.T, r *runner, controlURL string, needsSignIn, tokenMissing bool) string {
 	t.Helper()
 	orig := os.Stdout
 	rPipe, wPipe, err := os.Pipe()
@@ -749,14 +769,14 @@ func printReadyOutput(t *testing.T, r *runner, controlURL string, signedIn, toke
 		b, _ := io.ReadAll(rPipe)
 		done <- string(b)
 	}()
-	r.printReady(8765, controlURL, "", signedIn, tokenMissing)
+	r.printReady(8765, controlURL, "", needsSignIn, tokenMissing)
 	restore()
 	return <-done
 }
 
 // Local mode that found the language server without its token says why the web UI will stay blank, in place of the
-// sign-in hint a check without the token cannot back up and of the QR hint that would only lead to that blank page;
-// with the token, both hints are shown as before.
+// sign-in hint and of the QR hint that would only lead to that blank page. With the token, the QR hint is shown, and
+// the sign-in hint only when the language server answered that it is signed out.
 func TestPrintReadyExplainsMissingToken(t *testing.T) {
 	t.Setenv("AGY_HOME", t.TempDir())
 	cfg := config.Default()
@@ -773,19 +793,19 @@ func TestPrintReadyExplainsMissingToken(t *testing.T) {
 		t.Fatalf("sign-in or QR hint shown although the language server has no token:\n%s", out)
 	}
 
-	out = printReadyOutput(t, r, panel, false, false)
+	out = printReadyOutput(t, r, panel, true, false)
 	if !strings.Contains(out, "not signed in") || !strings.Contains(out, qrHint) || strings.Contains(out, "No access token was found") {
-		t.Fatalf("with a token, the sign-in and QR hints should be shown alone:\n%s", out)
+		t.Fatalf("signed out with a token, the sign-in and QR hints should be shown alone:\n%s", out)
 	}
 
-	out = printReadyOutput(t, r, panel, true, false)
-	if strings.Contains(out, "not signed in") || strings.Contains(out, "No access token was found") {
-		t.Fatalf("signed in with a token, nothing should be asked:\n%s", out)
+	out = printReadyOutput(t, r, panel, false, false)
+	if strings.Contains(out, "not signed in") || strings.Contains(out, "No access token was found") || !strings.Contains(out, qrHint) {
+		t.Fatalf("signed in, or not known to be signed out, only the QR hint should be shown:\n%s", out)
 	}
 }
 
-// The notice is for local mode only. Server mode starts its own language server with a token, or fills in the saved
-// one for a running server it reuses, so it never reports the token as missing.
+// The notice is for local mode only. Server mode starts its own language server with a token, and refuses to reuse a
+// running one that has none, so it never reports the token as missing.
 func TestLocalTokenMissing(t *testing.T) {
 	for _, tc := range []struct {
 		mode     runMode
@@ -801,5 +821,40 @@ func TestLocalTokenMissing(t *testing.T) {
 		if got := localTokenMissing(tc.mode, tc.instance); got != tc.want {
 			t.Errorf("localTokenMissing(%v, %+v) = %v, want %v", tc.mode, tc.instance, got, tc.want)
 		}
+	}
+}
+
+// doctor names the desktop app as the likely cause of a missing token and points to #98, instead of telling everyone
+// to restart through agy-server.
+func TestDoctorExplainsMissingToken(t *testing.T) {
+	capture := func(instance *lsproc.Instance) (string, int) {
+		t.Helper()
+		orig := os.Stdout
+		rPipe, wPipe, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = wPipe
+		t.Cleanup(func() { os.Stdout = orig })
+		done := make(chan string)
+		go func() {
+			b, _ := io.ReadAll(rPipe)
+			done <- string(b)
+		}()
+		var c checklist
+		c.checkToken(instance)
+		os.Stdout = orig
+		_ = wPipe.Close()
+		out := <-done
+		_ = rPipe.Close()
+		return out, c.problems
+	}
+
+	out, problems := capture(&lsproc.Instance{CSRFToken: ""})
+	if problems != 1 || !strings.Contains(out, "desktop app") || !strings.Contains(out, desktopUnsupportedURL) {
+		t.Fatalf("missing token not explained (%d problems):\n%s", problems, out)
+	}
+	if out, problems = capture(&lsproc.Instance{CSRFToken: "t"}); problems != 0 || !strings.Contains(out, "CSRF token is present") {
+		t.Fatalf("a token was not reported as present (%d problems):\n%s", problems, out)
 	}
 }

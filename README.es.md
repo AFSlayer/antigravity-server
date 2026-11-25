@@ -32,7 +32,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 
 | | Remoto oficial (`antigravity.google.com`) | Antigravity Server (`agy-server`) |
 | :--- | :--- | :--- |
-| **Interfaz web móvil** | El bundle de escritorio tal cual | **61 parches en tiempo de ejecución** para táctil |
+| **Interfaz web móvil** | El bundle de escritorio tal cual | **Más de 100 parches en tiempo de ejecución** para táctil |
 | **Control de conversaciones** | Sin eliminar, fijar ni archivar en móvil | **Eliminar, Renombrar, Fijar y Archivar** desde el menú kebab y la barra de título |
 | **Navegación de proyectos** | Sin botón `(+)`; se cambia desde el input inferior | **Botón `(+)` restaurado** en la cabecera de proyectos |
 | **Acciones de mensaje** | Deshacer y Copiar ocultos tras el hover | **Deshacer (`↶`) y Copiar (`📋`)** siempre visibles al tacto |
@@ -70,10 +70,10 @@ Al acceder al servidor por primera vez:
 
 ---
 
-### Opción 2: Compañero de Escritorio (macOS, Windows, Linux Desktop)
+### Compañero de Escritorio: ya no funciona
 
 > [!WARNING]
-> **No es compatible con la aplicación de escritorio de Antigravity 2.34.0 o posterior.** Desde la 2.34.0, la aplicación ya no comparte con otros programas el token de acceso de su servidor de lenguaje, así que `agy-server` no puede conectarse y la interfaz web queda en blanco. Consulta [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+> **El modo compañero de escritorio ya no funciona.** Desde la 2.34.0, la aplicación de escritorio de Antigravity no comparte con otros programas el token de acceso de su servidor de lenguaje y se actualiza sola, así que `agy-server` no puede conectarse y la interfaz web queda en blanco. Consulta [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
 >
 > Para usar desde el móvil el Antigravity de tu escritorio, usa el acceso remoto oficial de Google en `antigravity.google.com`. Si quieres los parches móviles, ejecuta `agy-server` en un servidor como en la Opción 1.
 
@@ -200,7 +200,7 @@ server {
 
 ## Parches de Experiencia Móvil (UX)
 
-El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 61 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
+El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye más de 100 parches dedicados a experiencia táctil, cargas, navegación, inicio de sesión, estabilidad de conexión e invalidación de caché. Ejemplos destacados:
 
 | Categoría | Comportamiento del Paquete de Escritorio | Parche de agy-server |
 | :--- | :--- | :--- |
@@ -227,7 +227,7 @@ Ejecute `agy-server doctor` para verificar la integridad de todos los parches ap
 ## Comandos CLI
 
 ```
-agy-server                      Modo compañero de escritorio, sin soporte desde Antigravity 2.34
+agy-server                      Modo compañero de escritorio, que ya no funciona
 agy-server serve                Ejecuta como demonio en servidor headless
 agy-server update               Comprueba y actualiza language_server a la última versión
 agy-server doctor               Diagnostica el estado del sistema y parches

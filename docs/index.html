@@ -6,7 +6,7 @@
     <title>Antigravity Server — a mobile web UI for Antigravity that actually works</title>
     <meta
       name="description"
-      content="One binary in front of your own Antigravity: 25 runtime patches that make its web UI usable on a phone, a direct connection instead of Google's relay, and your own password. Runs unattended on a Linux server."
+      content="One binary in front of your own Antigravity: over a hundred runtime patches that make its web UI usable on a phone, a direct connection instead of Google's relay, and your own password. Runs unattended on a Linux server."
     />
     <meta name="theme-color" content="#0e0e11" />
     <link rel="icon" href="assets/favicon.ico" />
@@ -376,12 +376,12 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
       </section>
 
       <section id="start">
-        <h2>The desktop companion</h2>
+        <h2>The desktop companion no longer works</h2>
         <p>
-          It used to serve the Antigravity desktop app to your phone. From 2.34.0
-          the desktop app keeps its language server's access token from other
-          programs, so <code>agy-server</code> cannot connect to it and the page
-          stays blank. To reach your desktop from a phone, use Google's official
+          It served the Antigravity desktop app to your phone. Since 2.34.0 the
+          app keeps its language server's access token from other programs, and
+          it updates itself, so <code>agy-server</code> cannot connect to it and
+          the page stays blank. To reach your desktop from a phone, use Google's official
           remote at <code>antigravity.google.com</code>. For the patches below,
           host it on a server.
           <a href="https://github.com/AFSlayer/antigravity-server/issues/98">Why, in #98</a>
@@ -417,7 +417,7 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
             <tr>
               <td>Mobile web UI</td>
               <td>The desktop bundle as-is</td>
-              <td><strong>25 runtime patches for touch</strong></td>
+              <td><strong>100+ runtime patches for touch</strong></td>
             </tr>
             <tr>
               <td>Conversations</td>
@@ -446,9 +446,9 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
       <section>
         <h2>Built for thumbs</h2>
         <p>
-          A desktop IDE in a phone browser has sharp edges. Twenty-five named
-          patches fix them, and every patch the proxy applies is listed in the
-          control panel.
+          A desktop IDE in a phone browser has sharp edges. Over a hundred named
+          patches fix them, and <code>agy-server doctor</code> lists each one and
+          whether it applied.
         </p>
         <ul class="plain">
           <li>Enter inserts a newline; Cmd/Ctrl+Enter sends</li>
@@ -487,7 +487,7 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
           <li>PBKDF2-SHA256 password hashing, never stored in plain text</li>
           <li>Session tokens stored only as hashes, revocable from any device</li>
           <li>Per-IP and global login rate limiting with exponential lockout</li>
-          <li>The control panel lives on a loopback-only port, never exposed</li>
+          <li>File uploads are kept inside the workspace folder</li>
           <li>Automatic HTTPS when you give it a domain</li>
         </ul>
       </section>
