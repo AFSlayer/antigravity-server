@@ -123,15 +123,14 @@ func (c *checklist) checkBinaries(cfg *config.Config) {
 		return
 	}
 	c.skip("No language_server binary found on disk")
-	c.note("Local mode does not need one if the desktop app is installed")
-	c.note("Server mode does: run scripts/install.sh or pass --language-server")
+	c.note("agy-server serve needs one: run scripts/install.sh or pass --language-server")
 }
 
 func (c *checklist) checkRunning() *lsproc.Instance {
 	instance, err := lsproc.Find()
 	if err != nil {
 		c.bad("No standalone Antigravity language server is running")
-		c.note("Start the Antigravity desktop app, or run: agy-server serve")
+		c.note("Run 'agy-server serve', which starts its own")
 		return nil
 	}
 

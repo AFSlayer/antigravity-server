@@ -83,8 +83,8 @@ func patchWarning(report patches.Report) string {
 		len(missing))
 }
 
-// LoginPage renders the password prompt. qrTip adds the hint to scan the control panel's QR code instead, which only
-// local mode shows, and only when it can reach the language server.
+// LoginPage renders the password prompt. qrTip adds the hint to scan the QR code on the control panel, which only local
+// mode has. It is left out when local mode found no token, since the code would only lead to a blank page.
 func LoginPage(qrTip bool) auth.LoginPageFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

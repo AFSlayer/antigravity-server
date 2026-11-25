@@ -117,4 +117,3 @@ esac
 printf '\n'
 say "Not started, since it cannot attach to the desktop app, as noted above."
 printf '\n'
-
