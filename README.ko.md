@@ -72,23 +72,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ### 옵션 2: 데스크톱 컴패니언 (macOS, Windows, Linux 데스크톱)
 
-로컬 PC에서 실행 중인 Antigravity를 동일 네트워크의 스마트폰으로 공유:
-
-```bash
-# macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-```
-
-`agy-server`가 QR 코드가 포함된 로컬 제어판을 엽니다. 동일 Wi-Fi에 연결된 스마트폰으로 QR 코드를 스캔하면 비밀번호 입력 없이 즉시 연결됩니다.
-
-<div align="center">
-<img src="docs/assets/control-panel.png" width="320" alt="Control Panel" />
-</div>
+> [!WARNING]
+> **Antigravity 데스크톱 앱 2.34.0 이상에서는 지원하지 않습니다.** 2.34.0부터 데스크톱 앱이 언어 서버의 접근 토큰을 다른 프로그램에 내주지 않아서 `agy-server`가 연결할 수 없고, 웹 UI가 빈 화면으로 남습니다. 자세한 내용은 [#98](https://github.com/AFSlayer/antigravity-server/issues/98)을 참고하세요.
+>
+> 데스크톱의 Antigravity를 스마트폰에서 쓰려면 Google 공식 원격 기능 `antigravity.google.com`을 사용하세요. 모바일 패치가 필요하면 옵션 1처럼 서버에서 `agy-server`를 실행하세요.
 
 ---
 
@@ -278,7 +265,7 @@ Antigravity 내부에는 `language_server`라는 독립 바이너리가 포함�
 ## CLI 명령어
 
 ```
-agy-server                      데스크톱 컴패니언 모드로 실행 (로컬 네트워크)
+agy-server                      데스크톱 컴패니언 모드, Antigravity 2.34부터 지원 안 함
 agy-server serve                헤드리스 서버 데몬으로 백그라운드 구동
 agy-server update               구글 공식 최신 language_server 확인 및 업그레이드
 agy-server doctor               패치 무결성 및 시스템 상태 진단

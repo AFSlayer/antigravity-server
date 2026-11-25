@@ -9,6 +9,7 @@ BOLD=$'\033[1m'
 DIM=$'\033[90m'
 GREEN=$'\033[32m'
 RED=$'\033[31m'
+YELLOW=$'\033[33m'
 CYAN=$'\033[36m'
 OFF=$'\033[0m'
 
@@ -74,6 +75,12 @@ pick_target_dir() {
 }
 
 printf '\n  %sAntigravity Server%s\n\n' "$BOLD" "$OFF"
+say "${YELLOW}!${OFF} ${BOLD}Not supported with the Antigravity desktop app 2.34.0 or later.${OFF}"
+say "  Since 2.34.0 the desktop app keeps its language server's access token from other"
+say "  programs, so agy-server cannot connect to it and the web UI stays blank."
+say "  ${DIM}Use Google's official remote at antigravity.google.com instead.${OFF}"
+say "  ${DIM}https://github.com/AFSlayer/antigravity-server/issues/98${OFF}"
+printf '\n'
 
 TARGET_DIR="$(pick_target_dir)"
 URL="${BINARY_URL:-https://github.com/$REPO/releases/latest/download/agy-server_${os}_${arch}.tar.gz}"

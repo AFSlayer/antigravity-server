@@ -72,23 +72,10 @@ When accessing your server for the first time:
 
 ### Option 2: Desktop Companion (macOS, Windows, Linux Desktop)
 
-To expose a local desktop Antigravity instance over your local network:
-
-```bash
-# macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-```
-
-`agy-server` opens a local control panel with a QR code. Scan the code from a phone on the same network to connect without typing a password.
-
-<div align="center">
-<img src="docs/assets/control-panel.png" width="320" alt="Control Panel" />
-</div>
+> [!WARNING]
+> **Not supported with the Antigravity desktop app 2.34.0 or later.** Since 2.34.0 the desktop app keeps its language server's access token from other programs, so `agy-server` cannot connect to it and the web UI stays blank. See [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+>
+> To reach the Antigravity on your desktop from a phone, use Google's official remote at `antigravity.google.com`. For the mobile patches, run `agy-server` on a server as in Option 1.
 
 ---
 
@@ -278,7 +265,7 @@ Run `agy-server doctor` to inspect the status of all patches against your instal
 ## CLI Commands
 
 ```
-agy-server                      Start in desktop companion mode (local network)
+agy-server                      Desktop companion mode, unsupported since Antigravity 2.34
 agy-server serve                Run as a headless server daemon
 agy-server update               Check and update language_server to latest upstream
 agy-server doctor               Verify patch integrity and system status

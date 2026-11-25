@@ -97,6 +97,9 @@ func LoginPage() auth.LoginPageFunc {
 // LocalOptions wires the control panel to the running server. The function
 // fields are read at request time so the page always reflects current state.
 type LocalOptions struct {
+	// TokenMissing is set when the language server was found without the token every request to it needs, which the
+	// desktop app keeps from other programs since Antigravity 2.34.0; the panel then says why the web UI stays blank.
+	TokenMissing  bool
 	Version       string
 	Mode          string
 	NetworkNote   string
@@ -110,6 +113,9 @@ type LocalOptions struct {
 	ResetPassword func() (string, error)
 	Shutdown      func()
 }
+
+// DesktopUnsupportedURL explains why local mode cannot attach to the desktop app from Antigravity 2.34.0 on.
+const DesktopUnsupportedURL = "https://github.com/AFSlayer/antigravity-server/issues/98"
 
 // Local is the loopback-only control panel: QR code, addresses, password,
 // signed-in devices, patch status and shutdown.
@@ -204,6 +210,8 @@ func (l *Local) page(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = tmpl.ExecuteTemplate(w, "local.html", map[string]any{
+		"TokenMissing":  l.opts.TokenMissing,
+		"DesktopURL":    DesktopUnsupportedURL,
 		"Version":       l.opts.Version,
 		"Mode":          l.opts.Mode,
 		"NetworkNote":   l.opts.NetworkNote,

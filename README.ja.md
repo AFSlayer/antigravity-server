@@ -72,23 +72,10 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
 
 ### オプション2: デスクトップコンパニオン（macOS、Windows、Linuxデスクトップ）
 
-ローカルPCで実行中のAntigravityを同一ネットワーク上のスマートフォンに共有：
-
-```bash
-# macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-```
-
-`agy-server`がQRコード付きのローカルコントロールパネルを開きます。同一Wi-Fi上のスマートフォンでQRコードをスキャンすると、パスワード入力なしで接続できます。
-
-<div align="center">
-<img src="docs/assets/control-panel.png" width="320" alt="Control Panel" />
-</div>
+> [!WARNING]
+> **Antigravityデスクトップアプリ2.34.0以降には対応していません。** 2.34.0からデスクトップアプリが言語サーバーのアクセストークンを他のプログラムに渡さなくなったため、`agy-server`は接続できず、Web UIは空白のままになります。詳しくは[#98](https://github.com/AFSlayer/antigravity-server/issues/98)をご覧ください。
+>
+> デスクトップのAntigravityをスマートフォンから使うには、Google公式のリモート機能 `antigravity.google.com` をご利用ください。モバイル向けパッチが必要な場合は、オプション1のようにサーバーで`agy-server`を実行してください。
 
 ---
 
@@ -278,7 +265,7 @@ Antigravity内部には`language_server`という独立バイナリが含まれ�
 ## CLIコマンド
 
 ```
-agy-server                      デスクトップコンパニオンモードで起動（ローカルNW）
+agy-server                      デスクトップコンパニオンモード、Antigravity 2.34以降は非対応
 agy-server serve                ヘッドレスサーバーデーモンとして実行
 agy-server update               Google公式最新language_serverの確認と更新
 agy-server doctor               パッチ整合性およびシステム状態の診断

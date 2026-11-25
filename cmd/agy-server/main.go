@@ -15,7 +15,7 @@ var version = "dev"
 const usage = `Antigravity Server — self-hosted cloud & mobile server for Google Antigravity.
 
 Usage:
-  agy-server [flags]            Share the Antigravity desktop app on your network
+  agy-server [flags]            Share the desktop app on your network, not with Antigravity 2.34 or later
   agy-server serve [flags]      Run headless on a server (personal cloud Antigravity)
   agy-server doctor             Check the setup and report what is wrong
   agy-server config [flags]     Save options to config.json without starting

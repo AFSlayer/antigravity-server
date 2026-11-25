@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -719,5 +720,86 @@ func TestLoopbackPortPolicy(t *testing.T) {
 	own.failed = true
 	if !lp.reserved(ctx, devPort) {
 		t.Error("a failed walk of the language server's ports did not reserve a tree port")
+	}
+}
+
+// printReadyOutput runs printReady with its output captured.
+func printReadyOutput(t *testing.T, r *runner, controlURL string, signedIn, tokenMissing bool) string {
+	t.Helper()
+	orig := os.Stdout
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = wPipe
+	restored := false
+	restore := func() {
+		if !restored {
+			restored = true
+			os.Stdout = orig
+			_ = wPipe.Close()
+		}
+	}
+	t.Cleanup(func() {
+		restore()
+		_ = rPipe.Close()
+	})
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(rPipe)
+		done <- string(b)
+	}()
+	r.printReady(8765, controlURL, "", signedIn, tokenMissing)
+	restore()
+	return <-done
+}
+
+// Local mode that found the language server without its token says why the web UI will stay blank, in place of the
+// sign-in hint a check without the token cannot back up and of the QR hint that would only lead to that blank page;
+// with the token, both hints are shown as before.
+func TestPrintReadyExplainsMissingToken(t *testing.T) {
+	t.Setenv("AGY_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.PublicURL = "https://agy.example.com"
+	r := &runner{mode: modeLocal, cfg: cfg}
+	const panel = "http://127.0.0.1:43391/"
+	const qrHint = "Scan the QR code there"
+
+	out := printReadyOutput(t, r, panel, false, true)
+	if !strings.Contains(out, "No access token was found") || !strings.Contains(out, desktopUnsupportedURL) {
+		t.Fatalf("missing token not explained:\n%s", out)
+	}
+	if strings.Contains(out, "not signed in") || strings.Contains(out, qrHint) {
+		t.Fatalf("sign-in or QR hint shown although the language server has no token:\n%s", out)
+	}
+
+	out = printReadyOutput(t, r, panel, false, false)
+	if !strings.Contains(out, "not signed in") || !strings.Contains(out, qrHint) || strings.Contains(out, "No access token was found") {
+		t.Fatalf("with a token, the sign-in and QR hints should be shown alone:\n%s", out)
+	}
+
+	out = printReadyOutput(t, r, panel, true, false)
+	if strings.Contains(out, "not signed in") || strings.Contains(out, "No access token was found") {
+		t.Fatalf("signed in with a token, nothing should be asked:\n%s", out)
+	}
+}
+
+// The notice is for local mode only. Server mode starts its own language server with a token, or fills in the saved
+// one for a running server it reuses, so it never reports the token as missing.
+func TestLocalTokenMissing(t *testing.T) {
+	for _, tc := range []struct {
+		mode     runMode
+		instance *lsproc.Instance
+		want     bool
+	}{
+		{modeLocal, &lsproc.Instance{Port: 1}, true},
+		{modeLocal, &lsproc.Instance{Port: 1, CSRFToken: "t"}, false},
+		{modeServe, &lsproc.Instance{Port: 1}, false},
+		{modeServe, &lsproc.Instance{Port: 1, CSRFToken: "t"}, false},
+		{modeLocal, nil, false},
+	} {
+		if got := localTokenMissing(tc.mode, tc.instance); got != tc.want {
+			t.Errorf("localTokenMissing(%v, %+v) = %v, want %v", tc.mode, tc.instance, got, tc.want)
+		}
 	}
 }

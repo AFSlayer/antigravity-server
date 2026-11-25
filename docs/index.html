@@ -202,38 +202,6 @@
         max-width: 46rem;
         color: var(--muted);
       }
-      .steps {
-        margin-top: 2rem;
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-        gap: 1rem;
-      }
-      .step {
-        padding: 1.25rem;
-        border: 1px solid var(--line);
-        border-radius: 0.9rem;
-        background: var(--card);
-      }
-      .step span {
-        display: inline-grid;
-        place-items: center;
-        width: 1.6rem;
-        height: 1.6rem;
-        border-radius: 999px;
-        background: rgb(79 124 255 / 0.15);
-        color: #93b0ff;
-        font-size: 0.8rem;
-        font-weight: 700;
-      }
-      .step h3 {
-        margin: 0.75rem 0 0.35rem;
-        font-size: 1rem;
-        font-weight: 600;
-      }
-      .step p {
-        font-size: 0.9rem;
-        color: var(--muted);
-      }
       pre {
         margin-top: 1.5rem;
         padding: 1rem 1.15rem;
@@ -363,8 +331,7 @@
         <img src="assets/icon-192.png" alt="" />
         <strong>Antigravity Server</strong>
         <div class="links">
-          <a href="#start">Quick start</a>
-          <a href="#server">Server</a>
+          <a href="#server">Install</a>
           <a href="https://github.com/AFSlayer/antigravity-server">GitHub</a>
         </div>
       </nav>
@@ -380,7 +347,7 @@
             bundle on the way out, behind your own password.
           </p>
           <div class="cta">
-            <a class="btn primary" href="#start">Install in one line</a>
+            <a class="btn primary" href="#server">Install in one line</a>
             <a class="btn ghost" href="https://github.com/AFSlayer/antigravity-server">
               Read the docs
             </a>
@@ -391,38 +358,8 @@
         </video>
       </div>
 
-      <section id="start">
-        <h2>Running in 30 seconds</h2>
-        <p>
-          No configuration, no accounts, no build step. Antigravity doesn't even
-          have to be open — it gets started for you.
-        </p>
-        <pre><span class="c"># macOS / Linux</span>
-curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-
-<span class="c"># Windows (PowerShell)</span>
-irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex</pre>
-        <div class="steps">
-          <div class="step">
-            <span>1</span>
-            <h3>Paste one line</h3>
-            <p>Installs and starts. No security warnings, nothing to click through.</p>
-          </div>
-          <div class="step">
-            <span>2</span>
-            <h3>Scan the QR</h3>
-            <p>Your phone is signed in. Single-use code, nothing typed.</p>
-          </div>
-          <div class="step">
-            <span>3</span>
-            <h3>Add to Home Screen</h3>
-            <p>The Antigravity icon on your home screen, one tap away.</p>
-          </div>
-        </div>
-      </section>
-
       <section id="server">
-        <h2>Or host it: your own cloud Antigravity</h2>
+        <h2>Host it: your own cloud Antigravity</h2>
         <p>
           One command on any Linux box turns it into an always-on coding agent you
           reach from anywhere: a $5 VPS, a home server, a free-tier ARM instance.
@@ -436,6 +373,19 @@ irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/i
         <pre><span class="c"># downloads the official Antigravity build from Google, sets up
 # systemd and automatic HTTPS with Caddy</span>
 curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install.sh | bash</pre>
+      </section>
+
+      <section id="start">
+        <h2>The desktop companion</h2>
+        <p>
+          It used to serve the Antigravity desktop app to your phone. From 2.34.0
+          the desktop app keeps its language server's access token from other
+          programs, so <code>agy-server</code> cannot connect to it and the page
+          stays blank. To reach your desktop from a phone, use Google's official
+          remote at <code>antigravity.google.com</code>. For the patches below,
+          host it on a server.
+          <a href="https://github.com/AFSlayer/antigravity-server/issues/98">Why, in #98</a>
+        </p>
       </section>
 
       <section>
@@ -522,7 +472,7 @@ curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/sc
           </figure>
           <figure class="shot">
             <img src="assets/login.png" alt="The login screen on a phone" />
-            <figcaption>Password, or one QR scan</figcaption>
+            <figcaption>Behind your own password</figcaption>
           </figure>
         </div>
       </section>
