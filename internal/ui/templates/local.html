@@ -213,6 +213,10 @@
         font-size: 0.78rem;
         line-height: 1.5;
       }
+      .notice a {
+        color: inherit;
+        text-decoration: underline;
+      }
       .empty {
         font-size: 0.82rem;
         color: #71717a;
@@ -259,6 +263,19 @@
         </div>
         <span class="badge">Running</span>
       </header>
+
+      {{ if .TokenMissing }}
+      <section class="card">
+        <h2>The web UI will stay blank</h2>
+        <p class="notice">
+          No access token was found for the Antigravity language server. Since 2.34.0 the
+          desktop app keeps the token from other programs, so local mode cannot use it. Use
+          Google's official remote at antigravity.google.com, or run
+          <code>agy-server serve</code> on a server.
+          <a href="{{ .DesktopURL }}" target="_blank" rel="noreferrer">Why, in #98</a>
+        </p>
+      </section>
+      {{ end }}
 
       <section class="card qr-card">
         <img class="qr" id="qr" src="data:image/png;base64,{{ .QR }}" alt="Login QR code" />

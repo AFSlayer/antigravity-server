@@ -517,9 +517,12 @@ func (r *runner) start(runCtx context.Context) error {
 
 	r.publicSrv.setHandler(authenticator.Middleware(publicMux))
 
+	tokenMissing := localTokenMissing(r.mode, instance)
+
 	var controlURL string
 	if r.mode == modeLocal && localPort > 0 {
 		localUI := ui.NewLocal(ui.LocalOptions{
+			TokenMissing:  tokenMissing,
 			Version:       version,
 			Mode:          r.mode.String(),
 			NetworkNote:   r.networkNote(),
@@ -541,7 +544,7 @@ func (r *runner) start(runCtx context.Context) error {
 	signedIn := coordinator.SignedIn(statusCtx)
 	statusCancel()
 
-	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn, r.mode == modeLocal && instance.CSRFToken == "")
+	r.printReady(publicPort, controlURL, r.announceGenerated, signedIn, tokenMissing)
 
 	if r.mode == modeLocal && controlURL != "" {
 		go openBrowser(controlURL)
@@ -903,7 +906,13 @@ func (r *runner) resetPassword(creds *auth.Credentials) (string, error) {
 }
 
 // desktopUnsupportedURL explains why local mode cannot attach to the desktop app from Antigravity 2.34.0 on.
-const desktopUnsupportedURL = "https://github.com/AFSlayer/antigravity-server/issues/98"
+const desktopUnsupportedURL = ui.DesktopUnsupportedURL
+
+// localTokenMissing reports whether local mode found the language server without the token every request to it
+// needs. Server mode always has one: it passes its own, or reads the saved one for a server it reuses.
+func localTokenMissing(mode runMode, instance *lsproc.Instance) bool {
+	return mode == modeLocal && instance != nil && instance.CSRFToken == ""
+}
 
 // printReady prints the addresses, the password and what is still needed. tokenMissing is set when local mode found
 // the language server without the token every request to it needs: the desktop app has kept it from other programs
@@ -932,7 +941,7 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 	if controlURL != "" {
 		fmt.Println()
 		info("Control panel  %s", cyan(controlURL))
-		if r.mode == modeLocal {
+		if r.mode == modeLocal && !tokenMissing {
 			info("%s", dim("Scan the QR code there to sign in on your phone without typing."))
 		}
 	}

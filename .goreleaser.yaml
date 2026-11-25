@@ -76,25 +76,17 @@ release:
   footer: |
     ## Install
 
-    **macOS / Linux — one line, no security warnings**
-
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.sh | bash
-    ```
-
-    **Windows — one line in PowerShell**
-
-    ```powershell
-    irm https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install-desktop.ps1 | iex
-    ```
-
     **Linux server (always-on Antigravity)**
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/AFSlayer/antigravity-server/main/scripts/install.sh | bash
     ```
 
-    Prefer to download the archive by hand? These builds are not code-signed, so
-    macOS and Windows will warn you about an unidentified developer. The install
-    commands above download with `curl`/`irm`, which avoids that entirely — see
-    [Installing without warnings](https://github.com/AFSlayer/antigravity-server#installing-without-warnings).
+    **Desktop companion: not supported with the Antigravity desktop app 2.34.0 or later.**
+    Since 2.34.0 the desktop app keeps its language server's access token from other
+    programs, so `agy-server` cannot connect to it and the web UI stays blank. To reach
+    the Antigravity on your desktop from a phone, use Google's official remote at
+    `antigravity.google.com`. See [#98](https://github.com/AFSlayer/antigravity-server/issues/98).
+
+    These builds are not code-signed, so macOS and Windows will warn you about an
+    unidentified developer if you download an archive by hand.

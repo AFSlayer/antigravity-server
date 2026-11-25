@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
 	"github.com/AFSlayer/antigravity-server/internal/signin"
@@ -486,5 +488,40 @@ func TestDebugKeepsTheFullFileWhenItStartsANewOne(t *testing.T) {
 	post("eleventh")
 	if got := read(logPath); got != "eleventh\n" {
 		t.Errorf("a file that opens again is written to, got %q", got)
+	}
+}
+
+// The control panel opens by itself in local mode, so when the language server was found without its token it says
+// why the web UI will stay blank, above the QR code it keeps.
+func TestLocalPageExplainsMissingToken(t *testing.T) {
+	sessions, err := auth.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := func(missing bool) string {
+		h := NewLocal(LocalOptions{
+			TokenMissing: missing,
+			Auth:         auth.New(auth.Options{Sessions: sessions}),
+			Tracker:      patches.NewTracker(),
+			Endpoints:    func() []Endpoint { return nil },
+			LoginBaseURL: func() string { return "http://127.0.0.1:8765" },
+		}).Handler()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("control panel answered %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := page(true)
+	if !strings.Contains(body, "No access token was found") || !strings.Contains(body, DesktopUnsupportedURL) {
+		t.Fatalf("missing token not explained on the control panel")
+	}
+	if !strings.Contains(body, `id="qr"`) || strings.Index(body, "No access token was found") > strings.Index(body, `id="qr"`) {
+		t.Fatalf("the notice should come before the QR code, which stays")
+	}
+	if body = page(false); strings.Contains(body, "No access token was found") {
+		t.Fatalf("notice shown although the token was found")
 	}
 }
