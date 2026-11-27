@@ -149,19 +149,21 @@ Gerencie as instruções do seu agente (`~/.gemini/GEMINI.md`, `~/.gemini/config
 - Clique no botão **Edit** ao lado de regras ou habilidades para abrir o editor embutido.
 - Clique em **Save** para salvar atomicamente no sistema de arquivos do host com efeito imediato.
 
+---
 
-### 🧩 Plugins de UI
+### 🧩 Plugins personalizados
 Carregue seu próprio JavaScript ou CSS na interface web, para um tema, uma fonte ou um pequeno ajuste, em qualquer dispositivo, inclusive no app de tela de início do iPhone, onde extensões do navegador não funcionam:
-- Abra **Settings → Appearance → UI Plugins** e toque em **Choose file** para escolher um arquivo `.js` ou `.css` no servidor. Também é possível digitar o caminho.
-- O plugin fica vinculado a esse arquivo: edite-o e recarregue para ver a mudança. Se o arquivo sumir, é usada a cópia guardada em `~/.agy-remote/plugins/`.
+- Abra **Settings → Appearance → Custom Plugins** e toque em **Choose file** para escolher um arquivo `.js` ou `.css` no servidor. Também é possível digitar o caminho.
+- O plugin fica vinculado a esse arquivo: edite-o e recarregue para ver a mudança. Se o arquivo sumir, é usada a cópia guardada em `~/.agy-remote/custom-plugins/`.
+- Um arquivo dentro do workspace é copiado sem vínculo, porque o agente pode alterar os arquivos de lá. Adicione-o de novo para levar uma edição.
 - Os plugins são os mesmos para todos os dispositivos conectados ao servidor. Desative-os ou remova-os na mesma seção; as mudanças valem ao recarregar.
-- Se um plugin quebrar a página, abra-a com `?agy-safe=1` para não carregar nenhum e depois desative-o.
+- Se um plugin quebrar a página, abra-a com `?agy-safe=1` para não carregar nenhum e depois desative-o. O app de tela de início do iPhone não tem barra de endereço, então abra o endereço com `?agy-safe=1` no Safari; o app recebe a mudança ao recarregar. Sem a interface web, inicie o servidor com `--disable-patch custom-plugins-loader` ou remova o nome do plugin de `enabled` em `~/.agy-remote/custom-plugins/state.json`.
 
 > [!CAUTION]
-> Um plugin roda com o mesmo acesso da interface web, que alcança o agente e seu terminal. Adicione apenas arquivos confiáveis.
+> Um plugin roda em todos os navegadores conectados ao servidor, com o mesmo acesso da interface web, que alcança o agente e seu terminal. Adicione apenas arquivos confiáveis.
 
 > [!NOTE]
-> Não são os plugins de agente do Antigravity. Extensões feitas para o app de desktop, como o agy-powertools, não são suportadas: o que depende do processo auxiliar do app de desktop ou da depuração do Chrome, como troca de conta, painéis de uso e proxies, não funciona pelo `agy-server`.
+> Não são os plugins de agente do Antigravity nem os UI Plugins de Customizations. Extensões feitas para o app de desktop, como o agy-powertools, não são suportadas: o que depende do processo auxiliar do app de desktop ou da depuração do Chrome, como troca de conta, painéis de uso e proxies, não funciona pelo `agy-server`.
 
 ---
 

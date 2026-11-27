@@ -58,21 +58,36 @@ Known limits:
 - Previews dial `127.0.0.1` or `::1`, so a server listening only on another
   loopback address such as `127.0.0.2` cannot be previewed.
 
-## UI plugins
+## Custom plugins
 
-Settings → Appearance → UI Plugins loads JavaScript and CSS files that a
-signed-in user picks on the server. A plugin runs in the web UI with that
-user's access, which already includes the agent and its terminal, so it adds no
-privilege. A hostile plugin file would still run in every signed-in browser, so
-treat the files like code you run.
+Settings → Appearance → Custom Plugins loads JavaScript and CSS files that a
+signed-in user picks on the server. These are not the sidecar UI plugins
+above: a custom plugin runs in the web UI's own origin, in every browser signed
+in to the server, with all the access the web UI has. It can drive the agent,
+approve its terminal commands and change its permission settings, so treat the
+files like code you run.
+
+A plugin added from a path stays linked to that file and is read again on each
+page load. A file the agent can change would then let an agent held to the
+workspace run code in the web UI, so a file inside the workspace, also one
+reached through a link, is copied instead, and later edits to it are not read.
+A linked file anywhere else is only as safe as its folder: keep it where an
+agent you do not trust cannot write. The agent's terminal commands are not held
+to the workspace, so this guards only against an agent its file access settings
+keep there.
 
 | Path | What it does | Boundaries |
 | --- | --- | --- |
-| `/__agy/api/plugins/browse` | Lists a folder on the server: its folders and `.js`/`.css` files, for the file chooser. | Login and same-origin checks. Lists what the server's user can read, as the agent can. |
-| `/__agy/api/plugins/add-path`, `/toggle`, `/delete` | Add a plugin from a server path, turn it on or off, or remove it. | POST only, login and same-origin checks. Regular `.js` and `.css` files up to 5 MB. Removing a plugin leaves its source file alone. |
-| `/__agy/plugins/file/<name>` | Serves a plugin, read from its source file, or from the copy in `~/.agy-remote/plugins/` when that is gone. | Login. Names are limited to letters, digits, dots, dashes and underscores; `X-Content-Type-Options: nosniff`. |
+| `/__agy/api/custom-plugins` | Lists the plugins, whether each is on, and the file each is read or copied from. | Login and same-origin checks. |
+| `/__agy/api/custom-plugins/browse` | Lists a folder on the server: its folders and `.js`/`.css` files, for the file chooser. | Login and same-origin checks. Lists what the server's user can read, as the agent can. |
+| `/__agy/api/custom-plugins/add-path`, `/toggle`, `/delete` | Add a plugin from a server path, turn it on or off, or remove it. | POST only, login and same-origin checks. Regular `.js` and `.css` files up to 5 MB. A name already added from another file is refused. Removing a linked or copied plugin leaves the file it came from alone. |
+| `/__agy/custom-plugins/loader.js` | The script the page includes: it loads the plugins that are on and draws their section. | Login. The same file for every page, kept by the browser under its version. |
+| `/__agy/custom-plugins/file/<name>` | Serves a plugin, read from its linked file, or from the copy in `~/.agy-remote/custom-plugins/`. | Login. Names are limited to letters, digits, dots, dashes and underscores; `X-Content-Type-Options: nosniff`. Kept by the browser only under the version its content has. |
 
-Open the UI with `?agy-safe=1` to load no plugins in that tab.
+Open the UI with `?agy-safe=1` to load no plugins in that tab. To stop them
+without the web UI, start the server with
+`--disable-patch custom-plugins-loader`, or remove a plugin's name from
+`enabled` in `~/.agy-remote/custom-plugins/state.json`.
 
 ## Running behind a reverse proxy
 

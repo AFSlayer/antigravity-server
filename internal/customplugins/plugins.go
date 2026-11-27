@@ -1,10 +1,10 @@
-// Package plugins keeps the JavaScript and CSS files a user adds under Settings > Appearance > UI Plugins, and serves
-// the script that loads the enabled ones into the web app. They are files on this server: a plugin added from a path
-// stays linked to that file, so editing it takes effect on the next reload, and a copy is kept in case it goes away.
-// The plugins are the same for every browser signed in to this agy-server. A plugin runs with the same access as the
-// web app itself, which already reaches the agent and its terminal, so adding one needs nothing more than being
-// signed in.
-package plugins
+// Package customplugins keeps the JavaScript and CSS files a user adds under Settings > Appearance > Custom Plugins,
+// and serves the script that loads the enabled ones into the web app. They are files on this server: a plugin added
+// from a path stays linked to that file, so editing it takes effect on the next reload, and a copy is kept in case it
+// goes away. A file inside the workspace is copied and not linked, since an agent that may only change the workspace
+// could otherwise run code in the web app through it. The plugins are the same for every browser signed in to this
+// agy-server, and they run with the web app's access, which reaches the agent and its terminal.
+package customplugins
 
 import (
 	"crypto/sha256"
@@ -28,15 +28,15 @@ import (
 )
 
 const (
-	ListAPIPath    = "/__agy/api/plugins"
-	BrowseAPIPath  = "/__agy/api/plugins/browse"
-	AddPathAPIPath = "/__agy/api/plugins/add-path"
-	ToggleAPIPath  = "/__agy/api/plugins/toggle"
-	DeleteAPIPath  = "/__agy/api/plugins/delete"
+	ListAPIPath    = "/__agy/api/custom-plugins"
+	BrowseAPIPath  = "/__agy/api/custom-plugins/browse"
+	AddPathAPIPath = "/__agy/api/custom-plugins/add-path"
+	ToggleAPIPath  = "/__agy/api/custom-plugins/toggle"
+	DeleteAPIPath  = "/__agy/api/custom-plugins/delete"
 	// LoaderPath serves the settings section and the loader. It is the same for every page, so a browser keeps it.
-	LoaderPath = "/__agy/plugins/loader.js"
+	LoaderPath = "/__agy/custom-plugins/loader.js"
 	// FilePrefix serves one plugin file by name.
-	FilePrefix = "/__agy/plugins/file/"
+	FilePrefix = "/__agy/custom-plugins/file/"
 	// MaxPluginBytes bounds one plugin file.
 	MaxPluginBytes = 5 << 20
 	stateFile      = "state.json"
@@ -67,11 +67,14 @@ type Plugin struct {
 	Source string `json:"source,omitempty"`
 	// SourceMissing says the source could not be read, so the copy kept when it last could is used.
 	SourceMissing bool `json:"sourceMissing,omitempty"`
+	// CopiedFrom is the file a plugin was copied from without a link: a file inside the workspace.
+	CopiedFrom string `json:"copiedFrom,omitempty"`
 }
 
 type state struct {
 	Enabled []string          `json:"enabled"`
 	Sources map[string]string `json:"sources,omitempty"`
+	Copied  map[string]string `json:"copied,omitempty"`
 }
 
 // Store is the plugin directory and the record of which plugins are on and where they came from.
@@ -153,21 +156,29 @@ func expandPath(path string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-// readPluginFile reads a regular file of at most MaxPluginBytes.
+// errNotFile is what reading a folder as a plugin gives, so the chooser can open it instead.
+var errNotFile = errors.New("is not a file")
+
+// readPluginFile reads a regular file of at most MaxPluginBytes, however much the file grows while it is read.
 func readPluginFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a file", path)
+		return nil, fmt.Errorf("%s %w", path, errNotFile)
 	}
-	if info.Size() > MaxPluginBytes {
-		return nil, fmt.Errorf("the file is over %d MB", MaxPluginBytes>>20)
-	}
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, MaxPluginBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxPluginBytes {
+		return nil, fmt.Errorf("the file is over %d MB", MaxPluginBytes>>20)
 	}
 	if len(b) == 0 {
 		return nil, errors.New("the file is empty")
@@ -175,13 +186,43 @@ func readPluginFile(path string) ([]byte, error) {
 	return b, nil
 }
 
+// inside says whether path is dir or below it, after following links in both.
+func inside(dir, path string) bool {
+	if dir == "" {
+		return false
+	}
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	rel, err := filepath.Rel(resolve(dir), resolve(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func (s *Store) loadState() state {
 	var st state
-	if b, err := os.ReadFile(filepath.Join(s.dir, stateFile)); err == nil {
-		_ = json.Unmarshal(b, &st)
+	path := filepath.Join(s.dir, stateFile)
+	if b, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(b, &st); err != nil {
+			// Keep a damaged file beside the new one rather than overwrite it on the next change.
+			_ = os.Rename(path, path+".broken")
+			st = state{}
+		}
 	}
 	if st.Sources == nil {
 		st.Sources = map[string]string{}
+	}
+	if st.Copied == nil {
+		st.Copied = map[string]string{}
+	}
+	// A source the workspace has come to hold, after the workspace changed, is no longer read; its copy is used.
+	for name, src := range st.Sources {
+		if inside(s.workspace, src) {
+			delete(st.Sources, name)
+			st.Copied[name] = src
+		}
 	}
 	return st
 }
@@ -193,6 +234,9 @@ func (s *Store) saveState(st state) error {
 	sort.Strings(st.Enabled)
 	if len(st.Sources) == 0 {
 		st.Sources = nil
+	}
+	if len(st.Copied) == 0 {
+		st.Copied = nil
 	}
 	b, _ := json.MarshalIndent(st, "", "  ")
 	tmp := filepath.Join(s.dir, stateFile+".tmp")
@@ -255,13 +299,15 @@ func (s *Store) List() ([]Plugin, error) {
 		}
 		sum := sha256.Sum256(b)
 		out = append(out, Plugin{Name: name, Kind: kind, Size: int64(len(b)), Enabled: contains(st.Enabled, name),
-			Version: hex.EncodeToString(sum[:6]), Source: st.Sources[name], SourceMissing: missing})
+			Version: hex.EncodeToString(sum[:6]), Source: st.Sources[name], SourceMissing: missing, CopiedFrom: st.Copied[name]})
 	}
 	return out, nil
 }
 
-// AddPath adds a .js or .css file on this server as a plugin linked to it, under the file's name. A plugin of the
-// same name is replaced and keeps whether it was on; a new one starts on, since adding it is how a user asks for it.
+// AddPath adds a .js or .css file on this server as a plugin under the file's name, linked to it unless it is inside
+// the workspace, where it is copied. Adding the same file again refreshes it and keeps whether it was on; a file of
+// the same name from somewhere else is refused rather than replace another plugin. A new plugin starts on, since
+// adding it is how a user asks for it, and so does a file picked from the plugin folder itself.
 func (s *Store) AddPath(path string) (Plugin, error) {
 	path, err := expandPath(path)
 	if err != nil {
@@ -281,19 +327,38 @@ func (s *Store) AddPath(path string) (Plugin, error) {
 		return Plugin{}, err
 	}
 	copyPath := filepath.Join(s.dir, name)
-	_, statErr := os.Stat(copyPath)
+	copyInfo, statErr := os.Stat(copyPath)
 	existed := statErr == nil
-	if err := writeCopy(copyPath, content); err != nil {
-		return Plugin{}, err
-	}
 	st := s.loadState()
-	// A file picked from the plugin folder itself is its own copy, and removing the plugin removes it.
-	if path == copyPath {
-		delete(st.Sources, name)
-	} else {
+	// The plugin folder's own file, also when reached through a link or in other letter case.
+	own := path == copyPath
+	if !own && existed {
+		if info, err := os.Stat(path); err == nil && os.SameFile(info, copyInfo) {
+			own = true
+		}
+	}
+	if existed && !own && st.Sources[name] != path && st.Copied[name] != path {
+		if from := st.Sources[name] + st.Copied[name]; from != "" {
+			return Plugin{}, fmt.Errorf("a plugin named %s is already added from %s; remove it first, or rename the file", name, from)
+		}
+		return Plugin{}, fmt.Errorf("a plugin named %s is already in %s; remove it first, or rename the file", name, s.dir)
+	}
+	if !own {
+		if err := writeCopy(copyPath, content); err != nil {
+			return Plugin{}, err
+		}
+	}
+	delete(st.Sources, name)
+	delete(st.Copied, name)
+	switch {
+	case own:
+		// The plugin folder's own file is the plugin, and removing the plugin removes it.
+	case inside(s.workspace, path):
+		st.Copied[name] = path
+	default:
 		st.Sources[name] = path
 	}
-	if !existed && !contains(st.Enabled, name) {
+	if (!existed || own) && !contains(st.Enabled, name) {
 		st.Enabled = append(st.Enabled, name)
 	}
 	if err := s.saveState(st); err != nil {
@@ -301,7 +366,7 @@ func (s *Store) AddPath(path string) (Plugin, error) {
 	}
 	sum := sha256.Sum256(content)
 	return Plugin{Name: name, Kind: kind, Size: int64(len(content)), Enabled: contains(st.Enabled, name),
-		Version: hex.EncodeToString(sum[:6]), Source: st.Sources[name]}, nil
+		Version: hex.EncodeToString(sum[:6]), Source: st.Sources[name], CopiedFrom: st.Copied[name]}, nil
 }
 
 // SetEnabled turns one plugin on or off.
@@ -335,6 +400,7 @@ func (s *Store) Delete(name string) error {
 	st := s.loadState()
 	st.Enabled = without(st.Enabled, name)
 	delete(st.Sources, name)
+	delete(st.Copied, name)
 	return s.saveState(st)
 }
 
@@ -363,6 +429,8 @@ type Entry struct {
 	Dir    bool   `json:"dir"`
 	Size   int64  `json:"size,omitempty"`
 	Plugin bool   `json:"plugin,omitempty"`
+	// Unusable says why a .js or .css file cannot be added as it is named.
+	Unusable string `json:"unusable,omitempty"`
 }
 
 // Folder is a folder on the server with the folders and plugin files in it, and the chooser's shortcuts.
@@ -406,7 +474,11 @@ func (s *Store) Browse(dir string) (Folder, error) {
 			out.Entries = append(out.Entries, Entry{Name: e.Name(), Dir: true})
 		case info.Mode().IsRegular():
 			if ext := strings.ToLower(filepath.Ext(e.Name())); ext == ".js" || ext == ".css" {
-				out.Entries = append(out.Entries, Entry{Name: e.Name(), Size: info.Size(), Plugin: true})
+				entry := Entry{Name: e.Name(), Size: info.Size(), Plugin: true}
+				if _, _, err := cleanName(e.Name()); err != nil {
+					entry.Plugin, entry.Unusable = false, "rename it with letters, digits, dots, dashes and underscores to add it"
+				}
+				out.Entries = append(out.Entries, entry)
 			}
 		}
 	}
@@ -423,6 +495,10 @@ func (s *Store) Browse(dir string) (Folder, error) {
 func (s *Store) handleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// The list names files on the server, so like a folder listing it is only for the web app itself.
+	if !s.sameOrigin(w, r) {
 		return
 	}
 	s.writeList(w)
@@ -484,7 +560,7 @@ func (s *Store) handleAddPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.AddPath(req.Path); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "notFile": errors.Is(err, errNotFile)})
 		return
 	}
 	s.writeList(w)
@@ -559,15 +635,16 @@ func (s *Store) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	sum := sha256.Sum256(b)
 	if kind == "css" {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	} else {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// The loader asks for each file with its content hash in the query, so a changed file is fetched again; a
-	// request without it is not kept.
-	if r.URL.Query().Get("v") != "" {
+	// The loader asks for each file with its content hash in the query, so a changed file is fetched again. Only an
+	// answer whose content has that hash is kept: a source that changed in between must not be kept under the old one.
+	if r.URL.Query().Get("v") == hex.EncodeToString(sum[:6]) {
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")

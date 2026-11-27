@@ -46,7 +46,7 @@ var regexpFixtures = map[string]string{
 	"context-indicator-setting-visible":         v232ContextIndicatorVisible,
 	"context-indicator-setting-in-chat":         v232ContextIndicatorSections,
 	"context-indicator-setting-description":     v232ContextIndicatorDescription,
-	"plugins-settings-section":                  `var cUb=()=>{var a=bk().get("getThemeCustomizer");return E.createElement(YU,{title:"Appearance",description:"Configure the agent's visual theme and display preferences."},E.createElement(NV,{screen:"Appearance"}),a?.(),E.createElement(zV,{expanded:b},E.createElement(NV,{screen:"Appearance",advanced:!0})))}`,
+	"custom-plugins-settings-section":           `var cUb=()=>{var a=bk().get("getThemeCustomizer");return E.createElement(YU,{title:"Appearance",description:"Configure the agent's visual theme and display preferences."},E.createElement(NV,{screen:"Appearance"}),a?.(),E.createElement(zV,{expanded:b},E.createElement(NV,{screen:"Appearance",advanced:!0})))}`,
 	"skip-onboarding":                           `c.hasOnboardingScreens&&e!==2&&RK({to:"/onboarding",replace:!0,throw:!0})`,
 	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;var l=k.shiftKey&&(k.metaKey||k.ctrlKey);if(k.shiftKey&&!l)return!1;k.preventDefault();`,
 	"model-effort-submenu":                      ",onClick:()=>{var y=\nv.byEffort.get(w);y&&b(y)}",

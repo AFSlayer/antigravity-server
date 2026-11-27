@@ -149,19 +149,21 @@ Antigravity Server 支持渐进式 Web 应用（PWA）标准。将其添加到�
 - 点击规则或技能旁的 **Edit** 按钮展开内联编辑器。
 - 修改后点击 **Save**，更改将以原子方式保存至主机文件系统并即时生效。
 
+---
 
-### 🧩 UI 插件
+### 🧩 自定义插件
 可将自己的 JavaScript 或 CSS 加载到 Web UI 中，用于主题、字体或小幅界面调整，在浏览器扩展无法运行的 iPhone 主屏幕应用中同样生效：
-- 在 **Settings → Appearance → UI Plugins** 中点击 **Choose file**，选择服务器上的 `.js` 或 `.css` 文件，也可以直接输入路径。
-- 插件与该文件保持关联：修改文件后刷新即可生效；若文件不存在，则使用保存在 `~/.agy-remote/plugins/` 中的副本。
+- 在 **Settings → Appearance → Custom Plugins** 中点击 **Choose file**，选择服务器上的 `.js` 或 `.css` 文件，也可以直接输入路径。
+- 插件与该文件保持关联：修改文件后刷新即可生效；若文件不存在，则使用保存在 `~/.agy-remote/custom-plugins/` 中的副本。
+- 工作区内的文件智能体可以修改，因此只复制、不关联。要应用修改，请重新添加。
 - 插件对登录该服务器的所有设备同时生效。可在同一界面中关闭或移除，更改在刷新后生效。
-- 若插件导致页面异常，在地址后加上 `?agy-safe=1` 打开即可不加载任何插件，然后将其关闭。
+- 若插件导致页面异常，在地址后加上 `?agy-safe=1` 打开即可不加载任何插件，然后将其关闭。iPhone 主屏幕应用没有地址栏，请在 Safari 中打开加上 `?agy-safe=1` 的地址并关闭插件，应用会在下次刷新时生效。若不通过 Web UI 关闭，可用 `--disable-patch custom-plugins-loader` 启动服务器，或从 `~/.agy-remote/custom-plugins/state.json` 的 `enabled` 中删除插件名。
 
 > [!CAUTION]
-> 插件以与 Web UI 相同的权限运行，可操作智能体及其终端。请只添加可信的文件。
+> 插件会在登录该服务器的所有浏览器中以与 Web UI 相同的权限运行，可操作智能体及其终端。请只添加可信的文件。
 
 > [!NOTE]
-> 这与 Antigravity 的智能体插件不同。不支持 agy-powertools 等为桌面应用开发的扩展：账号切换、用量面板、代理等依赖桌面应用辅助进程或 Chrome 调试接口的功能，无法通过 `agy-server` 使用。
+> 这既不是 Antigravity 的智能体插件，也不是 Customizations 中的 UI Plugins。不支持 agy-powertools 等为桌面应用开发的扩展：账号切换、用量面板、代理等依赖桌面应用辅助进程或 Chrome 调试接口的功能，无法通过 `agy-server` 使用。
 
 ---
 

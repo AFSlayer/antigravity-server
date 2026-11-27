@@ -1,7 +1,8 @@
-package plugins
+package customplugins
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,10 +112,18 @@ func TestAddPathRules(t *testing.T) {
 	if err := s.SetEnabled("tools.js", false); err != nil {
 		t.Fatal(err)
 	}
-	// Adding a file of the same name again replaces it and keeps it off.
-	write(t, filepath.Join(dir, "other", "tools.js"), "console.log(2)")
-	if p, err := s.AddPath(filepath.Join(dir, "other", "tools.js")); err != nil || p.Enabled || p.Source != filepath.Join(dir, "other", "tools.js") {
-		t.Fatalf("replace: %+v, %v", p, err)
+	// Adding the same file again refreshes it and keeps it off.
+	write(t, filepath.Join(dir, "tools.js"), "console.log(2)")
+	if p, err := s.AddPath(filepath.Join(dir, "tools.js")); err != nil || p.Enabled || p.Size != int64(len("console.log(2)")) {
+		t.Fatalf("add again: %+v, %v", p, err)
+	}
+	// A file of the same name from another folder does not replace it.
+	write(t, filepath.Join(dir, "other", "tools.js"), "console.log(3)")
+	if _, err := s.AddPath(filepath.Join(dir, "other", "tools.js")); err == nil || !strings.Contains(err.Error(), "already added from "+filepath.Join(dir, "tools.js")) {
+		t.Fatalf("same name from another folder: %v", err)
+	}
+	if p := one(t, s, "tools.js"); p.Source != filepath.Join(dir, "tools.js") {
+		t.Fatalf("the refused file replaced the plugin: %+v", p)
 	}
 	write(t, filepath.Join(dir, "empty.js"), "")
 	write(t, filepath.Join(dir, "notes.txt"), "x")
@@ -124,9 +133,17 @@ func TestAddPathRules(t *testing.T) {
 			t.Errorf("%s was accepted", bad)
 		}
 	}
-	// A file in the plugin folder itself is not linked to itself.
-	if p, err := s.AddPath(filepath.Join(dir, "plugins", "tools.js")); err != nil || p.Source != "" {
-		t.Fatalf("own copy linked: %+v, %v", p, err)
+	// A file in the plugin folder itself is not linked to itself, and picking it turns it on.
+	write(t, filepath.Join(dir, "plugins", "hand.css"), "b{}")
+	if p, err := s.AddPath(filepath.Join(dir, "plugins", "hand.css")); err != nil || p.Source != "" || !p.Enabled {
+		t.Fatalf("own file: %+v, %v", p, err)
+	}
+	// A folder named like a plugin says it is not a file, so the chooser can open it.
+	if err := os.Mkdir(filepath.Join(dir, "highlight.js"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddPath(filepath.Join(dir, "highlight.js")); !errors.Is(err, errNotFile) {
+		t.Fatalf("folder: %v", err)
 	}
 	if err := s.SetEnabled("missing.js", true); err == nil {
 		t.Fatal("a missing plugin was turned on")
@@ -144,7 +161,7 @@ func TestLoaderIsCacheable(t *testing.T) {
 	for url, want := range map[string]string{LoaderURL: "immutable", LoaderPath: "no-cache"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
-		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Cache-Control"), want) || !strings.Contains(rec.Body.String(), "__agyPluginsSection") {
+		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Cache-Control"), want) || !strings.Contains(rec.Body.String(), "__agyCustomPluginsSection") {
 			t.Fatalf("%s: %d %q", url, rec.Code, rec.Header().Get("Cache-Control"))
 		}
 	}
@@ -186,13 +203,32 @@ func TestHandlers(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || len(resp.Plugins) != 1 || resp.Plugins[0].Source != src {
 		t.Fatalf("add answer: %s", rec.Body)
 	}
-	file := do("GET", FilePrefix+"a.js?v="+resp.Plugins[0].Version, "", "")
+	first := resp.Plugins[0].Version
+	file := do("GET", FilePrefix+"a.js?v="+first, "", "")
 	if file.Code != http.StatusOK || file.Body.String() != "alert(1)" || !strings.HasPrefix(file.Header().Get("Content-Type"), "application/javascript") || !strings.Contains(file.Header().Get("Cache-Control"), "immutable") {
 		t.Fatalf("file: %d %q %s", file.Code, file.Body, file.Header())
 	}
 	write(t, src, "alert(2)")
 	if got := do("GET", FilePrefix+"a.js", "", "").Body.String(); got != "alert(2)" {
 		t.Fatalf("the file is not read from its source: %q", got)
+	}
+	// The source changed after the list was read: the new content under the old version is not kept.
+	if stale := do("GET", FilePrefix+"a.js?v="+first, "", ""); stale.Body.String() != "alert(2)" || !strings.Contains(stale.Header().Get("Cache-Control"), "no-cache") {
+		t.Fatalf("stale version: %q %q", stale.Body, stale.Header().Get("Cache-Control"))
+	}
+	if err := os.Mkdir(filepath.Join(dir, "lib.js"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do("POST", AddPathAPIPath, `{"path":"`+filepath.Join(dir, "lib.js")+`"}`, "http://agy.example.com"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"notFile":true`) {
+		t.Fatalf("adding a folder: %d %s", rec.Code, rec.Body)
+	}
+	for _, path := range []string{ToggleAPIPath, DeleteAPIPath} {
+		if rec := do("POST", path, `{"name":"a.js","enabled":false}`, "http://evil.example.com"); rec.Code != http.StatusForbidden {
+			t.Fatalf("cross-origin %s: %d", path, rec.Code)
+		}
+	}
+	if p := one(t, s, "a.js"); !p.Enabled {
+		t.Fatal("a cross-origin request changed the plugin")
 	}
 	if rec := do("GET", FilePrefix+"..%2fstate.json", "", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("path escape: %d", rec.Code)
@@ -214,7 +250,7 @@ func TestBrowse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, f := range []string{"z.css", "a.JS", "notes.txt"} {
+	for _, f := range []string{"z.css", "a.JS", "notes.txt", "한글.css"} {
 		write(t, filepath.Join(dir, f), "x")
 	}
 	if err := os.Symlink(filepath.Join(dir, "b-dir"), filepath.Join(dir, "link")); err != nil {
@@ -233,8 +269,13 @@ func TestBrowse(t *testing.T) {
 		}
 		got = append(got, n)
 	}
-	if want := ".hidden/ b-dir/ link/ a.JS z.css"; strings.Join(got, " ") != want {
+	if want := ".hidden/ b-dir/ link/ a.JS z.css 한글.css"; strings.Join(got, " ") != want {
 		t.Fatalf("entries %q, want %q", strings.Join(got, " "), want)
+	}
+	for _, e := range f.Entries {
+		if bad := e.Name == "한글.css"; bad != (e.Unusable != "") || bad == e.Plugin && !e.Dir {
+			t.Errorf("%s: plugin %v, unusable %q", e.Name, e.Plugin, e.Unusable)
+		}
 	}
 	if f.Parent != filepath.Dir(dir) || f.Workspace != "/srv/work" || f.Home == "" {
 		t.Fatalf("parent %q, workspace %q, home %q", f.Parent, f.Workspace, f.Home)
@@ -254,5 +295,83 @@ func TestBrowse(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-site listing: %d", rec.Code)
+	}
+	req = httptest.NewRequest("GET", "http://agy.example.com"+ListAPIPath, nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site plugin list: %d", rec.Code)
+	}
+}
+
+// A file inside the workspace is copied and not linked, also through a link from outside it, so an agent that may
+// change only the workspace cannot change a plugin. A linked source the workspace comes to hold is no longer read.
+func TestWorkspaceFilesAreCopied(t *testing.T) {
+	dir := t.TempDir()
+	ws := filepath.Join(dir, "work")
+	inWS := filepath.Join(ws, "theme.css")
+	write(t, inWS, "a{color:red}")
+	link := filepath.Join(dir, "elsewhere", "linked.css")
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inWS, link); err != nil {
+		t.Fatal(err)
+	}
+	s := New(filepath.Join(dir, "plugins")).WithWorkspace(ws)
+	for _, path := range []string{inWS, link} {
+		p, err := s.AddPath(path)
+		if err != nil || p.Source != "" || p.CopiedFrom != path || !p.Enabled {
+			t.Fatalf("%s: %+v, %v", path, p, err)
+		}
+	}
+	write(t, inWS, "a{color:blue}")
+	if b, _, _ := s.content("theme.css", s.loadState()); string(b) != "a{color:red}" {
+		t.Fatalf("a workspace edit reached the plugin: %q", b)
+	}
+	// Adding it again takes in the edit, and it stays a copy.
+	if p, err := s.AddPath(inWS); err != nil || p.CopiedFrom != inWS || p.Source != "" {
+		t.Fatalf("add again: %+v, %v", p, err)
+	}
+	if b, _, _ := s.content("theme.css", s.loadState()); string(b) != "a{color:blue}" {
+		t.Fatalf("adding again did not take in the edit: %q", b)
+	}
+
+	outside := filepath.Join(dir, "tools", "tools.js")
+	write(t, outside, "1")
+	if p, err := s.AddPath(outside); err != nil || p.Source != outside {
+		t.Fatalf("outside the workspace: %+v, %v", p, err)
+	}
+	wider := New(filepath.Join(dir, "plugins")).WithWorkspace(dir)
+	write(t, outside, "2")
+	if p := one(t, wider, "tools.js"); p.Source != "" || p.CopiedFrom != outside || p.Size != 1 {
+		t.Fatalf("a source inside the new workspace is still read: %+v", p)
+	}
+	if err := wider.Delete("tools.js"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal("removing a copied plugin removed the file it was copied from")
+	}
+}
+
+// A damaged state file is kept beside the new one instead of being overwritten on the next change.
+func TestDamagedStateIsKept(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "plugins")
+	write(t, filepath.Join(dir, "a.js"), "1")
+	write(t, filepath.Join(dir, stateFile), "{not json")
+	s := New(dir)
+	if p := one(t, s, "a.js"); p.Enabled {
+		t.Fatalf("listed from a damaged state: %+v", p)
+	}
+	if err := s.SetEnabled("a.js", true); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, stateFile+".broken")); err != nil || string(b) != "{not json" {
+		t.Fatalf("the damaged state was not kept: %q, %v", b, err)
+	}
+	if p := one(t, s, "a.js"); !p.Enabled {
+		t.Fatal("the new state was not saved")
 	}
 }

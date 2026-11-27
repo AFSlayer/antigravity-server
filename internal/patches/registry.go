@@ -688,23 +688,17 @@ func All() []Patch {
 			Replace:      contextIndicatorSettingDescription.replace,
 		},
 
-		// The user's UI plugins: the loader in the page, and their section in Settings > Appearance. See plugins.go.
+		// The user's custom plugins get a section in Settings > Appearance; the loader that runs them is the last head
+		// injection. See custom_plugins.go.
 		{
-			ID:      "plugins-loader",
-			Desc:    "Load the UI plugins turned on under Settings > Appearance > Plugins",
-			Target:  HTML,
-			Kind:    InjectHead,
-			Replace: pluginsLoaderScript,
-		},
-		{
-			ID:           "plugins-settings-section",
-			Desc:         "Add the Plugins section to Settings > Appearance",
+			ID:           "custom-plugins-settings-section",
+			Desc:         "Add the Custom Plugins section to Settings > Appearance",
 			Target:       MainJS,
 			Kind:         Regexp,
-			FindRe:       pluginsSettingsSectionRe,
+			FindRe:       customPluginsSectionRe,
 			Optional:     true,
 			Precondition: hasAppearanceScreen,
-			Replace:      pluginsSettingsSection,
+			Replace:      customPluginsSection,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -1822,6 +1816,14 @@ func All() []Patch {
 			Kind:    InjectHead,
 			Enabled: mobile,
 			Replace: signInBanner,
+		},
+		// Last of the head injections: an external script holds up every script after it until it arrives.
+		{
+			ID:      "custom-plugins-loader",
+			Desc:    "Load the custom plugins turned on under Settings > Appearance > Custom Plugins",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: customPluginsLoaderScript,
 		},
 		{
 			ID:     "cache-bust",

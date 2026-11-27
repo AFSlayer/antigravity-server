@@ -19,11 +19,11 @@ import (
 	"github.com/AFSlayer/antigravity-server/internal/assets"
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/config"
+	"github.com/AFSlayer/antigravity-server/internal/customplugins"
 	"github.com/AFSlayer/antigravity-server/internal/loopback"
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
 	"github.com/AFSlayer/antigravity-server/internal/netinfo"
 	"github.com/AFSlayer/antigravity-server/internal/patches"
-	"github.com/AFSlayer/antigravity-server/internal/plugins"
 	"github.com/AFSlayer/antigravity-server/internal/proxy"
 	"github.com/AFSlayer/antigravity-server/internal/rules"
 	"github.com/AFSlayer/antigravity-server/internal/signin"
@@ -433,7 +433,7 @@ func (r *runner) start(runCtx context.Context) error {
 	}).WithSameOrigin(trusted, r.cfg.PublicURL)
 	rulesMgr.Register(publicMux)
 
-	plugins.New(r.cfg.Path("plugins")).WithSameOrigin(trusted, r.cfg.PublicURL).WithWorkspace(effectiveWS).Register(publicMux)
+	customplugins.New(r.cfg.Path("custom-plugins")).WithSameOrigin(trusted, r.cfg.PublicURL).WithWorkspace(effectiveWS).Register(publicMux)
 
 	ports := &loopbackPortPolicy{
 		static:             staticReserved,
