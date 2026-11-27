@@ -135,7 +135,8 @@
   }
   // Removing a linked or copied plugin deletes only the copy in the plugin folder; one with neither is that copy alone.
   function removeQuestion(p) {
-    if (p.source && !p.sourceMissing) return "Remove " + p.name + "? " + p.source + " is left as it is.";
+    // A source that is there but cannot be used, such as one over 5 MB, is left as it is too.
+    if (p.source && !p.sourceGone) return "Remove " + p.name + "? " + p.source + " is left as it is.";
     if (p.copiedFrom) return "Remove " + p.name + "? Its copy is deleted, and " + p.copiedFrom + " is left as it is.";
     return "Remove " + p.name + "? Its file in the plugin folder is the only copy, and it is deleted.";
   }
@@ -273,7 +274,8 @@
     var changedState = R.useState(false), changed = changedState[0], setChanged = changedState[1];
     var choosingState = R.useState(false), choosing = choosingState[0], setChoosing = choosingState[1];
     var copiedState = R.useState([]), copiedFolders = copiedState[0], setCopiedFolders = copiedState[1];
-    function show(d) { setList(d.plugins || []); setCopiedFolders(d.copiedFolders || []); }
+    var stateProblemState = R.useState(""), stateProblem = stateProblemState[0], setStateProblem = stateProblemState[1];
+    function show(d) { setList(d.plugins || []); setCopiedFolders(d.copiedFolders || []); setStateProblem(d.stateProblem || ""); }
 
     R.useEffect(function () {
       var live = true;
@@ -319,6 +321,7 @@
           "Load your own JavaScript or CSS files from this server into the web app. These are not Antigravity's agent plugins or its UI Plugins under Customizations. A plugin runs with the same access as the app, including the agent and its terminal, so add only files you trust."),
         h("p", { className: "m-0 text-xs text-muted-foreground" },
           "Extensions made for the desktop app that need its helper process or Chrome debugging, such as account switching, usage dashboards or proxies, do not work here.")),
+      stateProblem && h("div", { className: "text-xs text-red-500", role: "alert", "data-testid": "agy-custom-plugins-state-problem" }, stateProblem),
       h("div", { className: "agy-card bg-transparent rounded-xl border border-border overflow-hidden divide-y divide-border" },
         list === null ? note("Loading…") : list.length === 0 ? note("No plugins yet.") : list.map(function (p) {
           var where = sourceLine(p);

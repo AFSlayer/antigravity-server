@@ -441,23 +441,63 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 	}
 }
 
-// A damaged state file is kept beside the new one instead of being overwritten on the next change.
+// A damaged state file is kept beside the new one, under a name of its own each time, instead of being overwritten on
+// the next change, and the list says so until a change is saved.
 func TestDamagedStateIsKept(t *testing.T) {
 	dir := filepath.Join(tempDir(t), "plugins")
 	write(t, filepath.Join(dir, "a.js"), "1")
 	write(t, filepath.Join(dir, stateFile), "{not json")
 	s := newStore(dir)
-	if p := one(t, s, "a.js"); p.Enabled {
-		t.Fatalf("listed from a damaged state: %+v", p)
+	mux := http.NewServeMux()
+	s.Register(mux)
+	list := func() string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", ListAPIPath, nil))
+		return rec.Body.String()
+	}
+	if body := list(); !strings.Contains(body, `"stateProblem"`) || !strings.Contains(body, `"enabled":false`) {
+		t.Fatalf("a damaged state was not reported: %s", body)
+	}
+	write(t, filepath.Join(dir, stateFile), "{again")
+	_ = list()
+	aside, _ := filepath.Glob(filepath.Join(dir, stateFile+".broken-*"))
+	if len(aside) != 2 {
+		t.Fatalf("damaged states kept: %q", aside)
+	}
+	for _, f := range aside {
+		if b, _ := os.ReadFile(f); string(b) != "{not json" && string(b) != "{again" {
+			t.Fatalf("%s holds %q", f, b)
+		}
 	}
 	if err := s.SetEnabled("a.js", true); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, stateFile+".broken")); err != nil || string(b) != "{not json" {
-		t.Fatalf("the damaged state was not kept: %q, %v", b, err)
+	if body := list(); strings.Contains(body, `"stateProblem"`) || !strings.Contains(body, `"enabled":true`) {
+		t.Fatalf("after a change: %s", body)
 	}
-	if p := one(t, s, "a.js"); !p.Enabled {
-		t.Fatal("the new state was not saved")
+}
+
+// Two plugins linked to one file each keep their own copy up to date, so either stands in when the file goes.
+func TestTwoPluginsFromOneFile(t *testing.T) {
+	dir := tempDir(t)
+	src := filepath.Join(dir, "theme.css")
+	write(t, src, "a{}")
+	symlink(t, src, filepath.Join(dir, "x.css"))
+	symlink(t, src, filepath.Join(dir, "y.css"))
+	s := newStore(filepath.Join(dir, "plugins"))
+	for _, n := range []string{"x.css", "y.css"} {
+		if p, err := s.AddPath(filepath.Join(dir, n)); err != nil || p.Source != src {
+			t.Fatalf("%s: %+v, %v", n, p, err)
+		}
+	}
+	write(t, src, "a{color:red}")
+	_ = one(t, s, "x.css")
+	if err := os.Remove(src); err != nil {
+		t.Fatal(err)
+	}
+	x, y := one(t, s, "x.css"), one(t, s, "y.css")
+	if x.Version != y.Version || y.Size != int64(len("a{color:red}")) {
+		t.Fatalf("the copies differ: %+v, %+v", x, y)
 	}
 }
 
@@ -486,9 +526,9 @@ func TestListReadsOnlyWhatChanged(t *testing.T) {
 	}
 	// A file whose stamp has not changed is not read again: the hash kept for it is used.
 	s.mu.Lock()
-	k := s.known[src]
+	k := s.known[sourceKey("a.css", src)]
 	k.sum = sha256.Sum256([]byte("kept"))
-	s.known[src] = k
+	s.known[sourceKey("a.css", src)] = k
 	s.mu.Unlock()
 	kept := sha256.Sum256([]byte("kept"))
 	if again := one(t, s, "a.css"); again.Version != hex.EncodeToString(kept[:6]) {
@@ -511,12 +551,12 @@ func TestListReadsOnlyWhatChanged(t *testing.T) {
 	if err := os.Remove(src); err != nil {
 		t.Fatal(err)
 	}
-	if gone := one(t, s, "a.css"); !gone.SourceMissing || gone.Size == 0 || gone.SourceProblem != src+" is not there" {
+	if gone := one(t, s, "a.css"); !gone.SourceMissing || !gone.SourceGone || gone.Size == 0 || gone.SourceProblem != src+" is not there" {
 		t.Fatalf("a missing source: %+v", gone)
 	}
-	// A source that grew past the limit says so.
+	// A source that grew past the limit says so, and is still there.
 	write(t, src, strings.Repeat("x", MaxPluginBytes+1))
-	if big := one(t, s, "a.css"); !big.SourceMissing || !strings.Contains(big.SourceProblem, "over 5 MB") {
+	if big := one(t, s, "a.css"); !big.SourceMissing || big.SourceGone || !strings.Contains(big.SourceProblem, "over 5 MB") {
 		t.Fatalf("a source over the limit: %+v", big)
 	}
 }

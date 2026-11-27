@@ -72,6 +72,8 @@ type Plugin struct {
 	// SourceMissing says the source could not be used, so the copy kept when it last could is, and SourceProblem why.
 	SourceMissing bool   `json:"sourceMissing,omitempty"`
 	SourceProblem string `json:"sourceProblem,omitempty"`
+	// SourceGone says the source is not there at all, so the copy is the only one left.
+	SourceGone bool `json:"sourceGone,omitempty"`
 	// CopiedFrom is the file a plugin was copied from without a link: a file the agent can change.
 	CopiedFrom string `json:"copiedFrom,omitempty"`
 }
@@ -92,8 +94,14 @@ type Store struct {
 	trusted   []*net.IPNet
 	publicURL string
 	// known holds the hash of each file read, with its stamp then, so a file that has not changed is not read again.
+	// A source is held under the plugin it is read for, as two plugins may be linked to one file and each has a copy.
 	known map[string]known
+	// damaged is where a state file that could not be read was put aside, until the next change is saved.
+	damaged string
 }
+
+// sourceKey is what a plugin's source is held under in known.
+func sourceKey(name, src string) string { return name + "\x00" + src }
 
 // stamp is what tells a file apart from the last time it was read, without reading it. Where the system has them, the
 // file's number and the time its inode last changed are in it too, so a copy that keeps the size and the modification
@@ -225,10 +233,13 @@ func expandPath(path string) (string, error) {
 // errNotFile is what reading a folder as a plugin gives, so the chooser can open it instead.
 var errNotFile = errors.New("is not a file")
 
+// errGone is a source that is not there any more, as against one that is there and cannot be used.
+var errGone = errors.New("is not there")
+
 // unreadable says why a file cannot be read, naming it.
 func unreadable(path string, err error) error {
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s is not there", path)
+		return fmt.Errorf("%s %w", path, errGone)
 	}
 	if errors.Is(err, errNotFile) {
 		return fmt.Errorf("%s %w", path, errNotFile)
@@ -309,8 +320,12 @@ func (s *Store) loadState() state {
 	path := filepath.Join(s.dir, stateFile)
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &st); err != nil {
-			// Keep a damaged file beside the new one rather than overwrite it on the next change.
-			_ = os.Rename(path, path+".broken")
+			// Keep a damaged file beside the new one rather than overwrite it on the next change, under a name of its
+			// own so a second one does not overwrite the first, and say so in the section.
+			aside := path + ".broken-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+			if os.Rename(path, aside) == nil {
+				s.damaged = aside
+			}
 			st = state{}
 		}
 	}
@@ -346,7 +361,11 @@ func (s *Store) saveState(st state) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(s.dir, stateFile))
+	if err := os.Rename(tmp, filepath.Join(s.dir, stateFile)); err != nil {
+		return err
+	}
+	s.damaged = ""
+	return nil
 }
 
 func writeCopy(path string, content []byte) error {
@@ -359,38 +378,49 @@ func writeCopy(path string, content []byte) error {
 
 // content returns what a plugin serves now: its source when that can be used, refreshing the kept copy when the
 // source changed, and else the kept copy, with why the source could not be used. Called with s.mu held.
-func (s *Store) content(name string, st state) ([]byte, string, error) {
+func (s *Store) content(name string, st state) ([]byte, error, error) {
 	copyPath := filepath.Join(s.dir, name)
 	if src := st.Sources[name]; src != "" {
+		key := sourceKey(name, src)
 		// The stamp before the read: a change during the read then shows as a new stamp next time.
 		before, _ := stampOf(src)
 		b, err := readPluginFile(src)
 		if err == nil {
 			sum := sha256.Sum256(b)
-			if k, ok := s.known[src]; !ok || k.sum != sum {
-				if old, err := os.ReadFile(copyPath); err != nil || !bytes.Equal(old, b) {
-					_ = writeCopy(copyPath, b)
-				}
+			// The copy is known to hold this content when it was last written or seen with it. Otherwise it is looked
+			// at and written, and the source is remembered only once the copy holds what it says, so a copy that could
+			// not be written is tried again next time.
+			fresh := false
+			if k, ok := s.known[key]; ok && k.sum == sum {
+				fresh = true
+			} else if old, err := os.ReadFile(copyPath); err == nil && bytes.Equal(old, b) {
+				fresh = true
+			} else {
+				fresh = writeCopy(copyPath, b) == nil
 			}
-			s.known[src] = known{stamp: before, sum: sum}
-			return b, "", nil
+			if fresh {
+				s.known[key] = known{stamp: before, sum: sum}
+			} else {
+				delete(s.known, key)
+			}
+			return b, nil, nil
 		}
 		kept, copyErr := os.ReadFile(copyPath)
-		return kept, err.Error(), copyErr
+		return kept, err, copyErr
 	}
 	b, err := os.ReadFile(copyPath)
-	return b, "", err
+	return b, nil, err
 }
 
 // summary gives a plugin's size and content hash for the list, reading only what changed since it was last read. A
 // plugin that is off is not read from its source: its copy stands for it until it is turned on. Called with s.mu held.
-func (s *Store) summary(name string, st state, enabled bool) (int64, [32]byte, string, error) {
-	problem := ""
+func (s *Store) summary(name string, st state, enabled bool) (int64, [32]byte, error, error) {
+	var problem error
 	if src := st.Sources[name]; src != "" {
 		if now, err := stampOf(src); err != nil {
-			problem = unreadable(src, err).Error()
-		} else if k, hit := s.known[src]; hit && k.stamp.same(now) {
-			return now.size, k.sum, "", nil
+			problem = unreadable(src, err)
+		} else if k, hit := s.known[sourceKey(name, src)]; hit && k.stamp.same(now) {
+			return now.size, k.sum, nil, nil
 		} else if enabled {
 			b, problem, err := s.content(name, st)
 			return int64(len(b)), sha256.Sum256(b), problem, err
@@ -439,8 +469,12 @@ func (s *Store) List() ([]Plugin, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, Plugin{Name: name, Kind: kind, Size: size, Enabled: enabled, Version: hex.EncodeToString(sum[:6]),
-			Source: st.Sources[name], SourceMissing: problem != "", SourceProblem: problem, CopiedFrom: st.Copied[name]})
+		p := Plugin{Name: name, Kind: kind, Size: size, Enabled: enabled, Version: hex.EncodeToString(sum[:6]),
+			Source: st.Sources[name], CopiedFrom: st.Copied[name]}
+		if problem != nil {
+			p.SourceMissing, p.SourceProblem, p.SourceGone = true, problem.Error(), errors.Is(problem, errGone)
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }
@@ -512,7 +546,7 @@ func (s *Store) AddPath(path string) (Plugin, error) {
 		st.Copied[name] = path
 	} else {
 		st.Sources[name] = target
-		s.known[target] = known{stamp: before, sum: sha256.Sum256(content)}
+		s.known[sourceKey(name, target)] = known{stamp: before, sum: sha256.Sum256(content)}
 	}
 	if !existed && !contains(st.Enabled, name) {
 		st.Enabled = append(st.Enabled, name)
@@ -559,7 +593,7 @@ func (s *Store) Delete(name string) error {
 	}
 	st := s.loadState()
 	st.Enabled = without(st.Enabled, name)
-	delete(s.known, st.Sources[name])
+	delete(s.known, sourceKey(name, st.Sources[name]))
 	delete(s.known, filepath.Join(s.dir, name))
 	delete(st.Sources, name)
 	delete(st.Copied, name)
@@ -696,7 +730,14 @@ func (s *Store) writeList(w http.ResponseWriter) {
 			copied = append(copied, dir)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": list, "copiedFolders": copied})
+	out := map[string]any{"plugins": list, "copiedFolders": copied}
+	s.mu.Lock()
+	if s.damaged != "" {
+		out["stateProblem"] = "The plugin settings could not be read, so every plugin was turned off and its link to its file " +
+			"was dropped. The settings were kept as " + s.damaged + "."
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, out)
 }
 
 // sameOrigin checks a request came from the web app's own pages.
