@@ -27,24 +27,26 @@ var (
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===\s*0\)return\s+([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileProjectSettingsExportRe       = regexp.MustCompile(`((?:export\s+)?)function ([a-zA-Z0-9_$]+)\(\)\{(var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),[de]=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=)([a-zA-Z0-9_$]+\("main"\))`)
-	mobileSettingsProjectsRe            = regexp.MustCompile(
+	// 2.29 to 2.35 in the first form, groups 1 to 14; 2.36 in the second, named. See settings_projects_236.go.
+	mobileSettingsProjectsRe = regexp.MustCompile(`(?:` +
 		`(var [a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),[\s\S]{1,250}?\{sharedNavItems:[ce],globalScreens:[df],workspaces:[fg],showWorkspacesSection:[gh]\}=[a-zA-Z0-9_$]+\(\);` +
-			`[bc]=\[\.\.\.[ce]\.filter\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+!=="Account"\),\.\.\.[df],(?:\.\.\.\([bc]\?\[\]:\["Shortcuts"\]\),)?(?:\.\.\.\([bc]\.hideProvideFeedback\?\[\]:\["Provide Feedback"\]\)|\.\.\.\([bc]\?\["Provide Feedback"\]:\[\]\))\];` +
-			`var ([hk])=[a-zA-Z0-9_$]+\(!0\)[;,][bck]=[hk]\.path\.length[,;](?:var )?l=[bck]===0,m=[hk]\.path\[0\]\?\?[hk]\.exiting\[0\],n=m\?\.startsWith\("workspace:"\);)` +
-			`(return ([a-zA-Z0-9_$]+)\.createElement\("div",\{ref:[hk]\.setHost,className:"relative h-full w-full overflow-hidden"\},[\r\n\s]*[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*` +
-			`\{offset:-[bck],active:l,depth:0,footer:[ce]\.includes\("Account"\)\?[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{className:"flex flex-col border-t border-border p-1"\},[\r\n\s]*[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{showChevron:!0,className:"mx-1 px-3 py-2\.5",onClick:\(\)=>\{a\(([a-zA-Z0-9_$]+)\("Account"\)\);[hk]\.push\("Account"\)\}\}\)\):void 0\},` +
-			`[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{text:"Settings"\}\),[bc]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{key:[a-zA-Z0-9_$]+,(?:text:[a-zA-Z0-9_$]+,)?label:[^,]+,onClick:\(\)=>\{a\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\);[hk]\.push\([a-zA-Z0-9_$]+\)\}\}\)\),` +
-			`[gh]&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Fragment,null,[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{text:"Workspaces"\}\),[fg]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*\{key:[a-zA-Z0-9_$]+\.uri,(?:label|text):[a-zA-Z0-9_$]+\.name,[\r\n\s]*onClick:\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.uri;a\([a-zA-Z0-9_$]+\(\{workspaceUri:[a-zA-Z0-9_$]+\}\)\);[hk]\.push\(` + "`" + `workspace:\$\{[a-zA-Z0-9_$]+\}` + "`" + `\)\}\}\)\)\))` +
-			`(\),[\r\n\s]*m&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{offset:1-[bck],active:[bck]===[\r\n\s]*1,depth:1,exiting:[hk]\.exiting\.includes\(m\),onExited:\(\)=>\{[hk]\.onExited\(m\)\},header:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{onBack:[hk]\.pop\}\)\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Provider,\{value:!0\},)` +
-			`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m(?:,\s*[bck]===1)?\))` +
-			`(\)\)\)\};[\s\S]+?var a=([a-zA-Z0-9_$]+)\(\),b=!!a\.get\("settings"\)\?\.hideProjects[\s\S]{1,400}?(?:\{(?:settingsFeature:[a-zA-Z0-9_$]+,)?projectManagementFeature:g\}=(\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\))|f=([a-zA-Z0-9_$]+\(\)))[\s\S]{1,400}?,[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\([fg]\??\.projectsStateProvider\))`,
+		`[bc]=\[\.\.\.[ce]\.filter\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+!=="Account"\),\.\.\.[df],(?:\.\.\.\([bc]\?\[\]:\["Shortcuts"\]\),)?(?:\.\.\.\([bc]\.hideProvideFeedback\?\[\]:\["Provide Feedback"\]\)|\.\.\.\([bc]\?\["Provide Feedback"\]:\[\]\))\];` +
+		`var ([hk])=[a-zA-Z0-9_$]+\(!0\)[;,][bck]=[hk]\.path\.length[,;](?:var )?l=[bck]===0,m=[hk]\.path\[0\]\?\?[hk]\.exiting\[0\],n=m\?\.startsWith\("workspace:"\);)` +
+		`(return ([a-zA-Z0-9_$]+)\.createElement\("div",\{ref:[hk]\.setHost,className:"relative h-full w-full overflow-hidden"\},[\r\n\s]*[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*` +
+		`\{offset:-[bck],active:l,depth:0,footer:[ce]\.includes\("Account"\)\?[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{className:"flex flex-col border-t border-border p-1"\},[\r\n\s]*[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{showChevron:!0,className:"mx-1 px-3 py-2\.5",onClick:\(\)=>\{a\(([a-zA-Z0-9_$]+)\("Account"\)\);[hk]\.push\("Account"\)\}\}\)\):void 0\},` +
+		`[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{text:"Settings"\}\),[bc]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{key:[a-zA-Z0-9_$]+,(?:text:[a-zA-Z0-9_$]+,)?label:[^,]+,onClick:\(\)=>\{a\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\);[hk]\.push\([a-zA-Z0-9_$]+\)\}\}\)\),` +
+		`[gh]&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Fragment,null,[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{text:"Workspaces"\}\),[fg]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*\{key:[a-zA-Z0-9_$]+\.uri,(?:label|text):[a-zA-Z0-9_$]+\.name,[\r\n\s]*onClick:\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.uri;a\([a-zA-Z0-9_$]+\(\{workspaceUri:[a-zA-Z0-9_$]+\}\)\);[hk]\.push\(` + "`" + `workspace:\$\{[a-zA-Z0-9_$]+\}` + "`" + `\)\}\}\)\)\))` +
+		`(\),[\r\n\s]*m&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{offset:1-[bck],active:[bck]===[\r\n\s]*1,depth:1,exiting:[hk]\.exiting\.includes\(m\),onExited:\(\)=>\{[hk]\.onExited\(m\)\},header:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{onBack:[hk]\.pop\}\)\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Provider,\{value:!0\},)` +
+		`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m(?:,\s*[bck]===1)?\))` +
+		`(\)\)\)\};[\s\S]+?var a=([a-zA-Z0-9_$]+)\(\),b=!!a\.get\("settings"\)\?\.hideProjects[\s\S]{1,400}?(?:\{(?:settingsFeature:[a-zA-Z0-9_$]+,)?projectManagementFeature:g\}=(\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\))|f=([a-zA-Z0-9_$]+\(\)))[\s\S]{1,400}?,[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\([fg]\??\.projectsStateProvider\))` +
+		`)|(?:` + mobileSettingsProjects236 + `)`,
 	)
 	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
 	mobileConversationRowActionsRe = regexp.MustCompile(`className:\s*([a-zA-Z0-9_$]+)\(\s*"((?:agy-row-actions )?absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10"\s*,(?:\s*!?[a-zA-Z0-9_$]+\s*&&\s*"[^"]*"\s*,)*)\s*([a-zA-Z0-9_$]+)\s*\?\s*"hidden"\s*:\s*([a-zA-Z0-9_$]+)\s*\?\s*"opacity-100"\s*:\s*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\s*\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),[\r\n\s]*handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)((?:,\s*handleRename:[a-zA-Z0-9_$]+)?)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
-	mobileTitlebarDeleteModalRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);[\r\n\s]*return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
+	mobileTitlebarDeleteModalRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);[\r\n\s]*(?:(?:var\s+)?[a-zA-Z0-9_$]+=[^;{}]{1,200};[\r\n\s]*){0,4}return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+[^}]*\}\)=>)`)
 
 	mobileKebabMenuPinArchiveRe      = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)([^\}]*)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
@@ -66,7 +68,7 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)\s*=\s*!!this\.storageService\.get\(\s*"didAskForNotificationPermission"\s*\)\s*;(\s*this\.notificationPermission\s*!==)`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var (?:[a-zA-Z0-9_$]+=[^,{};]{1,60},){1,4}\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,500}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:(?:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"|` + "`flex-1 min-h-0 overflow-y-auto flex flex-col relative \\$\\{[a-zA-Z0-9_$]+\\?\"pb-1\":\"pb-2\"\\}`" + `)\},[\s\S]{1,900}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
+	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{(?:section|project):)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var (?:[a-zA-Z0-9_$]+=[^,{};]{1,60},){1,8}\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[\s\S]{1,1000}?)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{(?:"data-media-drop-scope":"",)?className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},[\r\n\s]*)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)|[a-zA-Z0-9_$]+\.createElement\("div",[\r\n\s]*\{ref:[a-zA-Z0-9_$]+,\["data-sidebar-scroll-container"\]:"true",className:(?:"flex-1 min-h-0 overflow-y-auto flex flex-col (?:gap-3 pt-3 )?pb-2 relative"|` + "`flex-1 min-h-0 overflow-y-auto flex flex-col relative \\$\\{[a-zA-Z0-9_$]+\\?\"pb-1\":\"pb-2\"\\}`" + `)\},[\s\S]{1,900}?surface:"background",scrollElementRef:[a-zA-Z0-9_$]+,scrollMargin:[a-zA-Z0-9_$]+\}\)\)\)\)),`)
 
 	// The input hands the picker to the model selector, which draws it at the end of its menu, where the toolbar is on
 	// top and the model selector is shown, and to its own toolbar otherwise. Group 1 is the name that decision goes by,
@@ -86,10 +88,10 @@ var (
 	mobileBackClearsSectionRe = regexp.MustCompile(`(?:((?:function [a-zA-Z0-9_$]+\(\)|[a-zA-Z0-9_$]+\.memo\(function\(\))\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\()(\),c=[a-zA-Z0-9_$]+\(\),[\s\S]{1,800}?[\s\S]{0,600}?))?([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)\{?([a-zA-Z0-9_$]+)\(\)\}?(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,size:"[^"]+")?\}\))`)
 	// Since 2.34 the row's icon comes first, its variant and whether it is selected depend on the layout, and it has a
 	// badge for its shortcut: groups 9 to 14 are that form's.
-	mobileHomeNewConvoRowRe = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)(?:,\s*[a-zA-Z0-9_$]+:[a-zA-Z0-9_$]+="[a-z]+")*\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)return a\|\|((?:![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|)?[^?]{1,80}\?\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":(?:[a-zA-Z0-9_$]+\?"gap-1":)?"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&(?:` +
+	mobileHomeNewConvoRowRe = regexp.MustCompile(`(\{showNewConversation:a=!0,\s*(?:compact:[a-zA-Z0-9_$]+=!1,\s*)?className:[a-zA-Z0-9_$]+,\s*conciergeTestId:([a-zA-Z0-9_$]+)(?:,\s*[a-zA-Z0-9_$]+:[a-zA-Z0-9_$]+="[a-z]+")*\}\)\{[\s\S]{1,1000}?[\s\S]{0,1000}?;\s*)(?:return\s+|([a-zA-Z0-9_$]+)=)a\|\|((?:![a-zA-Z0-9_$]+\?\.hideConversationHistory\|\|)?(?:[^?]{1,80}\?|[^;?]{1,120};\s*var\s+[a-zA-Z0-9_$]+=\(0,[a-zA-Z0-9_$]+\.useRef\)\(null\);\s*return\s+[a-zA-Z0-9_$]+\?)\s*[a-zA-Z0-9_$]+\.createElement\("div",\s*\{(?:ref:[a-zA-Z0-9_$]+,\s*)?className:[a-zA-Z0-9_$]+\((?:"flex flex-col gap-1\.5",\s*[a-zA-Z0-9_$]+|"flex flex-col",\s*[a-zA-Z0-9_$]+\?"gap-0\.5":(?:[a-zA-Z0-9_$]+\?"gap-1":)?"gap-1\.5",\s*[a-zA-Z0-9_$]+)\),\s*"data-testid":"sidebar-navigation-items"\},\s*)a&&(?:` +
 		`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{)variant:"secondary",\s*(icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*text:"New Conversation",\s*)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([a-zA-Z0-9_$]+),` +
 		`|([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{icon:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\s*\{name:"add"\}\),\s*)variant:([^,{}]{1,40}),\s*((?:className:[^,{}]{1,40},\s*)?text:"New Conversation",\s*(?:badge:[a-zA-Z0-9_$]+\([^(){}]{0,80}\),\s*)?)href:([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)),\s*("data-testid":"new-conversation-button",\s*onActivate:\(\)=>\{[^}]{1,40}\},\s*)selected:([^,{}]{1,40}),)`)
-	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,\s*(?:variant:"sidebar",\s*)?surface:)([a-zA-Z0-9_$]+)((?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
+	mobileNewConvoButtonRe            = regexp.MustCompile(`("New Conversation in Workspace":\s*"New Conversation in Project"[\s\S]{1,600}?[:;][\r\n\s]*)([a-zA-Z0-9_$]+)(\([a-zA-Z0-9_$]+\)\}[\s\S]{1,900}?[\s\S]{0,900}?([a-zA-Z0-9_$]+)\.createElement\([a-zA-Z0-9_$]+,\{items:)([a-zA-Z0-9_$]+(?:\.displayedFlatItems)?)(,\s*(?:variant:"sidebar",\s*)?surface:)([a-zA-Z0-9_$]+)((?:,\s*emptyMessage:[^,{}]{1,80})?(?:,\s*scrollElementRef:[a-zA-Z0-9_$]+,\s*scrollMargin:[a-zA-Z0-9_$]+)?,\s*subtitleContext:[a-zA-Z0-9_$]+,\s*onToggleCollapseSection:[a-zA-Z0-9_$]+,\s*onToggleSectionHeader:[a-zA-Z0-9_$]+,\s*onTogglePagination:[a-zA-Z0-9_$]+,\s*customHeaderRenderer:)([a-zA-Z0-9_$]+)`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+(?:&&![a-zA-Z0-9_$]+)?,marketingEmailsEnabled:`)
 
@@ -102,7 +104,7 @@ var (
 			`(\s*,\s*fetchDirectoryContents:)`,
 	)
 
-	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(Media|Files)",onClick:([a-zA-Z0-9_$]+)\}`)
+	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(Media|Files)",onClick:([a-zA-Z0-9_$]+|\(\)=>\{[a-zA-Z0-9_$]+\(\)\})\}`)
 
 	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)(?:accept:[a-zA-Z0-9_$]+,[\r\n\s]*)?multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
 	// fileDropAcceptAllRe finds the test for whether a dropped file is media.
@@ -139,7 +141,7 @@ var (
 	fileUploadBatchEntryRe                = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length!==0\)\{(([a-zA-Z0-9_$]+\?\.\(null\);)?var ([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)-([a-zA-Z0-9_$]+);)?`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)[\r\n\s]*!([a-zA-Z0-9_$]+)(;(?:[a-zA-Z0-9_$]+\|\|\([a-zA-Z0-9_$]+\.current=!1,[a-zA-Z0-9_$]+\(\)\);)?[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
-	questionModalWriteInFocusRe           = regexp.MustCompile(`(?:(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:))|("data-testid"\s*:\s*"ask-question-writein"\s*,\s*value\s*:\s*[a-zA-Z0-9_$]+\s*,\s*onClick\s*:\s*([a-zA-Z0-9_$]+))(\s*,\s*onChange\s*:)`)
+	questionModalWriteInFocusRe           = regexp.MustCompile(`(?:(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:))|("data-testid"\s*:\s*"ask-question-writein"\s*,\s*value\s*:\s*[a-zA-Z0-9_$]+\s*,\s*onClick\s*:\s*([a-zA-Z0-9_$]+|\(\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}))(\s*,\s*onChange\s*:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\s*\|\|\s*[a-zA-Z0-9_$]+\s*===\s*void 0\s*\|\|\s*[a-zA-Z0-9_$]+\.isMultiSelect\s*\|\|\s*!document\.hasFocus\(\)\s*\|\|\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*&&\s*[a-zA-Z0-9_$]+\s*!==\s*[a-zA-Z0-9_$]+\.current)(\s*\|\|\s*[a-zA-Z0-9_$]+\.current\.get\(\s*[a-zA-Z0-9_$]+\s*\)\?\.focus\(\))`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
 	autoscrollUnpinInputRe                = regexp.MustCompile(`(var ([a-zA-Z0-9_$]+)=\s*[a-zA-Z0-9_$]+\.current;\s*if\(\s*[a-zA-Z0-9_$]+\)\s*\{\s*var [a-zA-Z0-9_$]+=\s*[a-zA-Z0-9_$]+\.scrollTop,[\s\S]{1,200}?[a-zA-Z0-9_$]+<\s*(?:[a-zA-Z0-9_$]+\.current|0)\s*&&\s*!\s*[a-zA-Z0-9_$]+(?:\s*&&\s*!\s*[a-zA-Z0-9_$]+)?\s*\?\s*)(?:\(\s*([a-zA-Z0-9_$]+)\.current=\s*!1,\s*([a-zA-Z0-9_$]+\.delete\(\s*[a-zA-Z0-9_$]+\s*\))\s*\)|([a-zA-Z0-9_$]+)\.current=\s*!1)\s*:\s*((?:[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*|!\s*[a-zA-Z0-9_$]+\s*\|\|\s*([a-zA-Z0-9_$]+)\.current\s*\|\|\s*|[a-zA-Z0-9_$]+\s*>\s*0\s*&&\s*[a-zA-Z0-9_$]+\s*&&\s*!\s*([a-zA-Z0-9_$]+)\.current\s*&&\s*)?)`)
@@ -179,7 +181,7 @@ var (
 			`(!\s*[a-zA-Z0-9_$]+\(\))\s*\)\s*\{\s*` +
 			`((?:var|let)\s+[a-zA-Z0-9_$]+\s*=[^;{}]{1,200};)\s*((?:[a-zA-Z0-9_$]+|\(\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\s*\))\s*\?\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\)\s*\)\s*:\s*)` +
 			`\(\s*(?:[a-zA-Z0-9_$]+\s*!==\s*"clearStatus"\s*\|\|\s*[a-zA-Z0-9_$]+\?\.\(\)\s*\|\||[a-zA-Z0-9_$]+\s*===\s*"clearStatus"\s*&&)\s*` + userStatusSchemaDispatchExpr + `\s*,\s*([a-zA-Z0-9_$]+(?:\?\.)?\(\))\s*\)\s*\}\s*\})` +
-			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
+			`(\s*\}\s*finally\s*\{\s*[a-zA-Z0-9_$]+\(\)\s*\}\s*\}[\s\S]{1,1000}?[\s\S]{0,1000}?state\s*===\s*"signedOut"\s*\)\s*` + userStatusSchemaDispatchExpr + `(?:\s*,\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\.util\.resetApiState\(\)\s*\))?\s*;\s*else\s*\{\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*!1\s*,[\s\S]{1,300}?;\s*)` +
 			`(` + userStatusSyncCallExpr + `)\s*;\s*(?:var|let)\s+([a-zA-Z0-9_$]+)\s*=\s*setInterval\(\s*\(\s*\)\s*=>\s*(?:\{\s*(` + userStatusSyncCallExpr + `)\s*\}|(?:void\s+)?(` + userStatusSyncCallExpr + `))\s*,\s*6E5\s*\)\s*;\s*` +
 			`return\s*\(\s*\)\s*=>\s*\{\s*[a-zA-Z0-9_$]+\s*=\s*!0\s*[;,]\s*clearInterval\(\s*[a-zA-Z0-9_$]+\s*\)\s*\}`,
 	)
@@ -261,9 +263,9 @@ var (
 	)
 	// sidePanelBodyLegacyRe is the same place in the side panel used when
 	// auxPaneComponent.redesignEnabled is off. The terminal hint before it
-	// renders only while the panel is open.
+	// renders only while the panel is open, and since 2.36 only outside a custom view.
 	sidePanelBodyLegacyRe = regexp.MustCompile(
-		`(([a-zA-Z0-9_$]+)\s*&&\s*[a-zA-Z0-9_$]+\.some\(\s*[a-zA-Z0-9_$]+\s*=>\s*[a-zA-Z0-9_$]+\.id\s*===\s*"terminal"\s*\)\s*&&\s*` +
+		`(([a-zA-Z0-9_$]+)\s*&&\s*(?:[a-zA-Z0-9_$]+\.kind\s*!==\s*"customView"\s*&&\s*)?[a-zA-Z0-9_$]+\.some\(\s*[a-zA-Z0-9_$]+\s*=>\s*[a-zA-Z0-9_$]+\.id\s*===\s*"terminal"\s*\)\s*&&\s*` +
 			`[a-zA-Z0-9_$]+\.createElement\(\s*[a-zA-Z0-9_$]+\s*,\s*\{\s*stripRef\s*:\s*[a-zA-Z0-9_$]+\s*,\s*activeTabId\s*:\s*[a-zA-Z0-9_$]+\s*\}\s*\)\s*,\s*` +
 			`[a-zA-Z0-9_$]+\.createElement\(\s*"div"\s*,\s*\{\s*className\s*:\s*"flex-grow overflow-hidden"\s*,\s*"data-side-panel-body"\s*:\s*!0\s*\}\s*,\s*)` +
 			`([a-zA-Z0-9_$]+)\s*&&\s*` +
@@ -766,14 +768,20 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileHomeNewConvoRowRe,
 			// The mobile home tells itself apart by the component's conciergeTestId, whatever the parameter is called.
-			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||${3}(a||_agyHome)&&${4}variant:_agyHome?"ghost":"secondary",${5}href:_agyHome?void 0:${6},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${7}selected:!_agyHome&&${8},`,
+			// Since 2.36 the component works out whether it draws the rows into a name before it returns, and the row is
+			// added to that name rather than to the return: group 3 is the name, and is nil where the return reads it.
+			Replace: `${1}var _agyHome=${2}==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);${3}=a||_agyHome||${4}(a||_agyHome)&&${10}variant:_agyHome?"ghost":(${11}),${12}href:_agyHome?void 0:${13},onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,${14}selected:!_agyHome&&(${15}),`,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
-				start := string(g[1]) + `var _agyHome=` + string(g[2]) + `==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);return a||_agyHome||` + string(g[3]) + `(a||_agyHome)&&`
-				onClick := `onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,`
-				if g[4] != nil {
-					return start + string(g[4]) + `variant:_agyHome?"ghost":"secondary",` + string(g[5]) + `href:_agyHome?void 0:` + string(g[6]) + `,` + onClick + string(g[7]) + `selected:!_agyHome&&` + string(g[8]) + `,`
+				head := "return "
+				if g[3] != nil {
+					head = string(g[3]) + "="
 				}
-				return start + string(g[9]) + `variant:_agyHome?"ghost":(` + string(g[10]) + `),` + string(g[11]) + `href:_agyHome?void 0:` + string(g[12]) + `,` + onClick + string(g[13]) + `selected:!_agyHome&&(` + string(g[14]) + `),`
+				start := string(g[1]) + `var _agyHome=` + string(g[2]) + `==="mobile-home-concierge";_agyHome&&(window.__agyNewRowOnTop=!0);` + head + `a||_agyHome||` + string(g[4]) + `(a||_agyHome)&&`
+				onClick := `onClick:_agyHome?()=>{window.__agyStartNewConversation?window.__agyStartNewConversation():window.location.assign("/?project=outside-of-project")}:void 0,`
+				if g[5] != nil {
+					return start + string(g[5]) + `variant:_agyHome?"ghost":"secondary",` + string(g[6]) + `href:_agyHome?void 0:` + string(g[7]) + `,` + onClick + string(g[8]) + `selected:!_agyHome&&` + string(g[9]) + `,`
+				}
+				return start + string(g[10]) + `variant:_agyHome?"ghost":(` + string(g[11]) + `),` + string(g[12]) + `href:_agyHome?void 0:` + string(g[13]) + `,` + onClick + string(g[14]) + `selected:!_agyHome&&(` + string(g[15]) + `),`
 			},
 			// A bundle this does not match keeps the row mobile-new-conversation-button adds to the conversation list.
 			Optional: true,
@@ -871,23 +879,22 @@ func All() []Patch {
 			Enabled: mobile,
 			FindRe:  mobileSettingsProjectsRe,
 			Replace: `${1}var {projectManagementFeature:_pm}=${12},_hp=!!${11}().get("settings")?.hideProjects,_ps=${14}(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),_init=(0,${4}.useRef)(!1);window.__agyProjectSettingsHost=!!m?.startsWith("project:");if(!window.__agyProjectSettingsHost)window.__agyProjectSettingsBack=null;(0,${4}.useEffect)(()=>()=>{window.__agyProjectSettingsHost=!1;window.__agyProjectSettingsBack=null},[]);(0,${4}.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(${5}(_scr));${2}.push("project:"+_pid)}else if(_scr&&_scr!=="General"){a(${5}(_scr));${2}.push(_scr)}}catch(_e){}},[]);${3},!_hp&&_pm&&_pl.length>0&&${4}.createElement(${4}.Fragment,null,${4}.createElement(${6},{text:"Projects"}),_pl.map(_p=>${4}.createElement(${7},{key:_p.project.id,text:_p.project.name||"Project",label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});${2}.push("project:"+_p.project.id)}}))),_pm&&${4}.createElement(${4}.Fragment,null,${4}.createElement(${6},{text:"Not in Project"}),${4}.createElement(${7},{key:"outside-of-project",text:"Conversations",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});${2}.push("project:outside-of-project")}}))${8}m?.startsWith("project:")&&window.__agyProjectSettings?${4}.createElement(window.__agyProjectSettings,null):${9}${10}`,
+			Accept:  settingsProjects236IsKnown,
 			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if g[1] == nil {
+					return mobileSettingsProjects236Replace(g)
+				}
 				pmInit := `var {projectManagementFeature:_pm}=` + string(g[12])
 				if g[13] != nil {
 					pmInit = `var _pm=` + string(g[13])
 				}
-				stk := string(g[2])
-				react := string(g[4])
-				navAct := string(g[5])
-				hdrComp := string(g[6])
-				itemComp := string(g[7])
-				g8 := strings.Replace(
-					string(g[8]),
-					`{onBack:`+stk+`.pop}`,
-					`{onBack:()=>{if(m?.startsWith("project:")&&window.__agyProjectSettingsBack?.())return;`+stk+`.pop()}}`,
-					1,
-				)
-				return string(g[1]) + pmInit + `,_hp=!!` + string(g[11]) + `().get("settings")?.hideProjects,_ps=` + string(g[14]) + `(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),_init=(0,` + react + `.useRef)(!1);window.__agyProjectSettingsHost=!!m?.startsWith("project:");if(!window.__agyProjectSettingsHost)window.__agyProjectSettingsBack=null;(0,` + react + `.useEffect)(()=>()=>{window.__agyProjectSettingsHost=!1;window.__agyProjectSettingsBack=null},[]);(0,` + react + `.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(` + navAct + `(_scr));` + stk + `.push("project:"+_pid)}else if(_scr&&_scr!=="General"){a(` + navAct + `(_scr));` + stk + `.push(_scr)}}catch(_e){}},[]);` + string(g[3]) + `,!_hp&&_pm&&_pl.length>0&&` + react + `.createElement(` + react + `.Fragment,null,` + react + `.createElement(` + hdrComp + `,{text:"Projects"}),_pl.map(_p=>` + react + `.createElement(` + itemComp + `,{key:_p.project.id,text:_p.project.name||"Project",label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});` + stk + `.push("project:"+_p.project.id)}}))),_pm&&` + react + `.createElement(` + react + `.Fragment,null,` + react + `.createElement(` + hdrComp + `,{text:"Not in Project"}),` + react + `.createElement(` + itemComp + `,{key:"outside-of-project",text:"Conversations",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});` + stk + `.push("project:outside-of-project")}}))` + g8 + `m?.startsWith("project:")&&window.__agyProjectSettings?` + react + `.createElement(window.__agyProjectSettings,null):` + string(g[9]) + string(g[10])
+				// Up to 2.35 the store's dispatch is a, the open screen m, and the back button pops the stack.
+				return renderSettingsProjects(settingsProjectsParts{
+					head: string(g[1]), list: string(g[3]), second: string(g[8]), content: string(g[9]), tail: string(g[10]),
+					dispatch: "a", current: "m", stack: string(g[2]), react: string(g[4]),
+					navigate: string(g[5]), header: string(g[6]), item: string(g[7]),
+					useApp: string(g[11]), pmInit: pmInit, useProjects: string(g[14]), back: string(g[2]) + ".pop",
+				})
 			},
 		},
 		// Since 2.31 the bundle shows these buttons on screens without hover itself, through can-hover: classes.
@@ -1238,7 +1245,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  questionModalWriteInFocusRe,
 			Replace: `${1},onFocus:()=>{${2}||(${3}(!0),${4}.isMultiSelect||${5}())}${6}`,
-			// 2.33 names the click handler, which the write-in's focus gets as well.
+			// 2.33 names the click handler, which the write-in's focus gets as well; 2.36 wraps the call in an arrow.
 			ReplaceMatch: func(g [][]byte, _ Options) string {
 				if g[7] != nil {
 					return string(g[7]) + ",onFocus:" + string(g[8]) + string(g[9])

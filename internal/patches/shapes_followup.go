@@ -101,6 +101,9 @@ var docRow = func() (s struct {
 	b.open()
 	b.raw(`function\s+[a-zA-Z0-9_$]+\s*`)
 	b.code(`({title:a,displayPath:b,copyPath:c,description:«description»,content:f,modalChildren:g,badge:h,actions:k,actionsPaddingClass:l,disabled:m=!1,MarkdownRenderer:n}){var[«open»,«setOpen»]=(0,«React».useState)(!1),`)
+	// 2.36 logs an impression while the row is open, which the replacement keeps as it is; it has no group, so the
+	// groups the replacement goes by are where they were.
+	b.raw(`(?:\s*[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+\(\s*[a-zA-Z0-9_$]+\s*\?\s*"[^"]{1,20}"\s*:\s*null\s*,\s*\[\s*"impression"\s*\]\s*\)\s*,)?`)
 	b.close()
 	b.raw(`\s*`)
 	b.open()

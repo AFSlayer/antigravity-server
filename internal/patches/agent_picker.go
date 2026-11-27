@@ -37,9 +37,12 @@ func agentRoutingIsKnown(groups [][]byte) bool {
 //
 // Since 2.34 the start also reads whether the keyboard is up, between the app and its settings; 2.35 writes that without
 // the comparison to undefined. 2.35 reads the agents without passing them the function that fetches them, and no longer
-// fetches them again when the selector is opened.
+// fetches them again when the selector is opened. 2.36 hands the screen whether the home page has a wallpaper, and
+// whether it is still loading.
 const (
-	agentScreenStart      = `«screen»=()=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),`
+	agentScreenOpen       = `«screen»=(`
+	agentScreenWallpaper  = `{hasHomeWallpaper:«wallpaper»,isHomeWallpaperLoading:«wallpaperLoading»}`
+	agentScreenStart      = `)=>{var «dispatch»=«useDispatch»(),«lastProject»=(0,«React».useRef)(null),«open»=«useOpen»(),{q:«query»,ws:«project»,customSubagent:«asked»}=«useAddress»({strict:!1}),«app»=«useApp»(),`
 	agentScreenKeys       = `«keyboard»=«useTouch»();«keyboard»=«useKeyboard»(«keyboard»)`
 	agentScreenTail       = `«tips»=«app».get("tipCards"),«input»=«app».get("inputComponent");`
 	agentPickerRunStart   = `var{agentScriptsEnabled:«enabled»,selectedAgentScriptItem:«chosen»,setSelectedAgentScriptItem:«choose»,`
@@ -50,8 +53,9 @@ const (
 	agentScreenReturn     = `return «React».createElement(«React».Fragment`
 )
 
-// The names the screen's start declares. keyboard is declared only by a start that reads it.
-var agentScreenDeclares = []string{"dispatch", "lastProject", "open", "query", "project", "asked", "app", "keyboard", "tips", "input"}
+// The names the screen's start declares. The wallpaper's are declared only where the screen is handed them, and
+// keyboard only by a start that reads it.
+var agentScreenDeclares = []string{"wallpaper", "wallpaperLoading", "dispatch", "lastProject", "open", "query", "project", "asked", "app", "keyboard", "tips", "input"}
 
 // The names the function reads from outside itself: the hooks it reads the address and the app's settings with, as the
 // screen's start does, and what the run calls. They have to be the bundle's own, from outside any screen.
@@ -66,6 +70,10 @@ var agentScreen = func() (s struct {
 }) {
 	var b shapeBuilder
 	s.upToRun = b.open()
+	b.code(agentScreenOpen)
+	b.raw(`(?:\s*`)
+	b.code(agentScreenWallpaper)
+	b.raw(`)?\s*`)
 	b.code(agentScreenStart)
 	b.raw(`\s*(?:`)
 	b.code(agentScreenKeys)
