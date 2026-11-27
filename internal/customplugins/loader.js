@@ -1,5 +1,7 @@
 // Loads the user's custom plugins into the web app and draws their section in Settings > Appearance. This file is the same
-// for every page and kept by the browser; it asks for the enabled plugins without holding up the page. Opening the
+// for every page and kept by the browser; it asks for the enabled plugins without holding up the page. The styles that
+// were on last time are put in at once, so a theme does not flash the app's own colours first, and are set right once
+// the list arrives. Opening the
 // app with ?agy-safe=1 loads none of them for the rest of the tab's life, so a plugin that breaks the page can still
 // be turned off from the same section; ?agy-safe=0 ends it.
 (function () {
@@ -7,6 +9,7 @@
   var SAFE_KEY = "agyCustomPluginsSafe";
   var LAST_DIR_KEY = "agyCustomPluginsLastDir";
   var HIDDEN_KEY = "agyCustomPluginsShowHidden";
+  var STYLES_KEY = "agyCustomPluginsStyles";
   var safe = false;
   try {
     var asked = new URLSearchParams(location.search).get("agy-safe");
@@ -18,6 +21,9 @@
   } catch (e) {}
   window.__agyCustomPluginsSafe = safe;
   window.__agyCustomPluginsLoaded = [];
+
+  function store(key, value) { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch (e) {} }
+  function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
   function load(p) {
     var url = "/__agy/custom-plugins/file/" + encodeURIComponent(p.name) + "?v=" + encodeURIComponent(p.version);
@@ -36,16 +42,41 @@
     el.onerror = function () { console.warn("[agy-custom-plugins] could not load " + p.name); };
     (document.head || document.documentElement).appendChild(el);
     window.__agyCustomPluginsLoaded.push(p.name);
+    return el;
   }
+  function unload(put) {
+    if (put.el.parentNode) put.el.parentNode.removeChild(put.el);
+    var loaded = window.__agyCustomPluginsLoaded, at = loaded.indexOf(put.name);
+    if (at >= 0) loaded.splice(at, 1);
+  }
+  // A style's name and version, which say whether the one put in early is the one the list asks for.
+  function key(p) { return p.name + "?" + p.version; }
   if (!safe) {
+    var early = [], earlyKeys = [];
+    try {
+      JSON.parse(stored(STYLES_KEY) || "[]").forEach(function (p) {
+        if (p && p.kind === "css" && typeof p.name === "string" && typeof p.version === "string") {
+          early.push({ el: load(p), name: p.name });
+          earlyKeys.push(key(p));
+        }
+      });
+    } catch (e) {}
     fetch("/__agy/api/custom-plugins", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { ((d && d.plugins) || []).filter(function (p) { return p.enabled; }).forEach(load); })
+      .then(function (d) {
+        // Signed out or offline: the styles put in early stay, and so does what is kept for next time.
+        if (!d || !d.plugins) return;
+        var on = d.plugins.filter(function (p) { return p.enabled; });
+        var styles = on.filter(function (p) { return p.kind === "css"; });
+        store(STYLES_KEY, styles.length ? JSON.stringify(styles.map(function (p) { return { name: p.name, kind: p.kind, version: p.version }; })) : null);
+        // The styles put in early stand when they are the list's, in its order; otherwise they are taken out and the
+        // list's put in, which flashes only when something changed.
+        var same = styles.map(key).join("\n") === earlyKeys.join("\n");
+        if (!same) early.forEach(unload);
+        on.forEach(function (p) { if (p.kind !== "css" || !same) load(p); });
+      })
       .catch(function () {});
   }
-
-  function store(key, value) { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch (e) {} }
-  function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
   function api(path, opts) {
     return fetch(path, Object.assign({ credentials: "same-origin" }, opts || {})).then(function (r) {
@@ -91,16 +122,20 @@
     return out;
   }
 
+  // "a", "a or b", "a, b or c".
+  function listOf(items) {
+    return items.length < 2 ? items.join("") : items.slice(0, -1).join(", ") + " or " + items[items.length - 1];
+  }
   // Where a plugin is read from, as its row says it.
   function sourceLine(p) {
-    if (p.sourceMissing) return "cannot read " + p.source + ", using the saved copy";
+    if (p.sourceMissing) return (p.sourceProblem || "cannot read " + p.source) + ", so the saved copy is used";
     if (p.source) return p.source;
     if (p.copiedFrom) return "copied from " + p.copiedFrom;
     return "";
   }
   // Removing a linked or copied plugin deletes only the copy in the plugin folder; one with neither is that copy alone.
   function removeQuestion(p) {
-    if (p.source) return "Remove " + p.name + "? " + p.source + " is left as it is.";
+    if (p.source && !p.sourceMissing) return "Remove " + p.name + "? " + p.source + " is left as it is.";
     if (p.copiedFrom) return "Remove " + p.name + "? Its copy is deleted, and " + p.copiedFrom + " is left as it is.";
     return "Remove " + p.name + "? Its file in the plugin folder is the only copy, and it is deleted.";
   }
@@ -226,7 +261,7 @@
             !e.dir && h("span", { className: "text-xs text-muted-foreground" }, unusable ? "Cannot add" : size(e.size)));
         }),
         folder && folder.truncated && h("div", { className: "py-2 px-3 text-xs text-muted-foreground", "data-testid": "agy-custom-plugin-truncated" },
-          "Only the first " + folder.entries.length + " items are listed. Type a path to reach the others.")));
+          "This folder has more items than are listed. Type a path to reach the others.")));
   }
 
   // The section, drawn with the page's own React as a component so it can keep state.
@@ -237,8 +272,8 @@
     var busyState = R.useState(false), busy = busyState[0], setBusy = busyState[1];
     var changedState = R.useState(false), changed = changedState[0], setChanged = changedState[1];
     var choosingState = R.useState(false), choosing = choosingState[0], setChoosing = choosingState[1];
-    var workspaceState = R.useState(""), workspace = workspaceState[0], setWorkspace = workspaceState[1];
-    function show(d) { setList(d.plugins || []); setWorkspace(d.workspace || ""); }
+    var copiedState = R.useState([]), copiedFolders = copiedState[0], setCopiedFolders = copiedState[1];
+    function show(d) { setList(d.plugins || []); setCopiedFolders(d.copiedFolders || []); }
 
     R.useEffect(function () {
       var live = true;
@@ -294,7 +329,7 @@
               where && h("span", { className: "truncate font-mono text-xs " + (p.sourceMissing ? "text-red-500" : "text-muted-foreground"),
                 title: p.source || p.copiedFrom, "data-testid": "agy-custom-plugin-source" }, where),
               p.copiedFrom && h("span", { className: "text-xs text-muted-foreground", "data-testid": "agy-custom-plugin-copied" },
-                "Copied, not linked, since the agent can change files in the workspace. Add it again to take in edits.")),
+                "Copied, not linked, since the agent can change files there. Add it again to take in edits.")),
             h("div", { className: "flex items-center gap-2" },
               h(Switch, { R: R, on: p.enabled, disabled: busy, label: (p.enabled ? "Turn off " : "Turn on ") + p.name, onClick: function () { toggle(p); } }),
               h("button", { type: "button", className: btn, disabled: busy, onClick: function () { remove(p); } }, "Remove")));
@@ -304,7 +339,7 @@
             h("span", null, "Add a file"),
             h("span", { className: "text-xs text-muted-foreground" },
               "A .js or .css file on the server, up to 5 MB. Edits to it apply on the next reload." +
-              (workspace ? " A file in the workspace folder " + workspace + " is copied instead, and does not take in edits." : ""))),
+              (copiedFolders.length ? " A file the agent can change, in " + listOf(copiedFolders) + ", is copied instead, and does not take in edits." : ""))),
           h("button", { type: "button", className: btn, disabled: busy, "data-testid": "agy-custom-plugin-choose",
             onClick: function () { setChoosing(!choosing); } }, choosing ? "Close" : "Choose file")),
         choosing && h(Chooser, { R: R, busy: busy, onPick: pick, onError: setError })),

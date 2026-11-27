@@ -1,6 +1,8 @@
 package customplugins
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +37,34 @@ func TestCleanName(t *testing.T) {
 	if _, _, err := cleanName(strings.Repeat("a", 98) + ".css"); err == nil || !strings.Contains(err.Error(), "100 characters") {
 		t.Errorf("a long name: %v", err)
 	}
+}
+
+// tempDir gives a temporary folder by the path its links lead to, as a linked plugin's source is kept: on macOS the
+// temporary folder is behind /var, a link to /private/var, and on Windows it may have a short 8.3 name.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// newStore gives a store with no folder of the agent's own, so that tests do not depend on the home folder.
+func newStore(dir string) *Store {
+	s := New(dir)
+	s.agentDirs = nil
+	return s
+}
+
+// jsonBody encodes a request body, so a Windows path's backslashes are escaped.
+func jsonBody(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // symlink makes a link, or skips the test where links cannot be made.
@@ -75,10 +106,10 @@ func one(t *testing.T, s *Store, name string) Plugin {
 // A plugin added from a path stays linked to that file: an edit shows in the content and the version, a vanished
 // source falls back to the copy kept when it was last read, and removing the plugin leaves the source alone.
 func TestAddPathLinksTheSource(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	src := filepath.Join(dir, "src", "theme.css")
 	write(t, src, "a{color:red}")
-	s := New(filepath.Join(dir, "plugins"))
+	s := newStore(filepath.Join(dir, "plugins"))
 
 	p, err := s.AddPath(src)
 	if err != nil || !p.Enabled || p.Kind != "css" || p.Source != src {
@@ -120,8 +151,8 @@ func TestAddPathLinksTheSource(t *testing.T) {
 }
 
 func TestAddPathRules(t *testing.T) {
-	dir := t.TempDir()
-	s := New(filepath.Join(dir, "plugins"))
+	dir := tempDir(t)
+	s := newStore(filepath.Join(dir, "plugins"))
 	write(t, filepath.Join(dir, "tools.js"), "console.log(1)")
 	if _, err := s.AddPath(filepath.Join(dir, "tools.js")); err != nil {
 		t.Fatal(err)
@@ -172,11 +203,21 @@ func TestAddPathRules(t *testing.T) {
 	if err := s.Delete("state.json"); err == nil {
 		t.Fatal("the state file could be deleted")
 	}
+	write(t, filepath.Join(dir, "plugins", "state.json.broken"), "{")
+	write(t, filepath.Join(dir, "plugins", "tools.js.tmp"), "x")
+	for _, name := range []string{"state.json.broken", "tools.js.tmp"} {
+		if err := s.SetEnabled(name, true); err == nil {
+			t.Errorf("%s could be turned on", name)
+		}
+		if err := s.Delete(name); err == nil {
+			t.Errorf("%s could be deleted", name)
+		}
+	}
 }
 
 // The loader is one file for every page, kept by the browser when asked for by its version.
 func TestLoaderIsCacheable(t *testing.T) {
-	s := New(filepath.Join(t.TempDir(), "plugins"))
+	s := newStore(filepath.Join(tempDir(t), "plugins"))
 	mux := http.NewServeMux()
 	s.Register(mux)
 	for url, want := range map[string]string{LoaderURL: "immutable", LoaderPath: "no-cache"} {
@@ -193,8 +234,8 @@ func TestLoaderIsCacheable(t *testing.T) {
 }
 
 func TestHandlers(t *testing.T) {
-	dir := t.TempDir()
-	s := New(filepath.Join(dir, "plugins"))
+	dir := tempDir(t)
+	s := newStore(filepath.Join(dir, "plugins"))
 	mux := http.NewServeMux()
 	s.Register(mux)
 	do := func(method, path, body, origin string) *httptest.ResponseRecorder {
@@ -208,7 +249,7 @@ func TestHandlers(t *testing.T) {
 	}
 	src := filepath.Join(dir, "a.js")
 	write(t, src, "alert(1)")
-	body := `{"path":"` + src + `"}`
+	body := jsonBody(t, map[string]string{"path": src})
 	if rec := do("POST", AddPathAPIPath, body, "http://evil.example.com"); rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin add: %d", rec.Code)
 	}
@@ -241,7 +282,7 @@ func TestHandlers(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "lib.js"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if rec := do("POST", AddPathAPIPath, `{"path":"`+filepath.Join(dir, "lib.js")+`"}`, "http://agy.example.com"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"notFile":true`) {
+	if rec := do("POST", AddPathAPIPath, jsonBody(t, map[string]string{"path": filepath.Join(dir, "lib.js")}), "http://agy.example.com"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"notFile":true`) {
 		t.Fatalf("adding a folder: %d %s", rec.Code, rec.Body)
 	}
 	for _, path := range []string{ToggleAPIPath, DeleteAPIPath} {
@@ -255,6 +296,9 @@ func TestHandlers(t *testing.T) {
 	if rec := do("GET", FilePrefix+"..%2fstate.json", "", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("path escape: %d", rec.Code)
 	}
+	if file.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Fatalf("file headers: %s", file.Header())
+	}
 	if rec := do("GET", FilePrefix+"later.js", "", ""); rec.Code != http.StatusNotFound || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("a missing plugin: %d %q", rec.Code, rec.Header().Get("Cache-Control"))
 	}
@@ -264,7 +308,7 @@ func TestHandlers(t *testing.T) {
 	if rec := do("GET", BrowseAPIPath+"?path="+url.QueryEscape(dir), "", "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"a.js"`) {
 		t.Fatalf("browse: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do("GET", ListAPIPath, "", "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace"`) {
+	if rec := do("GET", ListAPIPath, "", "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"copiedFolders"`) {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}
 	if rec := do("POST", ToggleAPIPath, `{"name":"a.js","enabled":false}`, "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
@@ -278,7 +322,7 @@ func TestHandlers(t *testing.T) {
 // The chooser gets a server folder's folders first and then its .js and .css files, hidden ones included, with other
 // files left out, links followed, the parent, and the home and workspace shortcuts.
 func TestBrowse(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	for _, d := range []string{"b-dir", ".hidden"} {
 		if err := os.Mkdir(filepath.Join(dir, d), 0o700); err != nil {
 			t.Fatal(err)
@@ -288,7 +332,7 @@ func TestBrowse(t *testing.T) {
 		write(t, filepath.Join(dir, f), "x")
 	}
 	symlink(t, filepath.Join(dir, "b-dir"), filepath.Join(dir, "link"))
-	s := New(filepath.Join(t.TempDir(), "plugins")).WithWorkspace("/srv/work")
+	s := newStore(filepath.Join(tempDir(t), "plugins")).WithWorkspace("/srv/work")
 	f, err := s.Browse(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +359,7 @@ func TestBrowse(t *testing.T) {
 	if _, err := s.Browse("relative/dir"); err == nil {
 		t.Fatal("a relative path was listed")
 	}
-	if root, err := s.Browse("/"); err != nil || root.Parent != "" {
+	if root, err := s.Browse(filepath.VolumeName(dir) + string(filepath.Separator)); err != nil || root.Parent != "" {
 		t.Fatalf("root: %+v, %v", root.Parent, err)
 	}
 
@@ -340,7 +384,7 @@ func TestBrowse(t *testing.T) {
 // A file inside the workspace is copied and not linked, also through a link from outside it, so an agent that may
 // change only the workspace cannot change a plugin. A linked source the workspace comes to hold is no longer read.
 func TestWorkspaceFilesAreCopied(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	ws := filepath.Join(dir, "work")
 	inWS := filepath.Join(ws, "theme.css")
 	write(t, inWS, "a{color:red}")
@@ -355,7 +399,7 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 	write(t, filepath.Join(outsideDir, "dots.css"), "b{}")
 	throughWS := filepath.Join(ws, "dots-link", "dots.css")
 	symlink(t, outsideDir, filepath.Join(ws, "dots-link"))
-	s := New(filepath.Join(dir, "plugins")).WithWorkspace(ws)
+	s := newStore(filepath.Join(dir, "plugins")).WithWorkspace(ws)
 	for _, path := range []string{inWS, link, throughWS} {
 		p, err := s.AddPath(path)
 		if err != nil || p.Source != "" || p.CopiedFrom != path || !p.Enabled {
@@ -384,7 +428,7 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 	if p, err := s.AddPath(filepath.Join(dir, "elsewhere", "tool-link.js")); err != nil || p.Source != outside {
 		t.Fatalf("through a link: %+v, %v", p, err)
 	}
-	wider := New(filepath.Join(dir, "plugins")).WithWorkspace(dir)
+	wider := newStore(filepath.Join(dir, "plugins")).WithWorkspace(dir)
 	write(t, outside, "2")
 	if p := one(t, wider, "tools.js"); p.Source != "" || p.CopiedFrom != outside || p.Size != 1 {
 		t.Fatalf("a source inside the new workspace is still read: %+v", p)
@@ -399,10 +443,10 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 
 // A damaged state file is kept beside the new one instead of being overwritten on the next change.
 func TestDamagedStateIsKept(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "plugins")
+	dir := filepath.Join(tempDir(t), "plugins")
 	write(t, filepath.Join(dir, "a.js"), "1")
 	write(t, filepath.Join(dir, stateFile), "{not json")
-	s := New(dir)
+	s := newStore(dir)
 	if p := one(t, s, "a.js"); p.Enabled {
 		t.Fatalf("listed from a damaged state: %+v", p)
 	}
@@ -419,10 +463,10 @@ func TestDamagedStateIsKept(t *testing.T) {
 
 // A plugin that is off is not read from its source, and a file whose size and time have not changed is not read again.
 func TestListReadsOnlyWhatChanged(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	src := filepath.Join(dir, "a.css")
 	write(t, src, "a{}")
-	s := New(filepath.Join(dir, "plugins"))
+	s := newStore(filepath.Join(dir, "plugins"))
 	if _, err := s.AddPath(src); err != nil {
 		t.Fatal(err)
 	}
@@ -440,40 +484,97 @@ func TestListReadsOnlyWhatChanged(t *testing.T) {
 	if p.Size != int64(len("a{color:red}")) {
 		t.Fatalf("turned on, the source was not read: %+v", p)
 	}
-	// Same size and time: taken as unchanged.
-	info, _ := os.Stat(src)
-	write(t, src, "a{color:tan}")
-	if err := os.Chtimes(src, info.ModTime(), info.ModTime()); err != nil {
-		t.Fatal(err)
+	// A file whose stamp has not changed is not read again: the hash kept for it is used.
+	s.mu.Lock()
+	k := s.known[src]
+	k.sum = sha256.Sum256([]byte("kept"))
+	s.known[src] = k
+	s.mu.Unlock()
+	kept := sha256.Sum256([]byte("kept"))
+	if again := one(t, s, "a.css"); again.Version != hex.EncodeToString(kept[:6]) {
+		t.Fatalf("an unchanged file was read again: %+v", again)
 	}
-	if again := one(t, s, "a.css"); again.Version != p.Version {
-		t.Fatalf("an unchanged stamp was read again: %+v", again)
-	}
-	if err := os.Chtimes(src, info.ModTime().Add(time.Second), info.ModTime().Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if again := one(t, s, "a.css"); again.Version == p.Version {
-		t.Fatalf("a new stamp was not read: %+v", again)
+	// An edit that keeps the size and the modification time, as cp -p does, still shows where the system says when
+	// the file last changed.
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		info, _ := os.Stat(src)
+		time.Sleep(10 * time.Millisecond)
+		write(t, src, "a{color:tan}")
+		if err := os.Chtimes(src, info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+		if again := one(t, s, "a.css"); again.Version == hex.EncodeToString(kept[:6]) || again.Size != int64(len("a{color:tan}")) {
+			t.Fatalf("an edit that kept the size and time was not seen: %+v", again)
+		}
 	}
 	// A source that is gone is reported, with the copy standing in.
 	if err := os.Remove(src); err != nil {
 		t.Fatal(err)
 	}
-	if gone := one(t, s, "a.css"); !gone.SourceMissing || gone.Size == 0 {
+	if gone := one(t, s, "a.css"); !gone.SourceMissing || gone.Size == 0 || gone.SourceProblem != src+" is not there" {
 		t.Fatalf("a missing source: %+v", gone)
+	}
+	// A source that grew past the limit says so.
+	write(t, src, strings.Repeat("x", MaxPluginBytes+1))
+	if big := one(t, s, "a.css"); !big.SourceMissing || !strings.Contains(big.SourceProblem, "over 5 MB") {
+		t.Fatalf("a source over the limit: %+v", big)
+	}
+}
+
+// A file in the agent's own folders is copied, as a workspace file is.
+func TestAgentFoldersAreCopied(t *testing.T) {
+	dir := tempDir(t)
+	agent := filepath.Join(dir, "gemini")
+	src := filepath.Join(agent, "antigravity", "scratch", "theme.css")
+	write(t, src, "a{}")
+	s := newStore(filepath.Join(dir, "plugins"))
+	s.agentDirs = []string{agent}
+	if p, err := s.AddPath(src); err != nil || p.Source != "" || p.CopiedFrom != src {
+		t.Fatalf("a file in the agent's folder: %+v, %v", p, err)
+	}
+	if got := s.guarded(); len(got) != 1 || got[0] != agent {
+		t.Fatalf("guarded %q", got)
+	}
+	if d := New(filepath.Join(dir, "p")); len(d.agentDirs) == 0 {
+		t.Fatal("a new store guards none of the agent's folders")
+	}
+}
+
+// The same folder under another name is still the folder: here a second link to the workspace, which the path is
+// written under and leads into, neither under the workspace's own name.
+func TestInsideKnowsAFolderByItself(t *testing.T) {
+	dir := tempDir(t)
+	ws := filepath.Join(dir, "work")
+	write(t, filepath.Join(ws, "a.css"), "a{}")
+	if !inside(ws, filepath.Join(ws, "a.css")) || inside(ws, filepath.Join(dir, "a.css")) || inside(ws, dir) {
+		t.Fatal("plain paths")
+	}
+	symlink(t, ws, filepath.Join(dir, "other-name"))
+	if !inside(filepath.Join(dir, "other-name"), filepath.Join(ws, "a.css")) {
+		t.Fatal("the workspace under another name")
 	}
 }
 
 // A folder with more items than the chooser lists says so.
 func TestBrowseSaysWhenCut(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	for i := 0; i <= maxEntries; i++ {
 		write(t, filepath.Join(dir, fmt.Sprintf("p%04d.js", i)), "x")
 	}
-	s := New(filepath.Join(t.TempDir(), "plugins"))
+	s := newStore(filepath.Join(tempDir(t), "plugins"))
 	f, err := s.Browse(dir)
 	if err != nil || !f.Truncated || len(f.Entries) != maxEntries {
 		t.Fatalf("truncated %v, %d entries, %v", f.Truncated, len(f.Entries), err)
+	}
+	// The list is sorted before it is cut, so a folder, which comes first, is never the one left out.
+	if err := os.Mkdir(filepath.Join(dir, "zzz-folder"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := s.Browse(dir); !f.Entries[0].Dir || f.Entries[0].Name != "zzz-folder" {
+		t.Fatalf("first entry %+v", f.Entries[0])
+	}
+	if err := os.Remove(filepath.Join(dir, "zzz-folder")); err != nil {
+		t.Fatal(err)
 	}
 	// Items that would not be listed anyway do not make a folder cut.
 	if err := os.Remove(filepath.Join(dir, fmt.Sprintf("p%04d.js", maxEntries))); err != nil {

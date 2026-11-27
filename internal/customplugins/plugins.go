@@ -1,10 +1,10 @@
 // Package customplugins keeps the JavaScript and CSS files a user adds under Settings > Appearance > Custom Plugins,
 // and serves the script that loads the enabled ones into the web app. They are files on this server: a plugin added
 // from a path stays linked to the file it leads to, so editing it takes effect on the next reload, and a copy is kept in
-// case it goes away. A file inside the workspace folder agy-server is set up with is copied and not linked, since an
-// agent that may only change the workspace could otherwise run code in the web app through it. The plugins are the
-// same for every browser signed in to this agy-server, and they run with the web app's access, which reaches the agent
-// and its terminal.
+// case it goes away. A file the agent can change, inside the workspace folder agy-server is set up with or the agent's
+// own folders, is copied and not linked, since an agent held to those folders could otherwise run code in the web app
+// through it. The plugins are the same for every browser signed in to this agy-server, and they run with the web app's
+// access, which reaches the agent and its terminal.
 package customplugins
 
 import (
@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -68,9 +69,10 @@ type Plugin struct {
 	Version string `json:"version"`
 	// Source is the file on the server the plugin was added from and is read from.
 	Source string `json:"source,omitempty"`
-	// SourceMissing says the source could not be read, so the copy kept when it last could is used.
-	SourceMissing bool `json:"sourceMissing,omitempty"`
-	// CopiedFrom is the file a plugin was copied from without a link: a file inside the workspace.
+	// SourceMissing says the source could not be used, so the copy kept when it last could is, and SourceProblem why.
+	SourceMissing bool   `json:"sourceMissing,omitempty"`
+	SourceProblem string `json:"sourceProblem,omitempty"`
+	// CopiedFrom is the file a plugin was copied from without a link: a file the agent can change.
 	CopiedFrom string `json:"copiedFrom,omitempty"`
 }
 
@@ -84,6 +86,8 @@ type state struct {
 type Store struct {
 	dir       string
 	workspace string
+	// agentDirs are the agent's own folders, where it keeps its notes, scratch files, rules and skills.
+	agentDirs []string
 	mu        sync.Mutex
 	trusted   []*net.IPNet
 	publicURL string
@@ -91,13 +95,19 @@ type Store struct {
 	known map[string]known
 }
 
-// stamp is what tells a file apart from the last time it was read, without reading it.
+// stamp is what tells a file apart from the last time it was read, without reading it. Where the system has them, the
+// file's number and the time its inode last changed are in it too, so a copy that keeps the size and the modification
+// time, such as cp -p or rsync -t, still shows.
 type stamp struct {
-	size int64
-	mod  time.Time
+	size   int64
+	mod    time.Time
+	ino    uint64
+	change int64
 }
 
-func (a stamp) same(b stamp) bool { return a.size == b.size && a.mod.Equal(b.mod) }
+func (a stamp) same(b stamp) bool {
+	return a.size == b.size && a.mod.Equal(b.mod) && a.ino == b.ino && a.change == b.change
+}
 
 type known struct {
 	stamp stamp
@@ -105,17 +115,46 @@ type known struct {
 }
 
 // stampOf gives a regular file's stamp.
-func stampOf(path string) (stamp, bool) {
+func stampOf(path string) (stamp, error) {
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return stamp{}, false
+	if err != nil {
+		return stamp{}, err
 	}
-	return stamp{size: info.Size(), mod: info.ModTime()}, true
+	if !info.Mode().IsRegular() {
+		return stamp{}, errNotFile
+	}
+	ino, change := fileIdentity(info)
+	return stamp{size: info.Size(), mod: info.ModTime(), ino: ino, change: change}, nil
 }
 
 // New returns a store kept in dir, which is created when the first plugin is added.
 func New(dir string) *Store {
-	return &Store{dir: dir, known: map[string]known{}}
+	s := &Store{dir: dir, known: map[string]known{}}
+	if home := config.HomeDir(); home != "" {
+		s.agentDirs = []string{config.GeminiDir(), filepath.Join(home, ".agents"), filepath.Join(home, ".agent")}
+	}
+	return s
+}
+
+// guarded gives the folders whose files the agent can change: the workspace and the agent's own folders.
+func (s *Store) guarded() []string {
+	out := []string{}
+	if s.workspace != "" {
+		out = append(out, s.workspace)
+	}
+	return append(out, s.agentDirs...)
+}
+
+// agentCanChange says whether a path is inside a folder the agent can change.
+func (s *Store) agentCanChange(paths ...string) bool {
+	for _, dir := range s.guarded() {
+		for _, p := range paths {
+			if inside(dir, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // WithSameOrigin sets what requests are checked against, as the other settings APIs do.
@@ -174,7 +213,7 @@ func expandPath(path string) (string, error) {
 	switch {
 	case path == "~":
 		path = config.HomeDir()
-	case strings.HasPrefix(path, "~/"):
+	case strings.HasPrefix(path, "~/"), filepath.Separator == '\\' && strings.HasPrefix(path, `~\`):
 		path = filepath.Join(config.HomeDir(), path[2:])
 	}
 	if !filepath.IsAbs(path) {
@@ -186,29 +225,41 @@ func expandPath(path string) (string, error) {
 // errNotFile is what reading a folder as a plugin gives, so the chooser can open it instead.
 var errNotFile = errors.New("is not a file")
 
-// readPluginFile reads a regular file of at most MaxPluginBytes, however much the file grows while it is read.
+// unreadable says why a file cannot be read, naming it.
+func unreadable(path string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s is not there", path)
+	}
+	if errors.Is(err, errNotFile) {
+		return fmt.Errorf("%s %w", path, errNotFile)
+	}
+	return fmt.Errorf("cannot read %s: %w", path, err)
+}
+
+// readPluginFile reads a regular file of at most MaxPluginBytes, however much the file grows while it is read. Every
+// error names the file.
 func readPluginFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", path, err)
+		return nil, unreadable(path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s %w", path, errNotFile)
+		return nil, unreadable(path, errNotFile)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, unreadable(path, err)
 	}
 	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, MaxPluginBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, unreadable(path, err)
 	}
 	if len(b) > MaxPluginBytes {
-		return nil, fmt.Errorf("the file is over %d MB", MaxPluginBytes>>20)
+		return nil, fmt.Errorf("%s is over %d MB", path, MaxPluginBytes>>20)
 	}
 	if len(b) == 0 {
-		return nil, errors.New("the file is empty")
+		return nil, fmt.Errorf("%s is empty", path)
 	}
 	return b, nil
 }
@@ -229,7 +280,28 @@ func inside(dir, path string) bool {
 		}
 		return filepath.Clean(p)
 	}
-	return under(filepath.Clean(dir), filepath.Clean(path)) || under(resolve(dir), resolve(path))
+	if under(filepath.Clean(dir), filepath.Clean(path)) || under(resolve(dir), resolve(path)) {
+		return true
+	}
+	// The same folder under another name: other letter case on macOS or Windows, or a bind mount. Each folder the path
+	// is in, as written and once links are followed, is compared with dir itself.
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for _, p := range []string{filepath.Clean(path), resolve(path)} {
+		for {
+			if info, err := os.Stat(p); err == nil && os.SameFile(info, dirInfo) {
+				return true
+			}
+			parent := filepath.Dir(p)
+			if parent == p {
+				break
+			}
+			p = parent
+		}
+	}
+	return false
 }
 
 func (s *Store) loadState() state {
@@ -248,9 +320,9 @@ func (s *Store) loadState() state {
 	if st.Copied == nil {
 		st.Copied = map[string]string{}
 	}
-	// A source the workspace has come to hold, after the workspace changed, is no longer read; its copy is used.
+	// A source the agent has come to be able to change, after the workspace changed, is no longer read; its copy is used.
 	for name, src := range st.Sources {
-		if inside(s.workspace, src) {
+		if s.agentCanChange(src) {
 			delete(st.Sources, name)
 			st.Copied[name] = src
 		}
@@ -285,14 +357,15 @@ func writeCopy(path string, content []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// content returns what a plugin serves now: its source when that can be read, refreshing the kept copy when the
-// source changed, and else the kept copy. Called with s.mu held.
-func (s *Store) content(name string, st state) ([]byte, bool, error) {
+// content returns what a plugin serves now: its source when that can be used, refreshing the kept copy when the
+// source changed, and else the kept copy, with why the source could not be used. Called with s.mu held.
+func (s *Store) content(name string, st state) ([]byte, string, error) {
 	copyPath := filepath.Join(s.dir, name)
 	if src := st.Sources[name]; src != "" {
 		// The stamp before the read: a change during the read then shows as a new stamp next time.
 		before, _ := stampOf(src)
-		if b, err := readPluginFile(src); err == nil {
+		b, err := readPluginFile(src)
+		if err == nil {
 			sum := sha256.Sum256(b)
 			if k, ok := s.known[src]; !ok || k.sum != sum {
 				if old, err := os.ReadFile(copyPath); err != nil || !bytes.Equal(old, b) {
@@ -300,44 +373,44 @@ func (s *Store) content(name string, st state) ([]byte, bool, error) {
 				}
 			}
 			s.known[src] = known{stamp: before, sum: sum}
-			return b, false, nil
+			return b, "", nil
 		}
-		b, err := os.ReadFile(copyPath)
-		return b, true, err
+		kept, copyErr := os.ReadFile(copyPath)
+		return kept, err.Error(), copyErr
 	}
 	b, err := os.ReadFile(copyPath)
-	return b, false, err
+	return b, "", err
 }
 
 // summary gives a plugin's size and content hash for the list, reading only what changed since it was last read. A
 // plugin that is off is not read from its source: its copy stands for it until it is turned on. Called with s.mu held.
-func (s *Store) summary(name string, st state, enabled bool) (int64, [32]byte, bool, error) {
-	missing := false
+func (s *Store) summary(name string, st state, enabled bool) (int64, [32]byte, string, error) {
+	problem := ""
 	if src := st.Sources[name]; src != "" {
-		if now, ok := stampOf(src); !ok {
-			missing = true
+		if now, err := stampOf(src); err != nil {
+			problem = unreadable(src, err).Error()
 		} else if k, hit := s.known[src]; hit && k.stamp.same(now) {
-			return now.size, k.sum, false, nil
+			return now.size, k.sum, "", nil
 		} else if enabled {
-			b, missing, err := s.content(name, st)
-			return int64(len(b)), sha256.Sum256(b), missing, err
+			b, problem, err := s.content(name, st)
+			return int64(len(b)), sha256.Sum256(b), problem, err
 		}
 	}
 	copyPath := filepath.Join(s.dir, name)
-	now, ok := stampOf(copyPath)
-	if !ok {
-		return 0, [32]byte{}, missing, fmt.Errorf("no plugin named %q", name)
+	now, err := stampOf(copyPath)
+	if err != nil {
+		return 0, [32]byte{}, problem, fmt.Errorf("no plugin named %q", name)
 	}
 	if k, hit := s.known[copyPath]; hit && k.stamp.same(now) {
-		return now.size, k.sum, missing, nil
+		return now.size, k.sum, problem, nil
 	}
 	b, err := os.ReadFile(copyPath)
 	if err != nil {
-		return 0, [32]byte{}, missing, err
+		return 0, [32]byte{}, problem, err
 	}
 	sum := sha256.Sum256(b)
 	s.known[copyPath] = known{stamp: now, sum: sum}
-	return int64(len(b)), sum, missing, nil
+	return int64(len(b)), sum, problem, nil
 }
 
 // List returns every plugin, in name order, with whether it is on and where it is read from.
@@ -362,19 +435,19 @@ func (s *Store) List() ([]Plugin, error) {
 			continue
 		}
 		enabled := contains(st.Enabled, name)
-		size, sum, missing, err := s.summary(name, st, enabled)
+		size, sum, problem, err := s.summary(name, st, enabled)
 		if err != nil {
 			continue
 		}
-		out = append(out, Plugin{Name: name, Kind: kind, Size: size, Enabled: enabled,
-			Version: hex.EncodeToString(sum[:6]), Source: st.Sources[name], SourceMissing: missing, CopiedFrom: st.Copied[name]})
+		out = append(out, Plugin{Name: name, Kind: kind, Size: size, Enabled: enabled, Version: hex.EncodeToString(sum[:6]),
+			Source: st.Sources[name], SourceMissing: problem != "", SourceProblem: problem, CopiedFrom: st.Copied[name]})
 	}
 	return out, nil
 }
 
 // AddPath adds a .js or .css file on this server as a plugin under the file's name. It is linked to the file a path
-// leads to, and read from there from now on, so no link on the way is followed again; a path inside the workspace,
-// as written or once its links are followed, is copied instead. Adding the same file again refreshes it and keeps
+// leads to, and read from there from now on, so no link on the way is followed again; a path in a folder the agent can
+// change, as written or once its links are followed, is copied instead. Adding the same file again refreshes it and keeps
 // whether it was on; a file of the same name from somewhere else is refused rather than replace another plugin. A new
 // plugin starts on, since adding it is how a user asks for it, and so does a file put in the plugin folder by hand.
 func (s *Store) AddPath(path string) (Plugin, error) {
@@ -388,7 +461,7 @@ func (s *Store) AddPath(path string) (Plugin, error) {
 	}
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return Plugin{}, fmt.Errorf("cannot read %s: %w", path, err)
+		return Plugin{}, unreadable(path, err)
 	}
 	// The stamp before the read: a change during the read then shows as a new stamp next time.
 	before, _ := stampOf(target)
@@ -423,7 +496,7 @@ func (s *Store) AddPath(path string) (Plugin, error) {
 		}
 		return s.plugin(name, kind, content, st), nil
 	}
-	copied := inside(s.workspace, path) || inside(s.workspace, target)
+	copied := s.agentCanChange(path, target)
 	if existed && st.Sources[name] != target && st.Copied[name] != path && st.Copied[name] != target {
 		if from := st.Sources[name] + st.Copied[name]; from != "" {
 			return Plugin{}, fmt.Errorf("a plugin named %s is already added from %s; remove it first, or rename the file", name, from)
@@ -460,7 +533,7 @@ func (s *Store) plugin(name, kind string, content []byte, st state) Plugin {
 func (s *Store) SetEnabled(name string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !nameRe.MatchString(name) || name == stateFile {
+	if !isPluginName(name) {
 		return fmt.Errorf("no plugin named %q", name)
 	}
 	if _, err := os.Stat(filepath.Join(s.dir, name)); err != nil {
@@ -478,7 +551,7 @@ func (s *Store) SetEnabled(name string, enabled bool) error {
 func (s *Store) Delete(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !nameRe.MatchString(name) || name == stateFile {
+	if !isPluginName(name) {
 		return fmt.Errorf("no plugin named %q", name)
 	}
 	if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
@@ -491,6 +564,13 @@ func (s *Store) Delete(name string) error {
 	delete(st.Sources, name)
 	delete(st.Copied, name)
 	return s.saveState(st)
+}
+
+// isPluginName says whether a name is one a plugin is kept under, and not the state file, its backup or a file being
+// written.
+func isPluginName(name string) bool {
+	clean, _, err := cleanName(name)
+	return err == nil && clean == name
 }
 
 func contains(list []string, s string) bool {
@@ -575,12 +655,9 @@ func (s *Store) Browse(dir string) (Folder, error) {
 		default:
 			continue
 		}
-		if len(out.Entries) >= maxEntries {
-			out.Truncated = true
-			break
-		}
 		out.Entries = append(out.Entries, entry)
 	}
+	// Sorted before it is cut, so what is left out is the end of the list as the chooser shows it.
 	sort.Slice(out.Entries, func(i, j int) bool {
 		a, b := out.Entries[i], out.Entries[j]
 		if a.Dir != b.Dir {
@@ -588,6 +665,9 @@ func (s *Store) Browse(dir string) (Folder, error) {
 		}
 		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
 	})
+	if len(out.Entries) > maxEntries {
+		out.Entries, out.Truncated = out.Entries[:maxEntries], true
+	}
 	return out, nil
 }
 
@@ -609,8 +689,14 @@ func (s *Store) writeList(w http.ResponseWriter) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	// The workspace is named, as the folder whose files are copied rather than linked.
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": list, "workspace": s.workspace})
+	// The folders whose files are copied rather than linked are named, those that are there.
+	copied := []string{}
+	for _, dir := range s.guarded() {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			copied = append(copied, dir)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": list, "copiedFolders": copied})
 }
 
 // sameOrigin checks a request came from the web app's own pages.
@@ -710,6 +796,7 @@ func (s *Store) handleLoader(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	if r.URL.Query().Get("v") == loaderVersion {
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	} else {
@@ -745,6 +832,8 @@ func (s *Store) handleFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Only the web app's own pages may use a plugin, not a page on another subdomain of the same site.
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	// The loader asks for each file with its content hash in the query, so a changed file is fetched again. Only an
 	// answer whose content has that hash is kept: a source that changed in between must not be kept under the old one.
 	if r.URL.Query().Get("v") == hex.EncodeToString(sum[:6]) {
