@@ -67,10 +67,14 @@ in to the server, with all the access the web UI has. It can drive the agent,
 approve its terminal commands and change its permission settings, so treat the
 files like code you run.
 
-A plugin added from a path stays linked to that file and is read again on each
-page load. A file the agent can change would then let an agent held to the
-workspace run code in the web UI, so a file inside the workspace, also one
-reached through a link, is copied instead, and later edits to it are not read.
+A plugin added from a path stays linked to the file the path leads to, and is
+read again on each page load. A file the agent can change would then let an
+agent held to the workspace run code in the web UI, so a file under
+agy-server's workspace root, as the path is written or once its links are
+followed, is copied instead, and later edits to it are not read. Only that
+folder is covered: a folder opened as a workspace in a conversation is not, and
+with the workspace root set to the home folder, the copies in
+`~/.agy-remote/custom-plugins/` are inside it too, which leaves no protection.
 A linked file anywhere else is only as safe as its folder: keep it where an
 agent you do not trust cannot write. The agent's terminal commands are not held
 to the workspace, so this guards only against an agent its file access settings

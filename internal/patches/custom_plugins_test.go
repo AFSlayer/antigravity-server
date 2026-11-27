@@ -31,8 +31,12 @@ func TestCustomPluginsSectionAfterThemeCustomizer(t *testing.T) {
 			t.Fatalf("%s: section placed more than once:\n%s", name, out)
 		}
 	}
+	// A React read off something else is not the screen's.
+	if customPluginsSectionRe.MatchString(`return x.E.createElement(NV,{screen:"Appearance"}),a?.(),`) {
+		t.Fatal("matched a property read off something")
+	}
 	// The advanced group, which has the same screen name, is left alone.
-	if customPluginsSectionRe.MatchString(`E.createElement(NV,{screen:"Appearance",advanced:!0}),a?.(),`) {
+	if customPluginsSectionRe.MatchString(`,E.createElement(NV,{screen:"Appearance",advanced:!0}),a?.(),`) {
 		t.Fatal("matched the advanced group")
 	}
 }
@@ -49,7 +53,7 @@ func TestCustomPluginsSectionPrecondition(t *testing.T) {
 
 // A filter whose argument is not the name it tests is some other code, and is left alone.
 func TestCustomPluginsSectionFilterIsOneName(t *testing.T) {
-	src := []byte(`E.createElement(NV,{screen:"Appearance",sectionFilter:f=>g==="Chat"}),a?.(),`)
+	src := []byte(`,E.createElement(NV,{screen:"Appearance",sectionFilter:f=>g==="Chat"}),a?.(),`)
 	loc := customPluginsSectionRe.FindSubmatchIndex(src)
 	if loc == nil {
 		t.Fatal("the pattern did not match")

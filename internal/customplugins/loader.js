@@ -1,7 +1,7 @@
 // Loads the user's custom plugins into the web app and draws their section in Settings > Appearance. This file is the same
 // for every page and kept by the browser; it asks for the enabled plugins without holding up the page. Opening the
 // app with ?agy-safe=1 loads none of them for the rest of the tab's life, so a plugin that breaks the page can still
-// be turned off from the same section.
+// be turned off from the same section; ?agy-safe=0 ends it.
 (function () {
   "use strict";
   var SAFE_KEY = "agyCustomPluginsSafe";
@@ -9,7 +9,11 @@
   var HIDDEN_KEY = "agyCustomPluginsShowHidden";
   var safe = false;
   try {
-    if (new URLSearchParams(location.search).has("agy-safe")) sessionStorage.setItem(SAFE_KEY, "1");
+    var asked = new URLSearchParams(location.search).get("agy-safe");
+    if (asked !== null) {
+      if (/^(0|false|no|off)$/i.test(asked)) sessionStorage.removeItem(SAFE_KEY);
+      else sessionStorage.setItem(SAFE_KEY, "1");
+    }
     safe = sessionStorage.getItem(SAFE_KEY) === "1";
   } catch (e) {}
   window.__agyCustomPluginsSafe = safe;
@@ -154,7 +158,8 @@
 
     function go() {
       var v = input.trim();
-      if (!v) return;
+      // Enter reaches here while the button is greyed out, and must not send the same request twice.
+      if (!v || loading || p.busy) return;
       // A folder whose name ends in .js, such as highlight.js, is opened when it turns out not to be a file.
       if (isPluginPath(v)) p.onPick(v, function () { open(v); }); else open(v);
     }
@@ -219,7 +224,9 @@
             h(Icon, { R: R, name: e.dir ? "folder" : "file", dim: e.dir || unusable }),
             h("span", { className: "flex-1 truncate min-w-0" }, e.name),
             !e.dir && h("span", { className: "text-xs text-muted-foreground" }, unusable ? "Cannot add" : size(e.size)));
-        })));
+        }),
+        folder && folder.truncated && h("div", { className: "py-2 px-3 text-xs text-muted-foreground", "data-testid": "agy-custom-plugin-truncated" },
+          "Only the first " + folder.entries.length + " items are listed. Type a path to reach the others.")));
   }
 
   // The section, drawn with the page's own React as a component so it can keep state.
@@ -230,10 +237,12 @@
     var busyState = R.useState(false), busy = busyState[0], setBusy = busyState[1];
     var changedState = R.useState(false), changed = changedState[0], setChanged = changedState[1];
     var choosingState = R.useState(false), choosing = choosingState[0], setChoosing = choosingState[1];
+    var workspaceState = R.useState(""), workspace = workspaceState[0], setWorkspace = workspaceState[1];
+    function show(d) { setList(d.plugins || []); setWorkspace(d.workspace || ""); }
 
     R.useEffect(function () {
       var live = true;
-      api("/__agy/api/custom-plugins").then(function (d) { if (live) setList(d.plugins || []); },
+      api("/__agy/api/custom-plugins").then(function (d) { if (live) show(d); },
         function (e) { if (live) { setList([]); setError(e.message); } });
       return function () { live = false; };
     }, []);
@@ -241,7 +250,7 @@
     function run(p, then, fail) {
       setBusy(true);
       setError("");
-      p.then(function (d) { setList(d.plugins || []); setChanged(true); if (then) then(); },
+      p.then(function (d) { show(d); setChanged(true); if (then) then(); },
         function (e) { if (!(fail && fail(e))) setError(e.message); })
         .then(function () { setBusy(false); });
     }
@@ -294,7 +303,8 @@
           h("div", { className: "flex-1 flex flex-col gap-0.5" },
             h("span", null, "Add a file"),
             h("span", { className: "text-xs text-muted-foreground" },
-              "A .js or .css file on the server, up to 5 MB. Edits to it apply on the next reload. A file in the workspace is copied instead, and does not take in edits.")),
+              "A .js or .css file on the server, up to 5 MB. Edits to it apply on the next reload." +
+              (workspace ? " A file in the workspace folder " + workspace + " is copied instead, and does not take in edits." : ""))),
           h("button", { type: "button", className: btn, disabled: busy, "data-testid": "agy-custom-plugin-choose",
             onClick: function () { setChoosing(!choosing); } }, choosing ? "Close" : "Choose file")),
         choosing && h(Chooser, { R: R, busy: busy, onPick: pick, onError: setError })),

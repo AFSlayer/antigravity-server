@@ -50,3 +50,75 @@ assert.strictEqual(sourceLine({}), "");
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+// The loader itself, run in node with a page faked around it: it loads the plugins that are on, in their order, and
+// none in safe mode, which ?agy-safe=1 starts for the tab and ?agy-safe=0 ends.
+func TestLoaderLoadsWhatIsOn(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	dir := t.TempDir()
+	loader := filepath.Join(dir, "loader.js")
+	if err := os.WriteFile(loader, []byte(loaderScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	harness := `
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const session = new Map();
+const plugins = [
+  { name: "b.js", kind: "js", enabled: true, version: "v1" },
+  { name: "off.css", kind: "css", enabled: false, version: "v2" },
+  { name: "a theme.css", kind: "css", enabled: true, version: "v3" },
+];
+function run(search) {
+  const appended = [], fetched = [];
+  const storage = (m) => ({ getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) });
+  const ctx = {
+    location: { search, href: "http://agy.test/" + search },
+    sessionStorage: storage(session),
+    localStorage: storage(new Map()),
+    URLSearchParams, URL, console,
+    document: {
+      createElement: (tag) => ({ tag, setAttribute(k, v) { this[k] = v; } }),
+      head: { appendChild: (el) => appended.push(el) },
+    },
+    fetch: (url) => { fetched.push(url); return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins }) }); },
+  };
+  ctx.window = ctx;
+  vm.runInNewContext(src, ctx);
+  return new Promise((resolve) => setTimeout(() => resolve({ appended, fetched, ctx }), 20));
+}
+(async () => {
+  let r = await run("");
+  assert.deepStrictEqual(r.appended.map((e) => e["data-agy-custom-plugin"]), ["b.js", "a theme.css"]);
+  assert.strictEqual(r.appended[0].tag, "script");
+  assert.strictEqual(r.appended[0].async, false);
+  assert.strictEqual(r.appended[0].src, "/__agy/custom-plugins/file/b.js?v=v1");
+  assert.strictEqual(r.appended[1].tag, "link");
+  assert.strictEqual(r.appended[1].rel, "stylesheet");
+  assert.strictEqual(r.appended[1].href, "/__agy/custom-plugins/file/a%20theme.css?v=v3");
+  assert.strictEqual(typeof r.ctx.__agyCustomPluginsSection, "function");
+
+  r = await run("?agy-safe=1");
+  assert.strictEqual(r.appended.length, 0);
+  assert.strictEqual(r.fetched.length, 0);
+  assert.strictEqual(r.ctx.__agyCustomPluginsSafe, true);
+  r = await run("");
+  assert.strictEqual(r.appended.length, 0, "safe mode lasts for the tab");
+  r = await run("?agy-safe=0");
+  assert.strictEqual(r.appended.length, 2, "agy-safe=0 ends safe mode");
+  assert.strictEqual(r.ctx.__agyCustomPluginsSafe, false);
+})().catch((e) => { console.error(e); process.exit(1); });
+`
+	path := filepath.Join(dir, "harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, path, loader).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}

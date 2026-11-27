@@ -3,12 +3,15 @@ package customplugins
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCleanName(t *testing.T) {
@@ -23,10 +26,24 @@ func TestCleanName(t *testing.T) {
 			t.Errorf("cleanName(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"", "x.txt", "x.html", ".hidden.js", "state.json", "한글 style.css"} {
+	for _, bad := range []string{"", "x.txt", "x.html", ".hidden.js", "state.json", "한글 style.css", "my테마.css", "theme (1).css"} {
 		if _, _, err := cleanName(bad); err == nil {
 			t.Errorf("cleanName(%q) was accepted", bad)
 		}
+	}
+	if _, _, err := cleanName(strings.Repeat("a", 98) + ".css"); err == nil || !strings.Contains(err.Error(), "100 characters") {
+		t.Errorf("a long name: %v", err)
+	}
+}
+
+// symlink makes a link, or skips the test where links cannot be made.
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot make a link: %v", err)
 	}
 }
 
@@ -138,6 +155,10 @@ func TestAddPathRules(t *testing.T) {
 	if p, err := s.AddPath(filepath.Join(dir, "plugins", "hand.css")); err != nil || p.Source != "" || !p.Enabled {
 		t.Fatalf("own file: %+v, %v", p, err)
 	}
+	// Picking a linked plugin's copy keeps its link and leaves it off.
+	if p, err := s.AddPath(filepath.Join(dir, "plugins", "tools.js")); err != nil || p.Source != filepath.Join(dir, "tools.js") || p.Enabled {
+		t.Fatalf("a linked plugin's copy: %+v, %v", p, err)
+	}
 	// A folder named like a plugin says it is not a file, so the chooser can open it.
 	if err := os.Mkdir(filepath.Join(dir, "highlight.js"), 0o700); err != nil {
 		t.Fatal(err)
@@ -161,7 +182,8 @@ func TestLoaderIsCacheable(t *testing.T) {
 	for url, want := range map[string]string{LoaderURL: "immutable", LoaderPath: "no-cache"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
-		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Cache-Control"), want) || !strings.Contains(rec.Body.String(), "__agyCustomPluginsSection") {
+		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Cache-Control"), want) || !strings.Contains(rec.Body.String(), "__agyCustomPluginsSection") ||
+			rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("%s: %d %q", url, rec.Code, rec.Header().Get("Cache-Control"))
 		}
 	}
@@ -233,6 +255,18 @@ func TestHandlers(t *testing.T) {
 	if rec := do("GET", FilePrefix+"..%2fstate.json", "", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("path escape: %d", rec.Code)
 	}
+	if rec := do("GET", FilePrefix+"later.js", "", ""); rec.Code != http.StatusNotFound || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("a missing plugin: %d %q", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	if rec := do("HEAD", FilePrefix+"a.js", "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("HEAD: %d", rec.Code)
+	}
+	if rec := do("GET", BrowseAPIPath+"?path="+url.QueryEscape(dir), "", "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"a.js"`) {
+		t.Fatalf("browse: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do("GET", ListAPIPath, "", "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace"`) {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
 	if rec := do("POST", ToggleAPIPath, `{"name":"a.js","enabled":false}`, "http://agy.example.com"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
 		t.Fatalf("toggle: %d %s", rec.Code, rec.Body)
 	}
@@ -253,9 +287,7 @@ func TestBrowse(t *testing.T) {
 	for _, f := range []string{"z.css", "a.JS", "notes.txt", "한글.css"} {
 		write(t, filepath.Join(dir, f), "x")
 	}
-	if err := os.Symlink(filepath.Join(dir, "b-dir"), filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, filepath.Join(dir, "b-dir"), filepath.Join(dir, "link"))
 	s := New(filepath.Join(t.TempDir(), "plugins")).WithWorkspace("/srv/work")
 	f, err := s.Browse(dir)
 	if err != nil {
@@ -316,11 +348,15 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(inWS, link); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, inWS, link)
+	// A link in the workspace to a folder outside it: the path is the workspace's, as the agent can point the link
+	// elsewhere.
+	outsideDir := filepath.Join(dir, "dotfiles")
+	write(t, filepath.Join(outsideDir, "dots.css"), "b{}")
+	throughWS := filepath.Join(ws, "dots-link", "dots.css")
+	symlink(t, outsideDir, filepath.Join(ws, "dots-link"))
 	s := New(filepath.Join(dir, "plugins")).WithWorkspace(ws)
-	for _, path := range []string{inWS, link} {
+	for _, path := range []string{inWS, link, throughWS} {
 		p, err := s.AddPath(path)
 		if err != nil || p.Source != "" || p.CopiedFrom != path || !p.Enabled {
 			t.Fatalf("%s: %+v, %v", path, p, err)
@@ -342,6 +378,11 @@ func TestWorkspaceFilesAreCopied(t *testing.T) {
 	write(t, outside, "1")
 	if p, err := s.AddPath(outside); err != nil || p.Source != outside {
 		t.Fatalf("outside the workspace: %+v, %v", p, err)
+	}
+	// A plugin added through a link outside the workspace is linked to where the link leads.
+	symlink(t, outside, filepath.Join(dir, "elsewhere", "tool-link.js"))
+	if p, err := s.AddPath(filepath.Join(dir, "elsewhere", "tool-link.js")); err != nil || p.Source != outside {
+		t.Fatalf("through a link: %+v, %v", p, err)
 	}
 	wider := New(filepath.Join(dir, "plugins")).WithWorkspace(dir)
 	write(t, outside, "2")
@@ -373,5 +414,73 @@ func TestDamagedStateIsKept(t *testing.T) {
 	}
 	if p := one(t, s, "a.js"); !p.Enabled {
 		t.Fatal("the new state was not saved")
+	}
+}
+
+// A plugin that is off is not read from its source, and a file whose size and time have not changed is not read again.
+func TestListReadsOnlyWhatChanged(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.css")
+	write(t, src, "a{}")
+	s := New(filepath.Join(dir, "plugins"))
+	if _, err := s.AddPath(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEnabled("a.css", false); err != nil {
+		t.Fatal(err)
+	}
+	write(t, src, "a{color:red}")
+	if p := one(t, s, "a.css"); p.Size != 3 {
+		t.Fatalf("a plugin that is off was read from its source: %+v", p)
+	}
+	if err := s.SetEnabled("a.css", true); err != nil {
+		t.Fatal(err)
+	}
+	p := one(t, s, "a.css")
+	if p.Size != int64(len("a{color:red}")) {
+		t.Fatalf("turned on, the source was not read: %+v", p)
+	}
+	// Same size and time: taken as unchanged.
+	info, _ := os.Stat(src)
+	write(t, src, "a{color:tan}")
+	if err := os.Chtimes(src, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if again := one(t, s, "a.css"); again.Version != p.Version {
+		t.Fatalf("an unchanged stamp was read again: %+v", again)
+	}
+	if err := os.Chtimes(src, info.ModTime().Add(time.Second), info.ModTime().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if again := one(t, s, "a.css"); again.Version == p.Version {
+		t.Fatalf("a new stamp was not read: %+v", again)
+	}
+	// A source that is gone is reported, with the copy standing in.
+	if err := os.Remove(src); err != nil {
+		t.Fatal(err)
+	}
+	if gone := one(t, s, "a.css"); !gone.SourceMissing || gone.Size == 0 {
+		t.Fatalf("a missing source: %+v", gone)
+	}
+}
+
+// A folder with more items than the chooser lists says so.
+func TestBrowseSaysWhenCut(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i <= maxEntries; i++ {
+		write(t, filepath.Join(dir, fmt.Sprintf("p%04d.js", i)), "x")
+	}
+	s := New(filepath.Join(t.TempDir(), "plugins"))
+	f, err := s.Browse(dir)
+	if err != nil || !f.Truncated || len(f.Entries) != maxEntries {
+		t.Fatalf("truncated %v, %d entries, %v", f.Truncated, len(f.Entries), err)
+	}
+	// Items that would not be listed anyway do not make a folder cut.
+	if err := os.Remove(filepath.Join(dir, fmt.Sprintf("p%04d.js", maxEntries))); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "zz-notes.txt"), "x")
+	if f, err := s.Browse(dir); err != nil || f.Truncated || len(f.Entries) != maxEntries {
+		t.Fatalf("truncated %v, %d entries, %v", f.Truncated, len(f.Entries), err)
 	}
 }

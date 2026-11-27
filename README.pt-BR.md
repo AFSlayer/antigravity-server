@@ -155,7 +155,8 @@ Gerencie as instruções do seu agente (`~/.gemini/GEMINI.md`, `~/.gemini/config
 Carregue seu próprio JavaScript ou CSS na interface web, para um tema, uma fonte ou um pequeno ajuste, em qualquer dispositivo, inclusive no app de tela de início do iPhone, onde extensões do navegador não funcionam:
 - Abra **Settings → Appearance → Custom Plugins** e toque em **Choose file** para escolher um arquivo `.js` ou `.css` no servidor. Também é possível digitar o caminho.
 - O plugin fica vinculado a esse arquivo: edite-o e recarregue para ver a mudança. Se o arquivo sumir, é usada a cópia guardada em `~/.agy-remote/custom-plugins/`.
-- Um arquivo dentro do workspace é copiado sem vínculo, porque o agente pode alterar os arquivos de lá. Adicione-o de novo para levar uma edição.
+- Um arquivo dentro da pasta de workspace do agy-server, definida com `--workspace-root`, é copiado sem vínculo, porque o agente pode alterar os arquivos de lá. Adicione-o de novo para levar uma edição. Outras pastas em que o agente trabalha, como uma aberta só em uma conversa, não são cobertas, então não guarde plugins nelas.
+- Um plugin de script pode rodar antes de o app desenhar qualquer coisa, então faça-o esperar pelos elementos que altera.
 - Os plugins são os mesmos para todos os dispositivos conectados ao servidor. Desative-os ou remova-os na mesma seção; as mudanças valem ao recarregar.
 - Se um plugin quebrar a página, abra-a com `?agy-safe=1` para não carregar nenhum e depois desative-o. O app de tela de início do iPhone não tem barra de endereço, então abra o endereço com `?agy-safe=1` no Safari; o app recebe a mudança ao recarregar. Sem a interface web, inicie o servidor com `--disable-patch custom-plugins-loader` ou remova o nome do plugin de `enabled` em `~/.agy-remote/custom-plugins/state.json`.
 
