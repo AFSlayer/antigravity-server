@@ -151,6 +151,23 @@ Antigravity Server는 PWA(Progressive Web App) 규격을 완벽 지원합니다.
 
 ---
 
+### 🧩 커스텀 플러그인
+직접 만든 JavaScript나 CSS를 웹 UI에 불러올 수 있습니다. 테마나 글꼴, 작은 화면 수정에 쓸 수 있고, 브라우저 확장이 돌지 않는 아이폰 홈 화면 앱에서도 적용됩니다:
+- **Settings → Appearance → Custom Plugins**에서 **Choose file**을 눌러 서버에 있는 `.js` 또는 `.css` 파일을 고릅니다. 경로를 직접 입력해도 됩니다.
+- 플러그인은 그 파일과 연결됩니다. 파일을 고치고 새로고침하면 바로 반영되고, 파일이 사라지면 `~/.agy-remote/custom-plugins/`에 보관한 사본을 씁니다.
+- 에이전트가 고칠 수 있는 파일은 연결하지 않고 복사합니다. agy-server의 작업공간 폴더와, 에이전트가 메모와 임시 파일을 두는 `~/.gemini`, `~/.agents`, `~/.agent` 안의 파일이 여기에 해당합니다. 작업공간 폴더는 `--workspace-root`로 정하며 기본값은 `~/antigravity/workspace`입니다. 고친 내용을 반영하려면 다시 추가합니다. 대화에서만 연 폴더처럼 에이전트가 작업하는 다른 폴더는 여기에 해당하지 않으니, 그런 곳에는 플러그인을 두지 마세요.
+- 스크립트 플러그인은 앱이 화면을 그리기 전에 실행될 수 있으니, 바꿀 요소가 나타날 때까지 기다리게 만드세요.
+- 플러그인은 서버에 로그인한 모든 기기에 함께 적용됩니다. 같은 화면에서 끄거나 지울 수 있고, 변경은 새로고침하면 적용됩니다.
+- 플러그인 때문에 화면이 깨지면 주소에 `?agy-safe=1`을 붙여 열면 플러그인 없이 열리고, 그 상태에서 끌 수 있습니다. 아이폰 홈 화면 앱에는 주소창이 없으니 Safari에서 `?agy-safe=1`을 붙인 주소로 열어 끄면 앱에도 다음 새로고침 때 반영됩니다. 웹 UI 없이 끄려면 서버를 `--disable-patch custom-plugins-loader`로 실행하거나, `~/.agy-remote/custom-plugins/state.json`의 `enabled`에서 플러그인 이름을 지웁니다.
+
+> [!CAUTION]
+> 플러그인은 서버에 로그인한 모든 브라우저에서 웹 UI와 같은 권한으로 실행되며, 에이전트와 터미널까지 다룰 수 있습니다. 믿을 수 있는 파일만 추가하세요.
+
+> [!NOTE]
+> Antigravity의 에이전트 플러그인이나 Customizations의 UI Plugins와는 다른 기능입니다. agy-powertools처럼 데스크톱 앱용으로 만든 확장은 지원하지 않습니다. 계정 전환, 사용량 대시보드, 프록시처럼 데스크톱 앱의 보조 프로세스나 Chrome 디버깅이 필요한 기능은 `agy-server`에서 동작하지 않습니다.
+
+---
+
 ## 프로덕션 리버스 프록시 연동 (Caddy / Nginx)
 
 에이전트의 실시간 스트리밍 응답(SSE) 및 WebSocket 통신, 대용량 파일 업로드를 위해 프록시의 **버퍼링 비활성화**와 **WebSocket 업그레이드** 설정이 필요합니다. 웹 UI의 주요 대화 RPC가 `/connect-websocket`을 통해 통신하므로 프록시에서 WebSocket 업그레이드를 통과시켜야 합니다. `agy-server`는 `Origin`이 전달된 `Host`나 `X-Forwarded-Host`와 다른 WebSocket 핸드셰이크를 거부하므로 이 헤더를 그대로 넘겨야 합니다. 업그레이드를 켤 수 없는 환경이라면 서버를 `--disable-patch websocket-transport-default`로 실행합니다:

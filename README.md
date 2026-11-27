@@ -151,6 +151,23 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 ---
 
+### 🧩 Custom Plugins
+Load your own JavaScript or CSS into the web UI, for a theme, a font or a small tweak, on any device, including an iPhone home-screen app, where browser extensions don't run:
+- Open **Settings → Appearance → Custom Plugins** and tap **Choose file** to pick a `.js` or `.css` file on the server. You can also type its path.
+- The plugin stays linked to that file: edit it and reload to see the change. If the file goes away, the copy kept in `~/.agy-remote/custom-plugins/` is used.
+- A file the agent can change is copied, not linked: one inside agy-server's workspace root, which `--workspace-root` sets and is `~/antigravity/workspace` by default, or inside the agent's own folders `~/.gemini`, `~/.agents` and `~/.agent`, where it keeps its notes and scratch files. Add it again to take in an edit. Other folders the agent works in, such as one opened only in a conversation, are not covered, so keep plugins out of them.
+- A script plugin can run before the app has drawn anything, so have it wait for the elements it changes.
+- Plugins are shared by every device signed in to the server. Turn one off or remove it in the same section; changes apply on reload.
+- If a plugin breaks the page, open it with `?agy-safe=1` to load none, then turn it off. An iPhone home-screen app has no address bar, so open the address with `?agy-safe=1` in Safari; the app picks up the change on its next reload. Without the web UI, start the server with `--disable-patch custom-plugins-loader`, or remove the plugin's name from `enabled` in `~/.agy-remote/custom-plugins/state.json`.
+
+> [!CAUTION]
+> A plugin runs in every browser signed in to the server, with the same access as the web UI, which reaches the agent and its terminal. Add only files you trust.
+
+> [!NOTE]
+> These are neither Antigravity's agent plugins nor its UI Plugins under Customizations. Extensions built for the desktop app, such as agy-powertools, are not supported: what needs the desktop app's helper process or Chrome debugging, such as account switching, usage dashboards and proxies, does not work through `agy-server`.
+
+---
+
 ## Production & Reverse Proxy Setup
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and pass WebSocket upgrades through. The web UI routes its primary conversation RPCs over `/connect-websocket`, so WebSocket upgrades must be passed through. `agy-server` rejects WebSocket handshakes whose `Origin` does not match the forwarded `Host` or `X-Forwarded-Host`, so keep that header intact. If upgrades cannot be enabled, start the server with `--disable-patch websocket-transport-default`:

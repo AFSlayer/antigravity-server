@@ -151,6 +151,23 @@ Gestione las instrucciones de su agente (`~/.gemini/GEMINI.md`, `~/.gemini/confi
 
 ---
 
+### 🧩 Plugins personalizados
+Cargue su propio JavaScript o CSS en la interfaz web, para un tema, una fuente o un pequeño ajuste, en cualquier dispositivo, incluida la app de pantalla de inicio del iPhone, donde no funcionan las extensiones del navegador:
+- Abra **Settings → Appearance → Custom Plugins** y pulse **Choose file** para elegir un archivo `.js` o `.css` del servidor. También puede escribir su ruta.
+- El plugin queda vinculado a ese archivo: edítelo y recargue para ver el cambio. Si el archivo desaparece, se usa la copia guardada en `~/.agy-remote/custom-plugins/`.
+- Un archivo que el agente puede modificar se copia sin vincularlo: uno dentro de la carpeta de trabajo de agy-server, que fija `--workspace-root` y por defecto es `~/antigravity/workspace`, o dentro de las carpetas propias del agente `~/.gemini`, `~/.agents` y `~/.agent`, donde guarda sus notas y archivos temporales. Añádalo de nuevo para recoger un cambio. Otras carpetas donde trabaja el agente, como una abierta solo en una conversación, no están cubiertas, así que no guarde plugins en ellas.
+- Un plugin de script puede ejecutarse antes de que la app dibuje nada, así que haga que espere a los elementos que cambia.
+- Los plugins son los mismos para todos los dispositivos con sesión en el servidor. Desactívelos o quítelos en la misma sección; los cambios se aplican al recargar.
+- Si un plugin rompe la página, ábrala con `?agy-safe=1` para no cargar ninguno y luego desactívelo. La app de pantalla de inicio del iPhone no tiene barra de direcciones, así que abra la dirección con `?agy-safe=1` en Safari; la app recoge el cambio al recargar. Sin la interfaz web, inicie el servidor con `--disable-patch custom-plugins-loader` o quite el nombre del plugin de `enabled` en `~/.agy-remote/custom-plugins/state.json`.
+
+> [!CAUTION]
+> Un plugin se ejecuta en todos los navegadores con sesión en el servidor, con el mismo acceso que la interfaz web, que alcanza al agente y su terminal. Añada solo archivos de confianza.
+
+> [!NOTE]
+> No son los plugins de agente de Antigravity ni sus UI Plugins de Customizations. Las extensiones creadas para la app de escritorio, como agy-powertools, no son compatibles: lo que necesita el proceso auxiliar de la app de escritorio o la depuración de Chrome, como el cambio de cuenta, los paneles de uso o los proxies, no funciona a través de `agy-server`.
+
+---
+
 ## Configuración de Proxy Inverso (Caddy / Nginx)
 
 Para permitir streaming en tiempo real (SSE), WebSockets y subidas pesadas, desactiva el almacenamiento en búfer y deja pasar las actualizaciones a WebSocket. Las RPC principales de conversación de la interfaz web viajan por `/connect-websocket`, por lo que el proxy inverso debe permitir las actualizaciones a WebSocket. `agy-server` rechaza los handshakes WebSocket cuyo `Origin` no coincide con el `Host` o `X-Forwarded-Host` reenviado, así que conserva esa cabecera. Si no puedes habilitar las actualizaciones, inicia el servidor con `--disable-patch websocket-transport-default`:

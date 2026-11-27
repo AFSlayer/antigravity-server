@@ -61,6 +61,11 @@ jobs:
 
       - run: go test ./internal/ui/ -run TestDebug
 
+      # Custom plugins keep paths as their links lead, which on macOS puts the
+      # temporary folder under /private, and Windows paths take drives and
+      # backslashes, so the store's tests are run on both.
+      - run: go test ./internal/customplugins/
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:
