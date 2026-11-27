@@ -13,7 +13,7 @@ func TestCustomPluginsSectionAfterThemeCustomizer(t *testing.T) {
 		"2.35":   `return E.createElement(YU,{title:"Appearance",description:"x"},E.createElement(NV,{screen:"Appearance"}),a?.(),E.createElement(zV,{expanded:b},E.createElement(NV,{screen:"Appearance",advanced:!0})))`,
 		"2.34":   `return E.createElement(LU,{title:"Appearance",description:"x"},E.createElement(TV,{screen:"Appearance",sectionFilter:f=>f==="Chat"}),a?.(),E.createElement(xV,{expanded:b},E.createElement(TV,{screen:"Appearance",sectionFilter:f=>f!=="Chat"})))`,
 		"2.33":   `return D.createElement(ZS,{title:"Appearance",description:"x"},D.createElement(gU,{screen:"Appearance",sectionFilter:f=>f==="Chat"}),a?.(),D.createElement(LT,{expanded:b}))`,
-		"spaced": "return E.createElement(YU, { title: \"Appearance\" },\n  E.createElement(NV, { screen: \"Appearance\", sectionFilter: f => f === \"Chat\" }),\n  a?.(),\n  E.createElement(zV, {}))",
+		"spaced": "return E.createElement(YU, { title: \"Appearance\" },\n  E.createElement(NV,\n {screen:\"Appearance\" ,\n sectionFilter: f => f === \"Chat\" }),\n  a?.(),\n  E.createElement(zV, {}))",
 	} {
 		if n := len(customPluginsSectionRe.FindAllStringIndex(src, -1)); n != 1 {
 			t.Fatalf("%s: %d matches, want 1", name, n)
@@ -39,11 +39,23 @@ func TestCustomPluginsSectionAfterThemeCustomizer(t *testing.T) {
 
 // The Appearance screen being there is what makes a miss of the section's pattern a failure the doctor reports.
 func TestCustomPluginsSectionPrecondition(t *testing.T) {
-	if !hasAppearanceScreen([]byte(`E.createElement(NV,{screen: "Appearance"})`)) {
+	if !hasAppearanceScreen([]byte(`E.createElement(NV,{screen:"Appearance"})`)) {
 		t.Fatal("the Appearance screen was not found")
 	}
 	if hasAppearanceScreen([]byte(`{title:"Appearance"}`)) {
 		t.Fatal("a title alone counted as the Appearance screen")
+	}
+}
+
+// A filter whose argument is not the name it tests is some other code, and is left alone.
+func TestCustomPluginsSectionFilterIsOneName(t *testing.T) {
+	src := []byte(`E.createElement(NV,{screen:"Appearance",sectionFilter:f=>g==="Chat"}),a?.(),`)
+	loc := customPluginsSectionRe.FindSubmatchIndex(src)
+	if loc == nil {
+		t.Fatal("the pattern did not match")
+	}
+	if customPluginsFilterIsOneName(submatches(src, loc)) {
+		t.Fatal("two names were taken for one")
 	}
 }
 

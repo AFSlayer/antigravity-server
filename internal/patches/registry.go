@@ -696,6 +696,7 @@ func All() []Patch {
 			Target:       MainJS,
 			Kind:         Regexp,
 			FindRe:       customPluginsSectionRe,
+			Accept:       customPluginsFilterIsOneName,
 			Optional:     true,
 			Precondition: hasAppearanceScreen,
 			Replace:      customPluginsSection,
