@@ -688,6 +688,25 @@ func All() []Patch {
 			Replace:      contextIndicatorSettingDescription.replace,
 		},
 
+		// The user's UI plugins: the loader in the page, and their section in Settings > Appearance. See plugins.go.
+		{
+			ID:      "plugins-loader",
+			Desc:    "Load the UI plugins turned on under Settings > Appearance > Plugins",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: pluginsLoaderScript,
+		},
+		{
+			ID:           "plugins-settings-section",
+			Desc:         "Add the Plugins section to Settings > Appearance",
+			Target:       MainJS,
+			Kind:         Regexp,
+			FindRe:       pluginsSettingsSectionRe,
+			Optional:     true,
+			Precondition: hasAppearanceScreen,
+			Replace:      pluginsSettingsSection,
+		},
+
 		// On mobile, show the back button in the main titlebar when a project is selected
 		// and ensure back navigation always clears the active section.
 		{

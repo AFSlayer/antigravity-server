@@ -149,6 +149,20 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 - Click the native **Edit** button next to rules or skills to expand an inline code editor.
 - Updates are saved atomically to the host filesystem with instant effect.
 
+
+### 🧩 UI Plugins
+Load your own JavaScript or CSS into the web UI, for a theme, a font or a small tweak, on any device, including an iPhone home-screen app, where browser extensions don't run:
+- Open **Settings → Appearance → UI Plugins** and tap **Choose file** to pick a `.js` or `.css` file on the server. You can also type its path.
+- The plugin stays linked to that file: edit it and reload to see the change. If the file goes away, the copy kept in `~/.agy-remote/plugins/` is used.
+- Plugins are shared by every device signed in to the server. Turn one off or remove it in the same section; changes apply on reload.
+- If a plugin breaks the page, open it with `?agy-safe=1` to load none, then turn it off.
+
+> [!CAUTION]
+> A plugin runs with the same access as the web UI, which reaches the agent and its terminal. Add only files you trust.
+
+> [!NOTE]
+> These are not Antigravity's agent plugins. Extensions built for the desktop app, such as agy-powertools, are not supported: what needs the desktop app's helper process or Chrome debugging, such as account switching, usage dashboards and proxies, does not work through `agy-server`.
+
 ---
 
 ## Production & Reverse Proxy Setup

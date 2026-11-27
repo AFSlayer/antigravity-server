@@ -58,6 +58,22 @@ Known limits:
 - Previews dial `127.0.0.1` or `::1`, so a server listening only on another
   loopback address such as `127.0.0.2` cannot be previewed.
 
+## UI plugins
+
+Settings → Appearance → UI Plugins loads JavaScript and CSS files that a
+signed-in user picks on the server. A plugin runs in the web UI with that
+user's access, which already includes the agent and its terminal, so it adds no
+privilege. A hostile plugin file would still run in every signed-in browser, so
+treat the files like code you run.
+
+| Path | What it does | Boundaries |
+| --- | --- | --- |
+| `/__agy/api/plugins/browse` | Lists a folder on the server: its folders and `.js`/`.css` files, for the file chooser. | Login and same-origin checks. Lists what the server's user can read, as the agent can. |
+| `/__agy/api/plugins/add-path`, `/toggle`, `/delete` | Add a plugin from a server path, turn it on or off, or remove it. | POST only, login and same-origin checks. Regular `.js` and `.css` files up to 5 MB. Removing a plugin leaves its source file alone. |
+| `/__agy/plugins/file/<name>` | Serves a plugin, read from its source file, or from the copy in `~/.agy-remote/plugins/` when that is gone. | Login. Names are limited to letters, digits, dots, dashes and underscores; `X-Content-Type-Options: nosniff`. |
+
+Open the UI with `?agy-safe=1` to load no plugins in that tab.
+
 ## Running behind a reverse proxy
 
 If a proxy terminates TLS in front of `agy-server`, tell it which peers to trust:

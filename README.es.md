@@ -149,6 +149,20 @@ Gestione las instrucciones de su agente (`~/.gemini/GEMINI.md`, `~/.gemini/confi
 - Haga clic en el botón **Edit** junto a las reglas o habilidades para abrir el editor en línea.
 - Haga clic en **Save** para guardar de forma atómica en el sistema de archivos del host con efecto inmediato.
 
+
+### 🧩 Plugins de UI
+Cargue su propio JavaScript o CSS en la interfaz web, para un tema, una fuente o un pequeño ajuste, en cualquier dispositivo, incluida la app de pantalla de inicio del iPhone, donde no funcionan las extensiones del navegador:
+- Abra **Settings → Appearance → UI Plugins** y pulse **Choose file** para elegir un archivo `.js` o `.css` del servidor. También puede escribir su ruta.
+- El plugin queda vinculado a ese archivo: edítelo y recargue para ver el cambio. Si el archivo desaparece, se usa la copia guardada en `~/.agy-remote/plugins/`.
+- Los plugins son los mismos para todos los dispositivos con sesión en el servidor. Desactívelos o quítelos en la misma sección; los cambios se aplican al recargar.
+- Si un plugin rompe la página, ábrala con `?agy-safe=1` para no cargar ninguno y luego desactívelo.
+
+> [!CAUTION]
+> Un plugin se ejecuta con el mismo acceso que la interfaz web, que alcanza al agente y su terminal. Añada solo archivos de confianza.
+
+> [!NOTE]
+> No son los plugins de agente de Antigravity. Las extensiones creadas para la app de escritorio, como agy-powertools, no son compatibles: lo que necesita el proceso auxiliar de la app de escritorio o la depuración de Chrome, como el cambio de cuenta, los paneles de uso o los proxies, no funciona a través de `agy-server`.
+
 ---
 
 ## Configuración de Proxy Inverso (Caddy / Nginx)
