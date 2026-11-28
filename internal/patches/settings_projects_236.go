@@ -2,6 +2,7 @@ package patches
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 )
 
@@ -16,7 +17,8 @@ const settingsProjects236Name = `[a-zA-Z0-9_$]+`
 var mobileSettingsProjects236 = func() string {
 	n := settingsProjects236Name
 	named := func(name string) string { return `(?P<` + name + `>` + n + `)` }
-	return `(?P<s236head>var ` + n + `=\(\)=>\{var ` + n + `=` + n + `\(\),` + named("s236dispatch") + `=` + n + `\(\),` + n + `=` + n +
+	// The "var " that starts the view is matched before the two forms, and put back in mobileSettingsProjects236Replace.
+	return `(?P<s236head>` + n + `=\(\)=>\{var ` + n + `=` + n + `\(\),` + named("s236dispatch") + `=` + n + `\(\),` + n + `=` + n +
 		`\(\)\.settings\.isScreenVisible\("Provide Feedback"\),\{sharedNavItems:` + n + `,globalScreens:` + n + `,workspaces:` + n +
 		`,showWorkspacesSection:` + n + `\}=` + n + `\(\);[^;]{1,200};var ` + named("s236stack") + `=` + n + `\(!0\),[\s\S]{1,600}?;var ` +
 		named("s236current") + `=` + named("s236stackPath") + `\.path\[0\]\?\?` + n + `\.exiting\[0\],` + n + `=` + n +
@@ -92,9 +94,18 @@ func mobileSettingsProjects236Replace(groups [][]byte) string {
 		pmInit = `var _pm=` + g("s236pmHook")
 	}
 	return renderSettingsProjects(settingsProjectsParts{
-		head: g("s236head"), list: g("s236list"), second: g("s236second"), content: g("s236content"), tail: g("s236tail"),
+		head: "var " + g("s236head"), list: g("s236list"), second: g("s236second"), content: g("s236content"), tail: g("s236tail"),
 		dispatch: g("s236dispatch"), current: g("s236current"), stack: g("s236stack"), react: g("s236react"),
 		navigate: g("s236navigate"), header: g("s236header"), item: g("s236item"),
 		useApp: g("s236useApp"), pmInit: pmInit, useProjects: g("s236useProjects"), back: g("s236back"),
 	})
+}
+
+// mobileHomeRowsReadTheirName says whether a match of mobileHomeNewConvoRowRe that stores whether the rows are drawn
+// in a name, as 2.36 does, then returns on that name.
+func mobileHomeRowsReadTheirName(g [][]byte) bool {
+	if g[3] == nil {
+		return true
+	}
+	return regexp.MustCompile(`;\s*return\s+` + regexp.QuoteMeta(string(g[3])) + `\s*\?`).Match(g[4])
 }

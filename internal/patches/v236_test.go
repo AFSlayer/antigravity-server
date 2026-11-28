@@ -1,6 +1,9 @@
 package patches
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -90,9 +93,15 @@ func TestAntigravity236PatchShapes(t *testing.T) {
 // screen it shows, its back function, and the dispatch the Account row calls.
 func TestSettingsProjects236Names(t *testing.T) {
 	src := v236SettingsView + ")))};function zz(){" + v236SettingsTail
-	if _, status := applyWithStatus(t, "mobile-settings-projects", src, Options{MobileUX: true}); status != StatusApplied {
+	got, status := applyWithStatus(t, "mobile-settings-projects", src, Options{MobileUX: true})
+	if status != StatusApplied {
 		t.Fatalf("status %v", status)
 	}
+	// The view is written once, starting where it started, and is still JavaScript.
+	if !strings.HasPrefix(got, "var xec=()=>{") || strings.Contains(got, "var var ") {
+		t.Fatalf("the view starts %.40q", got)
+	}
+	checkSyntax(t, "mobile-settings-projects", strings.TrimSuffix(got, "function zz(){"+v236SettingsTail)+"function zz(){}")
 	for name, from := range map[string]string{
 		"stack":    `ref:k.setHost`,
 		"open":     `exiting.includes(r)`,
@@ -109,5 +118,32 @@ func TestSettingsProjects236Names(t *testing.T) {
 		if _, status := applyWithStatus(t, "mobile-settings-projects", other, Options{MobileUX: true}); status == StatusApplied {
 			t.Errorf("another %s was taken", name)
 		}
+	}
+}
+
+// The home's rows are added to the name the condition is stored in only where the return reads that name.
+func TestHomeRows236ReadTheirName(t *testing.T) {
+	other := strings.Replace(v236HomeRows, `return U?F.createElement("div"`, `return Y?F.createElement("div"`, 1)
+	if other == v236HomeRows {
+		t.Fatal("nothing was changed")
+	}
+	if _, status := applyWithStatus(t, "mobile-home-new-conversation-row", other, Options{MobileUX: true}); status == StatusApplied {
+		t.Error("a return of another name was taken")
+	}
+}
+
+// checkSyntax runs code through node's parser, where node is installed.
+func checkSyntax(t *testing.T, id, code string) {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return
+	}
+	f := filepath.Join(t.TempDir(), "code.js")
+	if err := os.WriteFile(f, []byte(code), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, "--check", f).CombinedOutput(); err != nil {
+		t.Errorf("%s: not JavaScript: %v\n%s", id, err, out)
 	}
 }
